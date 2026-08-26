@@ -21,6 +21,30 @@ Open `index.html`. That's the whole install.
 Built for desktop and iPad: one finger draws and flings, two fingers pinch and
 pan, and a mouse wheel zooms about the cursor.
 
+## What it does
+
+Worlds are pixel art, generated rather than drawn: every body gets a sprite
+baked from value noise, shaded against a sphere normal, coloured from a ramp.
+Rocky worlds grow continents and craters; gas giants get latitude bands warped
+by turbulence and the odd storm; stars granulate and darken toward the limb.
+The **Forge** panel puts that under your control — composition, palette, size
+and density, with a live preview. Density and size decide mass, and mass is the
+only thing gravity actually reads.
+
+Hit two worlds together hard enough and they do not politely merge. The smaller
+one is destroyed and thrown out as molten debris that cools from white through
+orange to plain rock while it flies. A gas world throws a coloured plume
+instead, strung out by whatever gravity is nearby.
+
+That debris then has to end up somewhere:
+
+- **Inside the Roche distance** tides never let it clump, so it grinds itself
+  circular and stays a **ring**.
+- **Outside it**, fragments sharing a patch of sky and a velocity pull together
+  into a real body — an **asteroid**, a **moon** or a **dwarf planet**,
+  depending on how much rubble found each other.
+- Or it falls back in, adding its mass to whatever swept it up.
+
 ## How it works
 
 - **Integrator.** Velocity Verlet, which is symplectic — orbits keep their
@@ -35,6 +59,13 @@ pan, and a mouse wheel zooms about the cursor.
   between a gravity toy and a gravity guessing game.
 - **Trails** are sampled by distance travelled, not per frame, so they look the
   same at every speed setting instead of vanishing when you slow down.
+- **Pixels.** The whole sim is drawn into a buffer a few times smaller than the
+  window and blown up with nearest-neighbour. That is what makes it pixel art,
+  and it is also why a few thousand debris motes cost nothing to draw.
+- **Ring damping** eases a fragment's whole velocity toward the circular one for
+  its radius. Damping only the radial part looks right and is not: it just makes
+  the current radius an apsis and leaves the speed mismatch that made the orbit
+  elliptical in the first place. The test measures eccentricity, and caught it.
 
 ## Tests
 

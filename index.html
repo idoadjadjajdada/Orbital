@@ -6,14 +6,14 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Orbital">
-<meta name="theme-color" content="#05060c">
-<meta name="description" content="An n-body gravity sandbox. Fling worlds into orbit and watch the maths do the rest.">
+<meta name="theme-color" content="#0a0616">
+<meta name="description" content="A pixel-art gravity sandbox. Build worlds, fling them into orbit, and watch them shatter and cool.">
 <title>Orbital</title>
 <style>
   :root{
-    --bg:#05060c; --panel:rgba(255,255,255,.07); --panel2:rgba(255,255,255,.12);
-    --lip:inset 0 1px 0 rgba(255,255,255,.10);
-    --ink:#eaeefb; --dim:#8e97b4; --acc:#7fd4ff; --warm:#ffcf6b;
+    --bg:#0a0616; --panel:rgba(190,150,255,.10); --panel2:rgba(190,150,255,.18);
+    --lip:inset 0 1px 0 rgba(255,255,255,.12);
+    --ink:#f0eaff; --dim:#a495c9; --acc:#c69bff; --hot:#ff9d5c;
     --r:12px;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;}
@@ -26,70 +26,89 @@
   button{font:inherit;font-weight:600;border:0;background:none;color:inherit;cursor:pointer;}
   :focus-visible{outline:2px solid var(--acc);outline-offset:2px;border-radius:8px;}
 
-  #c{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:crosshair;}
+  /* The sim is drawn small and blown up with nearest-neighbour, which is what
+     makes it pixel art rather than smooth vector circles. */
+  #c{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:crosshair;
+    image-rendering:pixelated;image-rendering:-moz-crisp-edges;image-rendering:crisp-edges;}
 
   .ui{position:fixed;inset:0;pointer-events:none;display:flex;flex-direction:column;
     padding:calc(env(safe-area-inset-top) + 12px) calc(env(safe-area-inset-right) + 12px)
             calc(env(safe-area-inset-bottom) + 12px) calc(env(safe-area-inset-left) + 12px);}
   .ui > *{pointer-events:auto;}
-  /* The spacers exist to push the toolbars apart. They must never take a
-     pointer: they cover the whole middle of the screen, which is the sky. */
+  /* Spacers cover the middle of the screen, which is the sky. Never take a pointer. */
   .ui > .grow, .ui .grow{pointer-events:none;}
   .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
   .grow{flex:1;}
 
-  .brand{font-weight:700;font-size:18px;letter-spacing:-.015em;padding:4px 2px;text-shadow:0 2px 12px rgba(0,0,0,.8);}
-  .brand b{color:var(--acc);font-weight:700;}
+  .brand{font-weight:700;font-size:18px;letter-spacing:-.015em;text-shadow:0 2px 14px rgba(0,0,0,.9);}
+  .brand b{color:var(--acc);}
 
   .btn{background:var(--panel);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
     box-shadow:var(--lip);border-radius:10px;padding:8px 13px;font-size:13px;white-space:nowrap;
     transition:background .12s,transform .08s;}
   .btn:active{transform:translateY(1px);}
-  .btn.on{background:var(--ink);color:#0a0c14;}
+  .btn.on{background:var(--ink);color:#150a26;}
   .btn.sm{padding:6px 10px;font-size:12px;}
   @media (hover:hover){ .btn:hover{background:var(--panel2);} .btn.on:hover{background:#fff;} }
 
-  .card{background:rgba(10,12,22,.55);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
-    box-shadow:var(--lip), 0 10px 30px rgba(0,0,0,.45);border-radius:var(--r);padding:9px;}
+  .card{background:rgba(18,10,34,.62);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    box-shadow:var(--lip), 0 12px 34px rgba(0,0,0,.55);border-radius:var(--r);padding:9px;}
 
   .readout{font-variant-numeric:tabular-nums;font-size:12px;color:var(--dim);white-space:nowrap;
     text-shadow:0 1px 8px rgba(0,0,0,.9);}
 
-  /* body picker */
   .bodies{display:flex;gap:7px;overflow-x:auto;scrollbar-width:none;}
   .bodies::-webkit-scrollbar{display:none;}
-  .bd{flex:0 0 auto;width:74px;background:var(--panel);box-shadow:var(--lip);border-radius:11px;
-    padding:8px 5px 7px;display:flex;flex-direction:column;align-items:center;gap:6px;transition:background .12s,transform .08s;}
+  .bd{flex:0 0 auto;width:70px;background:var(--panel);box-shadow:var(--lip);border-radius:11px;
+    padding:7px 4px 6px;display:flex;flex-direction:column;align-items:center;gap:5px;transition:background .12s,transform .08s;}
   .bd:active{transform:scale(.95);}
-  .bd .dot{width:22px;height:22px;border-radius:50%;}
-  .bd .nm{font-size:10.5px;color:var(--dim);}
+  .bd canvas{width:26px;height:26px;image-rendering:pixelated;border-radius:3px;}
+  .bd .nm{font-size:10px;color:var(--dim);text-align:center;line-height:1.15;}
   .bd.on{background:var(--ink);}
-  .bd.on .nm{color:#0a0c14;font-weight:700;}
+  .bd.on .nm{color:#150a26;font-weight:700;}
   @media (hover:hover){ .bd:hover{background:var(--panel2);} .bd.on:hover{background:#fff;} }
 
-  .slider{display:flex;align-items:center;gap:9px;padding:5px 12px;min-width:180px;}
+  .slider{display:flex;align-items:center;gap:9px;padding:5px 12px;min-width:170px;}
   .slider label{font-size:12px;color:var(--dim);white-space:nowrap;}
-  input[type=range]{flex:1;min-width:64px;accent-color:var(--acc);background:none;height:22px;}
+  input[type=range]{flex:1;min-width:60px;accent-color:var(--acc);background:none;height:22px;}
 
-  .hint{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom) + 150px);
-    background:rgba(6,8,16,.72);backdrop-filter:blur(10px);padding:8px 16px;border-radius:999px;
-    font-size:13px;color:#c6cee6;transition:opacity .5s;pointer-events:none;max-width:90vw;
-    text-align:center;box-shadow:0 8px 26px rgba(0,0,0,.5);}
+  .hint{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom) + 152px);
+    background:rgba(14,8,26,.8);backdrop-filter:blur(10px);padding:8px 16px;border-radius:999px;
+    font-size:13px;color:#d6c9f2;transition:opacity .5s;pointer-events:none;max-width:90vw;
+    text-align:center;box-shadow:0 8px 26px rgba(0,0,0,.6);}
   .hint.gone{opacity:0;}
 
-  /* selected-body inspector */
-  .insp{position:fixed;right:calc(env(safe-area-inset-right) + 12px);top:calc(env(safe-area-inset-top) + 60px);
-    width:186px;display:none;}
+  /* world designer */
+  .forge{position:fixed;left:calc(env(safe-area-inset-left) + 12px);top:calc(env(safe-area-inset-top) + 58px);
+    width:250px;display:none;max-height:calc(100vh - 250px);overflow-y:auto;scrollbar-width:thin;}
+  .forge.on{display:block;}
+  .forge h4{margin:0 0 9px;font-size:13px;display:flex;align-items:center;gap:8px;}
+  .forge h4 .grow{flex:1;}
+  .forge .prev{display:flex;align-items:center;gap:11px;margin-bottom:10px;}
+  .forge .prev canvas{width:76px;height:76px;image-rendering:pixelated;border-radius:8px;
+    background:rgba(0,0,0,.35);box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);}
+  .forge .prevInfo{flex:1;min-width:0;}
+  .forge .prevInfo .t{font-size:13px;font-weight:700;}
+  .forge .prevInfo .kv{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums;}
+  .forge .lbl{font-size:11px;color:var(--dim);margin:9px 0 5px;letter-spacing:.06em;text-transform:uppercase;}
+  .chips{display:flex;flex-wrap:wrap;gap:5px;}
+  .chip{background:var(--panel);box-shadow:var(--lip);border-radius:8px;padding:6px 9px;font-size:11.5px;}
+  .chip.on{background:var(--ink);color:#150a26;}
+  @media (hover:hover){ .chip:hover{background:var(--panel2);} .chip.on:hover{background:#fff;} }
+  .forge .slider{padding:4px 0;min-width:0;}
+
+  .insp{position:fixed;right:calc(env(safe-area-inset-right) + 12px);top:calc(env(safe-area-inset-top) + 58px);
+    width:184px;display:none;}
   .insp.on{display:block;}
   .insp h4{margin:0 0 7px;font-size:13px;display:flex;align-items:center;gap:7px;}
-  .insp h4 .dot{width:12px;height:12px;border-radius:50%;flex:0 0 auto;}
+  .insp h4 canvas{width:18px;height:18px;image-rendering:pixelated;border-radius:3px;}
   .insp .kv{display:flex;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--dim);
     font-variant-numeric:tabular-nums;padding:2px 0;}
   .insp .kv b{color:var(--ink);font-weight:600;}
   .insp .acts{display:flex;gap:6px;margin-top:8px;}
   .insp .acts .btn{flex:1;justify-content:center;text-align:center;}
 
-  @media (max-width:820px){ .insp{width:164px;} .brand{font-size:16px;} }
+  @media (max-width:900px){ .forge{width:214px;} .insp{width:160px;} .brand{font-size:16px;} }
 </style>
 </head>
 <body>
@@ -98,6 +117,7 @@
 <div class="ui">
   <div class="row">
     <div class="brand">Orbit<b>al</b></div>
+    <button class="btn sm" id="forgeBtn" title="Design a world">Forge</button>
     <div class="grow"></div>
     <div class="readout" id="stat"></div>
     <button class="btn" id="play" title="Play / pause — Space">Pause</button>
@@ -106,8 +126,29 @@
 
   <div class="grow"></div>
 
+  <div class="card forge" id="forge">
+    <h4><span>World forge</span><span class="grow"></span>
+      <button class="btn sm" id="reroll" title="New terrain">Reroll</button></h4>
+    <div class="prev">
+      <canvas id="fPrev" width="48" height="48"></canvas>
+      <div class="prevInfo">
+        <div class="t" id="fName">Rocky planet</div>
+        <div class="kv" id="fMass">mass 20</div>
+        <div class="kv" id="fRad">radius 3.1</div>
+      </div>
+    </div>
+    <div class="lbl">Composition</div>
+    <div class="chips" id="fClass"></div>
+    <div class="lbl">Palette</div>
+    <div class="chips" id="fPal"></div>
+    <div class="lbl">Size</div>
+    <div class="slider"><input type="range" id="fSize" min="4" max="100" value="20"></div>
+    <div class="lbl">Density</div>
+    <div class="slider"><input type="range" id="fDens" min="10" max="240" value="100"></div>
+  </div>
+
   <div class="card insp" id="insp">
-    <h4><i class="dot" id="ispDot"></i><span id="ispName">Body</span></h4>
+    <h4><canvas id="ispIcon" width="16" height="16"></canvas><span id="ispName">Body</span></h4>
     <div class="kv"><span>Mass</span><b id="ispMass">—</b></div>
     <div class="kv"><span>Speed</span><b id="ispVel">—</b></div>
     <div class="kv"><span>Orbiting</span><b id="ispHost">—</b></div>
@@ -128,243 +169,612 @@
       <input type="range" id="speed" min="0" max="60" value="29">
       <span class="readout" id="speedv">1.0&times;</span>
     </div>
-    <button class="btn" id="orbitAssist" title="Tap empty space to drop a body straight into a circular orbit">Auto-orbit</button>
-    <button class="btn" id="trails" title="Show orbit trails — T">Trails</button>
+    <button class="btn" id="orbitAssist" title="Tap empty space to drop a body into a circular orbit">Auto-orbit</button>
+    <button class="btn" id="trails" title="Orbit trails — T">Trails</button>
     <div class="grow"></div>
-    <button class="btn sm" data-preset="binary">Binary</button>
     <button class="btn sm" data-preset="solar">Solar</button>
-    <button class="btn sm" data-preset="rings">Rings</button>
+    <button class="btn sm" data-preset="binary">Binary</button>
+    <button class="btn sm" data-preset="smash">Smash</button>
     <button class="btn sm" data-preset="cluster">Cluster</button>
     <button class="btn sm" id="fit" title="Frame everything — F">Fit</button>
   </div>
 </div>
 
-<div class="hint" id="hint">Drag from empty space to fling a world. Two fingers or scroll to zoom.</div>
+<div class="hint" id="hint">Drag to fling a world. Smash two together and watch them melt.</div>
 
 <script>
 (function(){
 'use strict';
 
 /* ============================ constants ============================ */
-/* G is 1 and the unit system is chosen so that pleasant-looking systems come
-   out with round numbers. Distances are "units", masses are relative to a
-   small moon, and one simulated second is one second at 1x speed. */
 const G = 1;
-const SOFT = 2.2;            /* softening length: keeps r -> 0 from exploding */
-const MAX_BODIES = 700;
-const SUBSTEPS = 4;          /* per rendered frame, for stability at speed */
+const SOFT = 2.0;
+const MAX_BODIES = 260;
+const MAX_PARTS  = 7000;
+const SUBSTEPS = 4;
+const GRAV_SOURCES = 24;     /* particles only feel the heaviest few; the rest are noise */
+/* Debris does not just fade out. Given a stable orbit it settles, and given
+   enough company far enough from its host it clumps into something solid. */
+const PART_MASS   = 0.055;   /* what one rock fragment is worth */
+const ROCHE       = 2.6;     /* host radii: inside this, tides keep it a ring */
+const CLUMP_CELL  = 7;       /* world units; the grid accretion buckets into */
+const CLUMP_MIN   = 16;      /* fragments needed before they pull together */
+const CLUMP_SPREAD= 1.5;     /* how alike their velocities must be */
 
-/* Body classes the palette offers. Radius is derived from mass so that a
-   hundred moons really do look like a hundred moons' worth of rock. */
+/* ============================ noise ============================ */
+/* Deterministic value noise, so a world with the same seed always comes back
+   looking the same. */
+function hash2(x,y,seed){
+  let h = x*374761393 + y*668265263 + seed*1442695040888963407;
+  h = (h ^ (h >>> 13)) * 1274126177;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
+}
+function smooth(t){ return t*t*(3-2*t); }
+function vnoise(x,y,seed){
+  const xi = Math.floor(x), yi = Math.floor(y);
+  const xf = x-xi, yf = y-yi;
+  const u = smooth(xf), v = smooth(yf);
+  const a = hash2(xi,yi,seed),     b = hash2(xi+1,yi,seed);
+  const c = hash2(xi,yi+1,seed),   d = hash2(xi+1,yi+1,seed);
+  return (a*(1-u)+b*u)*(1-v) + (c*(1-u)+d*u)*v;
+}
+function fbm(x,y,seed,oct,gain){
+  let sum=0, amp=1, f=1, norm=0;
+  for(let i=0;i<oct;i++){
+    sum += vnoise(x*f, y*f, seed+i*101)*amp;
+    norm += amp; amp *= (gain||0.5); f *= 2;
+  }
+  return sum/norm;
+}
+const clamp01 = v => v<0?0:v>1?1:v;
+const lerp = (a,b,t)=>a+(b-a)*t;
+function mixRGB(a,b,t){ return [lerp(a[0],b[0],t)|0, lerp(a[1],b[1],t)|0, lerp(a[2],b[2],t)|0]; }
+
+/* ============================ palettes ============================ */
+/* Each ramp runs from lowland to highland. Rendering picks a band by terrain
+   height, so the same ramp gives seas, shores, plains and peaks. */
+const PALETTES = {
+  terran:  {name:'Terran',  ramp:[[24,52,110],[32,86,150],[196,178,120],[58,124,64],[42,94,52],[120,116,104],[236,240,246]]},
+  desert:  {name:'Desert',  ramp:[[104,60,32],[150,92,44],[196,140,68],[220,176,104],[188,132,66],[128,84,44],[238,214,168]]},
+  volcanic:{name:'Volcanic',ramp:[[28,16,20],[58,26,24],[110,36,26],[186,58,26],[248,124,32],[255,196,84],[255,242,196]]},
+  ice:     {name:'Ice',     ramp:[[26,52,84],[44,88,128],[110,166,204],[176,216,238],[214,238,250],[238,250,255],[255,255,255]]},
+  barren:  {name:'Barren',  ramp:[[32,30,36],[54,50,58],[80,74,82],[110,102,110],[142,134,140],[176,168,174],[214,208,212]]},
+  jade:    {name:'Jade',    ramp:[[12,40,42],[18,66,62],[30,102,88],[62,148,116],[120,186,140],[186,220,178],[236,248,230]]},
+  amber:   {name:'Amber',   ramp:[[64,30,12],[120,62,20],[184,110,34],[224,158,58],[242,196,110],[250,226,172],[255,246,222]]},
+  violet:  {name:'Violet',  ramp:[[28,16,52],[52,28,92],[86,46,140],[126,78,188],[168,124,220],[206,176,240],[240,224,255]]},
+  azure:   {name:'Azure',   ramp:[[8,28,64],[14,52,104],[24,86,152],[52,132,198],[110,180,226],[178,218,242],[232,246,255]]},
+  ember:   {name:'Ember',   ramp:[[42,10,8],[92,20,12],[156,38,16],[214,74,22],[248,132,44],[255,190,96],[255,238,190]]}
+};
+const PAL_KEYS = Object.keys(PALETTES);
+
+/* ============================ body classes ============================ */
+/* class drives how the sprite is generated and how the body behaves in a
+   collision; the palette only drives colour. */
+const CLASSES = {
+  rock: {name:'Rocky',    dens:100, sprite:'rock',  pal:'terran'},
+  ice:  {name:'Icy',      dens:80,  sprite:'rock',  pal:'ice'},
+  gas:  {name:'Gas',      dens:26,  sprite:'gas',   pal:'amber',   gas:1},
+  lava: {name:'Molten',   dens:110, sprite:'lava',  pal:'volcanic',hot:1},
+  star: {name:'Star',     dens:60,  sprite:'star',  pal:'amber',   lum:1, hot:1},
+  exotic:{name:'Exotic',  dens:900, sprite:'exotic',pal:'violet'}
+};
+
+/* ============================ sprite forge ============================ */
+/* Every body gets a little pixel sprite baked once and reused. Nothing here is
+   drawn with a circle primitive: it is all per-pixel, which is what gives the
+   chunky edge that reads as pixel art. */
+const spriteCache = new Map();
+function spriteKey(spec,res){ return spec.cls+'|'+spec.pal+'|'+spec.seed+'|'+res; }
+
+function makeSprite(spec, res){
+  const key = spriteKey(spec,res);
+  let s = spriteCache.get(key);
+  if(s) return s;
+  if(spriteCache.size > 420) spriteCache.clear();
+
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = res;
+  const g = cv.getContext('2d');
+  const img = g.createImageData(res,res);
+  const D = img.data;
+  const R = res/2, seed = spec.seed;
+  const ramp = (PALETTES[spec.pal]||PALETTES.terran).ramp;
+  const kind = CLASSES[spec.cls] ? CLASSES[spec.cls].sprite : 'rock';
+  /* light from the upper left, the convention that reads as "sphere" */
+  const lx=-0.55, ly=-0.62, lz=0.56;
+
+  for(let py=0; py<res; py++){
+    for(let px=0; px<res; px++){
+      const dx=(px+0.5-R)/R, dy=(py+0.5-R)/R;
+      const d2 = dx*dx+dy*dy;
+      const i=(py*res+px)*4;
+      if(d2 > 1){ D[i+3]=0; continue; }
+      const dz = Math.sqrt(1-d2);
+      /* project the pixel onto the sphere so terrain wraps instead of smearing */
+      const u = dx/(0.35+dz*0.65), v = dy/(0.35+dz*0.65);
+      let col, alpha=255;
+
+      if(kind==='gas'){
+        /* latitude bands, warped sideways by turbulence, plus a storm or two */
+        const warp = fbm(u*1.7, v*2.6, seed, 4, 0.55);
+        const band = Math.sin((v*3.1 + warp*0.85)*Math.PI*2.2);
+        let t = clamp01(0.5 + band*0.34 + (warp-0.5)*0.30);
+        const storm = fbm(u*3.2+11, v*3.2-7, seed+53, 3, 0.5);
+        if(storm > 0.79) t = clamp01(t + (storm-0.79)*2.6);
+        col = rampAt(ramp, t);
+      } else if(kind==='star'){
+        const gran = fbm(u*4.5, v*4.5, seed, 3, 0.55);
+        const t = clamp01(0.62 + gran*0.42);
+        col = rampAt(ramp, t);
+        /* limb darkening: a star is brightest dead centre */
+        const limb = 0.55 + 0.45*dz;
+        col = [Math.min(255,col[0]*limb*1.25)|0, Math.min(255,col[1]*limb*1.18)|0, Math.min(255,col[2]*limb)|0];
+      } else if(kind==='lava'){
+        const crust = fbm(u*3.0, v*3.0, seed, 4, 0.5);
+        const veins = Math.abs(fbm(u*5.5+3, v*5.5-3, seed+17, 3, 0.6) - 0.5);
+        let t = clamp01(crust*0.55);
+        if(veins < 0.055) t = clamp01(0.82 + (0.055-veins)*4);   /* glowing cracks */
+        col = rampAt(ramp, t);
+      } else if(kind==='exotic'){
+        const swirl = fbm(u*3.4, v*3.4, seed, 3, 0.6);
+        col = rampAt(ramp, clamp01(swirl*0.9));
+      } else {
+        /* rock and ice: continents from fbm, with a coastline that snaps to a
+           band so it stays crisp at pixel scale */
+        let h = fbm(u*2.1+5, v*2.1-5, seed, 5, 0.52);
+        h = clamp01((h-0.34)*1.75);
+        const craters = fbm(u*6.5, v*6.5, seed+91, 2, 0.5);
+        if(craters > 0.76) h = clamp01(h - (craters-0.76)*1.2);
+        col = rampAt(ramp, h);
+      }
+
+      if(kind!=='star'){
+        /* diffuse shading against the sphere normal, with a little ambient so
+           the night side is not pure black */
+        let nl = dx*lx + dy*ly + dz*lz;
+        nl = 0.26 + 0.86*Math.max(0, nl);
+        col = [Math.min(255,col[0]*nl)|0, Math.min(255,col[1]*nl)|0, Math.min(255,col[2]*nl)|0];
+        if(d2 > 0.93) alpha = 255*(1-(d2-0.93)/0.07)*0.9+25;   /* soften the rim by one pixel */
+      }
+      D[i]=col[0]; D[i+1]=col[1]; D[i+2]=col[2]; D[i+3]=alpha;
+    }
+  }
+  g.putImageData(img,0,0);
+  spriteCache.set(key,cv);
+  return cv;
+}
+function rampAt(ramp,t){
+  t = clamp01(t)*(ramp.length-1);
+  const i = Math.min(ramp.length-2, Math.floor(t));
+  return mixRGB(ramp[i], ramp[i+1], t-i);
+}
+
+/* ============================ the roster ============================ */
+/* mass is the only number that matters to gravity; radius follows from mass
+   and the class density, so a gas giant is genuinely puffy for its weight. */
 const KINDS = [
-  {id:'asteroid', name:'Asteroid', mass:0.35,  color:'#9a9db0', glow:0.15},
-  {id:'moon',     name:'Moon',     mass:2.4,   color:'#c8cddd', glow:0.2},
-  {id:'planet',   name:'Planet',   mass:18,    color:'#5aa9e6', glow:0.3},
-  {id:'giant',    name:'Giant',    mass:120,   color:'#e8a35c', glow:0.42},
-  {id:'star',     name:'Star',     mass:1400,  color:'#ffd873', glow:1.15, lum:1},
-  {id:'hole',     name:'Black hole',mass:9000, color:'#0a0a12', glow:0,   hole:1}
+  {id:'asteroid', name:'Asteroid',   cls:'rock', pal:'barren',   mass:0.5},
+  {id:'comet',    name:'Comet',      cls:'ice',  pal:'ice',      mass:0.3,  comet:1},
+  {id:'moon',     name:'Moon',       cls:'rock', pal:'barren',   mass:2.6},
+  {id:'dwarfp',   name:'Dwarf planet',cls:'rock',pal:'desert',   mass:7},
+  {id:'rocky',    name:'Rocky world',cls:'rock', pal:'terran',   mass:22},
+  {id:'iceworld', name:'Ice world',  cls:'ice',  pal:'ice',      mass:26},
+  {id:'molten',   name:'Molten world',cls:'lava',pal:'volcanic', mass:28},
+  {id:'gas',      name:'Gas giant',  cls:'gas',  pal:'amber',    mass:150},
+  {id:'icegiant', name:'Ice giant',  cls:'gas',  pal:'azure',    mass:100},
+  {id:'dwarfs',   name:'Dwarf star', cls:'star', pal:'ember',    mass:520},
+  {id:'star',     name:'Star',       cls:'star', pal:'amber',    mass:1500},
+  {id:'neutron',  name:'Neutron star',cls:'exotic',pal:'azure',  mass:5200, dens:9000},
+  {id:'hole',     name:'Black hole', cls:'exotic',pal:'violet',  mass:9000, dens:20000, hole:1}
 ];
-const kindById = id => KINDS.find(k=>k.id===id) || KINDS[2];
+const kindById = id => KINDS.find(k=>k.id===id) || KINDS[4];
+const densityOf = spec => spec.dens || (CLASSES[spec.cls] ? CLASSES[spec.cls].dens : 100);
+/* Radius from mass and density. The constant is chosen so a rocky world of
+   mass 22 comes out about 5 units across — big enough on screen to read its
+   terrain, small enough that a solar system still fits. */
+const RSCALE = 15;
+const radiusFor = (m, dens) => Math.max(0.55, Math.cbrt(m/Math.max(1,dens))*RSCALE);
+const massFor   = (r, dens) => dens*Math.pow(r/RSCALE,3);
 
-const DENSITY = 0.019;                       /* r = (m / (DENSITY))^(1/3) */
-const radiusFor = m => Math.max(1.1, Math.cbrt(m/DENSITY)*0.32);
+let seedCounter = 1;
+function specFromKind(k, seed){
+  return {cls:k.cls, pal:k.pal, seed: seed===undefined ? (seedCounter++*2654435761)%100000 : seed,
+          dens:k.dens, comet:k.comet||0, hole:k.hole||0, name:k.name};
+}
 
 /* ============================ state ============================ */
-let bodies = [];
+let bodies = [], parts = [];
 let nextId = 1;
-let running = true;
-let showTrails = true;
-let orbitAssist = true;
-let timeScale = 1;
-let selected = null;
-let following = null;
-let simTime = 0;
-
+let running = true, showTrails = true, orbitAssist = true;
+let timeScale = 1, selected = null, following = null;
 const cam = {x:0, y:0, zoom:1};
 
-/* ============================ bodies ============================ */
-function makeBody(x,y,vx,vy,kind){
-  const k = typeof kind==='string' ? kindById(kind) : kind;
+function makeBody(x,y,vx,vy,spec,mass){
+  const m = mass===undefined ? 20 : mass;
+  const cl = CLASSES[spec.cls] || CLASSES.rock;
   return {
-    id: nextId++, x, y, vx, vy,
-    m: k.mass, r: radiusFor(k.mass),
-    ax:0, ay:0,
-    color: k.color, glow: k.glow, lum: k.lum||0, hole: k.hole||0,
-    kind: k.id, name: k.name,
+    id: nextId++, x, y, vx, vy, ax:0, ay:0,
+    m, r: radiusFor(m, densityOf(spec)),
+    spec: Object.assign({}, spec),
+    name: spec.name || cl.name,
+    lum: cl.lum||0, hot: cl.hot||0, gas: cl.gas||0, hole: spec.hole||0, comet: spec.comet||0,
+    /* heat is 0 for settled rock and 1 for freshly shocked magma; it drives both
+       the glow and how long before the surface reads as rock again */
+    heat: cl.hot ? 1 : 0,
+    spin: (Math.random()-0.5)*0.25,
+    ang: Math.random()*6.283,
     trail: [], flash: 0
   };
 }
-function addBody(b){
-  if(bodies.length >= MAX_BODIES) return null;
-  bodies.push(b);
-  return b;
+function addBody(b){ if(bodies.length>=MAX_BODIES) return null; bodies.push(b); return b; }
+
+/* ============================ particles ============================ */
+/* Debris and gas thrown out by impacts. They feel the gravity of the heavy
+   bodies but do not pull on anything themselves, which is what keeps a few
+   thousand of them affordable. */
+function spawnPart(x,y,vx,vy,kind,rgb,heat,life){
+  if(parts.length>=MAX_PARTS) parts.shift();
+  parts.push({x,y,vx,vy,kind,r:rgb[0],g:rgb[1],b:rgb[2],heat,life,age:0,settled:0,
+              size: kind==='gas' ? (1+Math.random()*1.6) : (Math.random()<0.25?2:1)});
 }
-/* Momentum is conserved, mass adds, and radius follows from the combined mass.
-   The survivor keeps the heavier body's identity so a star eating a pebble is
-   still a star. */
-function merge(a,b){
-  const heavy = a.m >= b.m ? a : b;
-  const light = heavy === a ? b : a;
-  const M = a.m + b.m;
-  heavy.x = (a.x*a.m + b.x*b.m)/M;
-  heavy.y = (a.y*a.m + b.y*b.m)/M;
-  heavy.vx = (a.vx*a.m + b.vx*b.m)/M;
-  heavy.vy = (a.vy*a.m + b.vy*b.m)/M;
-  heavy.m = M;
-  heavy.r = radiusFor(M);
-  heavy.flash = Math.min(1, 0.35 + light.m/Math.max(1,M));
-  light.dead = true;
-  if(selected === light) selected = heavy;
-  if(following === light) following = heavy;
-  /* A merge is a discontinuity; a trail drawn straight through it lies. */
+function stepParts(dt, sources){
+  for(let i=parts.length-1;i>=0;i--){
+    const p = parts[i];
+    let ax=0, ay=0, host=null, hostPull=0;
+    for(let s=0;s<sources.length;s++){
+      const b = sources[s];
+      const dx=b.x-p.x, dy=b.y-p.y;
+      const d2 = dx*dx+dy*dy+SOFT*SOFT;
+      const inv = 1/Math.sqrt(d2);
+      const f = G*b.m*inv*inv*inv;
+      ax+=f*dx; ay+=f*dy;
+      const pull = b.m/d2;
+      if(pull>hostPull){ hostPull=pull; host=b; }
+      /* swallowed: the debris settles and its mass joins the body */
+      if(d2 < b.r*b.r){
+        b.m += p.kind==='gas' ? PART_MASS*0.1 : PART_MASS;
+        b.r = radiusFor(b.m, densityOf(b.spec));
+        if(p.heat>0.4) b.heat = Math.min(1, b.heat + 0.02);
+        p.dead = true; break;
+      }
+    }
+    if(p.dead){ parts.splice(i,1); continue; }
+    p.vx+=ax*dt; p.vy+=ay*dt;
+    p.x+=p.vx*dt; p.y+=p.vy*dt;
+    p.host = host;
+    p.settled = 0; p.ring = 0;
+
+    if(host){
+      const dx=p.x-host.x, dy=p.y-host.y;
+      const r=Math.hypot(dx,dy)||1e-6;
+      const rvx=p.vx-host.vx, rvy=p.vy-host.vy;
+      const v2=rvx*rvx+rvy*rvy;
+      /* bound to its host means it is in orbit rather than leaving */
+      if(v2/2 - G*host.m/r < 0){
+        p.settled = 1;
+        /* Inside the Roche distance, tides win: the debris can never clump, so
+           instead let it grind itself circular, which is how a ring forms. */
+        if(r < host.r*ROCHE){
+          p.ring = 1;
+          /* Killing only the radial motion is not enough: it just makes the
+             current radius an apsis and leaves the speed mismatch that made the
+             orbit elliptical. Ease the whole velocity toward the circular one
+             for this radius instead — which is what endless small collisions
+             between ring particles actually do. */
+          const spin = (dx*rvy - dy*rvx) < 0 ? -1 : 1;
+          const vc = Math.sqrt(G*host.m/r);
+          const tx = host.vx + (-dy/r)*vc*spin;
+          const ty = host.vy + ( dx/r)*vc*spin;
+          const k = Math.min(1, dt*0.6);
+          p.vx += (tx - p.vx)*k;
+          p.vy += (ty - p.vy)*k;
+        } else p.ring = 0;
+      }
+    }
+    p.age += p.settled ? dt*0.12 : dt;   /* settled debris lingers; strays fade */
+    if(p.kind!=='gas') p.heat = Math.max(0, p.heat - dt*0.055);
+    if(p.age>p.life) parts.splice(i,1);
+  }
+}
+
+/* ---- accretion ---- */
+/* Fragments sharing a patch of sky and a velocity are, physically, one object
+   that has not noticed yet. Outside the Roche limit they are allowed to
+   notice. Inside it they stay a ring, which is exactly why Saturn has one. */
+let clumpTimer = 0;
+function accrete(dt){
+  clumpTimer -= dt;
+  if(clumpTimer > 0) return;
+  clumpTimer = 0.5;
+  if(bodies.length >= MAX_BODIES) return;
+
+  const cells = new Map();
+  for(let i=0;i<parts.length;i++){
+    const p = parts[i];
+    if(p.kind==='gas' || !p.settled || p.ring) continue;
+    const cx = Math.floor(p.x/CLUMP_CELL), cy = Math.floor(p.y/CLUMP_CELL);
+    const key = cx+','+cy;
+    let c = cells.get(key);
+    if(!c){ c=[]; cells.set(key,c); }
+    c.push(i);
+  }
+  const doomed = new Set();
+  for(const group of cells.values()){
+    if(group.length < CLUMP_MIN) continue;
+    let mx=0,my=0,mvx=0,mvy=0;
+    for(const i of group){ const p=parts[i]; mx+=p.x; my+=p.y; mvx+=p.vx; mvy+=p.vy; }
+    const n=group.length;
+    mx/=n; my/=n; mvx/=n; mvy/=n;
+    /* only if they are genuinely travelling together */
+    let spread=0;
+    for(const i of group){ const p=parts[i]; spread+=Math.hypot(p.vx-mvx,p.vy-mvy); }
+    if(spread/n > CLUMP_SPREAD) continue;
+
+    const mass = n*PART_MASS;
+    /* what it grew up to be */
+    const kindId = mass < 1.4 ? 'asteroid' : mass < 5 ? 'moon' : 'dwarfp';
+    const k = kindById(kindId);
+    const spec = specFromKind(k);
+    /* wear the colour of the rubble it came from */
+    let rr=0,gg=0,bb=0;
+    for(const i of group){ const p=parts[i]; rr+=p.r; gg+=p.g; bb+=p.b; }
+    spec.pal = nearestPalette(rr/n, gg/n, bb/n);
+    const nb = addBody(makeBody(mx,my,mvx,mvy,spec,mass));
+    if(!nb) break;
+    nb.name = k.name;
+    nb.flash = 0.5;
+    for(const i of group) doomed.add(i);
+    if(bodies.length >= MAX_BODIES) break;
+  }
+  if(doomed.size){
+    const keep=[];
+    for(let i=0;i<parts.length;i++) if(!doomed.has(i)) keep.push(parts[i]);
+    parts = keep;
+    accelerate();
+    for(const b of bodies){ b.ax=b.nax; b.ay=b.nay; }
+  }
+}
+function nearestPalette(r,g,b){
+  let best='barren', bestD=Infinity;
+  for(const key of PAL_KEYS){
+    const c=PALETTES[key].ramp[4];
+    const d=(c[0]-r)**2+(c[1]-g)**2+(c[2]-b)**2;
+    if(d<bestD){ bestD=d; best=key; }
+  }
+  return best;
+}
+/* rock ejecta glows white-hot and fades down through orange to its own colour */
+function heatColor(base, heat){
+  if(heat<=0) return base;
+  const hot = heat>0.66 ? [255,246,214] : heat>0.33 ? [255,168,64] : [196,72,28];
+  const t = heat>0.66 ? (heat-0.66)/0.34 : heat>0.33 ? (heat-0.33)/0.33 : heat/0.33;
+  return mixRGB(base, hot, clamp01(0.35+t*0.65));
+}
+
+/* ============================ collisions ============================ */
+/* A gentle touch merges. A real impact shatters: the smaller body is turned
+   into molten ejecta thrown out along the impact, and the survivor keeps only
+   what it actually swept up. Gas bodies throw gas instead of rock. */
+const SHATTER_SPEED = 5.5;
+function collide(){
+  let changed = false;
+  for(let i=0;i<bodies.length;i++){
+    const a=bodies[i]; if(a.dead) continue;
+    for(let j=i+1;j<bodies.length;j++){
+      const b=bodies[j]; if(b.dead) continue;
+      const dx=b.x-a.x, dy=b.y-a.y, rr=a.r+b.r;
+      if(dx*dx+dy*dy > rr*rr) continue;
+      changed = true;
+      const heavy = a.m>=b.m ? a : b, light = heavy===a ? b : a;
+      const rvx=b.vx-a.vx, rvy=b.vy-a.vy;
+      const impact = Math.hypot(rvx,rvy);
+      if(heavy.hole || impact < SHATTER_SPEED || light.m < heavy.m*0.02) mergeBodies(a,b);
+      else shatter(heavy, light, impact);
+    }
+  }
+  if(changed){
+    if(bodies.some(b=>b.dead)) bodies = bodies.filter(b=>!b.dead);
+    /* Stored accelerations refer to a set of bodies that no longer exists. */
+    accelerate();
+    for(const b of bodies){ b.ax=b.nax; b.ay=b.nay; }
+  }
+}
+function mergeBodies(a,b){
+  const heavy = a.m>=b.m ? a : b, light = heavy===a ? b : a;
+  const M = a.m+b.m;
+  const rvx=b.vx-a.vx, rvy=b.vy-a.vy;
+  const impact = Math.hypot(rvx,rvy);
+  heavy.x=(a.x*a.m+b.x*b.m)/M; heavy.y=(a.y*a.m+b.y*b.m)/M;
+  heavy.vx=(a.vx*a.m+b.vx*b.m)/M; heavy.vy=(a.vy*a.m+b.vy*b.m)/M;
+  heavy.m=M; heavy.r=radiusFor(M, densityOf(heavy.spec));
+  heavy.flash=Math.min(1,0.3+light.m/M);
+  /* the energy of the impact goes into the surface, and it takes time to leave */
+  if(!heavy.lum) heavy.heat = Math.min(1, heavy.heat + impact/14 + light.m/M*0.5);
+  heavy.trail.length=0;
+  light.dead=true;
+  if(selected===light) selected=heavy;
+  if(following===light) following=heavy;
+}
+function shatter(heavy, light, impact){
+  const isGas = light.gas || heavy.gas;
+  const pal = (PALETTES[light.spec.pal]||PALETTES.terran).ramp;
+  const base = pal[Math.floor(pal.length*0.55)];
+  const dx=light.x-heavy.x, dy=light.y-heavy.y;
+  const d=Math.max(0.001,Math.hypot(dx,dy));
+  const nx=dx/d, ny=dy/d;
+  /* the debris carries the pair's momentum, plus a spray along the impact */
+  const cmvx=(heavy.vx*heavy.m + light.vx*light.m)/(heavy.m+light.m);
+  const cmvy=(heavy.vy*heavy.m + light.vy*light.m)/(heavy.m+light.m);
+  const n = Math.min(isGas?1100:700, Math.round((isGas?110:62)*Math.cbrt(light.m)+90));
+  /* Ejecta near the survivor's escape speed: some of it leaves, a lot of it
+     falls back and strings itself into a ring, which is the good part. */
+  const spread = Math.min(impact*0.30, 9);
+  for(let k=0;k<n;k++){
+    const a = Math.random()*Math.PI*2;
+    const sp = spread*(0.25+Math.random()*0.95);
+    /* biased outward along the impact normal so it looks like a splash, not a puff */
+    const bx = nx*spread*0.55*Math.random(), by = ny*spread*0.55*Math.random();
+    const jitter = light.r*(0.3+Math.random()*1.5);
+    spawnPart(
+      light.x + Math.cos(a)*jitter, light.y + Math.sin(a)*jitter,
+      cmvx + Math.cos(a)*sp + bx, cmvy + Math.sin(a)*sp + by,
+      isGas ? 'gas' : 'rock',
+      isGas ? rampAt(pal, 0.45+Math.random()*0.4) : base,
+      isGas ? 0 : 0.75+Math.random()*0.25,
+      isGas ? 70+Math.random()*90 : 26+Math.random()*40
+    );
+  }
+  /* the survivor absorbs a share and is left glowing */
+  const kept = light.m*0.42;
+  heavy.vx = (heavy.vx*heavy.m + light.vx*kept)/(heavy.m+kept);
+  heavy.vy = (heavy.vy*heavy.m + light.vy*kept)/(heavy.m+kept);
+  heavy.m += kept;
+  heavy.r = radiusFor(heavy.m, densityOf(heavy.spec));
+  if(!heavy.lum) heavy.heat = 1;
+  heavy.flash = 1;
   heavy.trail.length = 0;
-  return heavy;
+  light.dead = true;
+  if(selected===light) selected=null;
+  if(following===light) following=null;
 }
 
 /* ============================ physics ============================ */
-/* Velocity Verlet, which is symplectic: orbits hold their shape over long runs
-   instead of spiralling out the way plain Euler makes them. Accelerations are
-   carried between steps so gravity is evaluated once per step, not twice. */
 function accelerate(){
-  const n = bodies.length;
-  for(let i=0;i<n;i++){ bodies[i].nax = 0; bodies[i].nay = 0; }
+  const n=bodies.length;
+  for(let i=0;i<n;i++){ bodies[i].nax=0; bodies[i].nay=0; }
   for(let i=0;i<n;i++){
-    const a = bodies[i];
+    const a=bodies[i];
     for(let j=i+1;j<n;j++){
-      const b = bodies[j];
-      const dx = b.x-a.x, dy = b.y-a.y;
-      const d2 = dx*dx + dy*dy + SOFT*SOFT;
-      const inv = 1/Math.sqrt(d2);
-      const f = G*inv*inv*inv;          /* G / |r|^3, so f*d gives the vector */
-      a.nax += f*dx*b.m;  a.nay += f*dy*b.m;
-      b.nax -= f*dx*a.m;  b.nay -= f*dy*a.m;
+      const b=bodies[j];
+      const dx=b.x-a.x, dy=b.y-a.y;
+      const d2=dx*dx+dy*dy+SOFT*SOFT;
+      const inv=1/Math.sqrt(d2);
+      const f=G*inv*inv*inv;
+      a.nax+=f*dx*b.m; a.nay+=f*dy*b.m;
+      b.nax-=f*dx*a.m; b.nay-=f*dy*a.m;
     }
   }
 }
+/* Velocity Verlet: symplectic, so orbits keep their shape instead of spiralling
+   the way plain Euler makes them. */
 function integrate(dt){
-  const n = bodies.length;
+  const n=bodies.length;
   for(let i=0;i<n;i++){
-    const b = bodies[i];
-    b.x += b.vx*dt + 0.5*b.ax*dt*dt;
-    b.y += b.vy*dt + 0.5*b.ay*dt*dt;
+    const b=bodies[i];
+    b.x+=b.vx*dt+0.5*b.ax*dt*dt;
+    b.y+=b.vy*dt+0.5*b.ay*dt*dt;
   }
   accelerate();
   for(let i=0;i<n;i++){
-    const b = bodies[i];
-    b.vx += 0.5*(b.ax + b.nax)*dt;
-    b.vy += 0.5*(b.ay + b.nay)*dt;
-    b.ax = b.nax; b.ay = b.nay;
+    const b=bodies[i];
+    b.vx+=0.5*(b.ax+b.nax)*dt;
+    b.vy+=0.5*(b.ay+b.nay)*dt;
+    b.ax=b.nax; b.ay=b.nay;
   }
   collide();
 }
-function collide(){
-  for(let i=0;i<bodies.length;i++){
-    const a = bodies[i];
-    if(a.dead) continue;
-    for(let j=i+1;j<bodies.length;j++){
-      const b = bodies[j];
-      if(b.dead) continue;
-      const dx = b.x-a.x, dy = b.y-a.y;
-      const rr = a.r + b.r;
-      if(dx*dx + dy*dy <= rr*rr) merge(a,b);
-    }
-  }
-  if(bodies.some(b=>b.dead)){
-    bodies = bodies.filter(b=>!b.dead);
-    /* Stored accelerations refer to a set of bodies that no longer exists. */
-    accelerate();
-    for(const b of bodies){ b.ax = b.nax; b.ay = b.nay; }
-  }
+function gravitySources(){
+  if(bodies.length<=GRAV_SOURCES) return bodies;
+  return bodies.slice().sort((a,b)=>b.m-a.m).slice(0,GRAV_SOURCES);
 }
-
-/* Trail length is shared out between however many bodies exist, so a thousand
-   specks cost about the same to draw as ten planets. */
 function trailCap(){ return Math.max(14, Math.min(150, Math.round(3600/Math.max(1,bodies.length)))); }
-/* Sampled by distance travelled, not by frame. A frame-sampled trail is a
-   different length at every speed setting and vanishes entirely when slow. */
+/* Sampled by distance travelled, not per frame, so trails look the same at
+   every speed instead of vanishing when slow. */
 function recordTrails(){
-  const cap = trailCap();
+  const cap=trailCap();
   for(const b of bodies){
-    const t = b.trail, n = t.length;
-    if(n >= 2){
-      const dx = b.x-t[n-2], dy = b.y-t[n-1];
-      const minD = Math.max(0.7, b.r*0.5);
-      if(dx*dx + dy*dy < minD*minD) continue;
+    const t=b.trail, n=t.length;
+    if(n>=2){
+      const dx=b.x-t[n-2], dy=b.y-t[n-1];
+      const minD=Math.max(0.7,b.r*0.5);
+      if(dx*dx+dy*dy < minD*minD) continue;
     }
-    t.push(b.x, b.y);
-    while(t.length > cap*2) t.splice(0,2);
+    t.push(b.x,b.y);
+    while(t.length>cap*2) t.splice(0,2);
   }
 }
-
 function step(dt){
-  const h = dt/SUBSTEPS;
+  const h=dt/SUBSTEPS;
   for(let s=0;s<SUBSTEPS;s++) integrate(h);
-  simTime += dt;
+  const src = gravitySources();
+  stepParts(dt, src);
+  accrete(dt);
   recordTrails();
-  for(const b of bodies) if(b.flash>0) b.flash = Math.max(0, b.flash - dt*1.6);
+  for(const b of bodies){
+    if(b.flash>0) b.flash=Math.max(0,b.flash-dt*1.6);
+    /* magma cools back to rock; stars stay lit */
+    if(!b.lum && b.heat>0) b.heat = Math.max(0, b.heat - dt*0.035);
+    b.ang += b.spin*dt;
+  }
 }
 
 /* ============================ orbital helpers ============================ */
-/* The body that dominates the gravitational pull at a point — used for the
-   auto-orbit assist and for telling you what a thing is actually orbiting. */
 function dominant(x,y,ignore){
-  let best=null, bestPull=0;
+  let best=null,bestPull=0;
   for(const b of bodies){
-    if(b===ignore || b.dead) continue;
+    if(b===ignore||b.dead) continue;
     const dx=b.x-x, dy=b.y-y;
-    const pull = b.m/(dx*dx+dy*dy+SOFT*SOFT);
+    const pull=b.m/(dx*dx+dy*dy+SOFT*SOFT);
     if(pull>bestPull){ bestPull=pull; best=b; }
   }
   return best;
 }
-/* Velocity for a circular orbit around host, perpendicular to the radius and
-   in whichever direction keeps the existing spin of the system. */
 function circularVelocity(x,y,host,sign){
-  const dx = x-host.x, dy = y-host.y;
-  const r = Math.hypot(dx,dy);
-  if(r < 1e-6) return {vx:0, vy:0};
-  const v = Math.sqrt(G*host.m/r);
-  const s = sign||1;
-  return {vx: host.vx + (-dy/r)*v*s, vy: host.vy + (dx/r)*v*s};
+  const dx=x-host.x, dy=y-host.y, r=Math.hypot(dx,dy);
+  if(r<1e-6) return {vx:0,vy:0};
+  const v=Math.sqrt(G*host.m/r), s=sign||1;
+  return {vx:host.vx+(-dy/r)*v*s, vy:host.vy+(dx/r)*v*s};
 }
-/* Keplerian period from the vis-viva energy, when the orbit is actually bound. */
 function orbitOf(b){
-  const host = dominant(b.x, b.y, b);
+  const host=dominant(b.x,b.y,b);
   if(!host) return null;
-  const dx = b.x-host.x, dy = b.y-host.y;
-  const r = Math.hypot(dx,dy);
-  const rvx = b.vx-host.vx, rvy = b.vy-host.vy;
-  const v2 = rvx*rvx + rvy*rvy;
-  const mu = G*(host.m + b.m);
-  const energy = v2/2 - mu/r;
-  if(energy >= 0) return {host, bound:false};
-  const a = -mu/(2*energy);
-  return {host, bound:true, a, period: 2*Math.PI*Math.sqrt(a*a*a/mu)};
+  const dx=b.x-host.x, dy=b.y-host.y, r=Math.hypot(dx,dy);
+  const rvx=b.vx-host.vx, rvy=b.vy-host.vy;
+  const v2=rvx*rvx+rvy*rvy, mu=G*(host.m+b.m);
+  const e=v2/2-mu/r;
+  if(e>=0) return {host,bound:false};
+  const a=-mu/(2*e);
+  return {host,bound:true,a,period:2*Math.PI*Math.sqrt(a*a*a/mu)};
 }
 
-/* ============================ camera ============================ */
-const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d');
-let W=0, H=0, DPR=1;
+/* ============================ render pipeline ============================ */
+/* Everything is drawn into a small buffer and blown up with nearest-neighbour.
+   That is what makes it pixel art, and it makes a few thousand particles cheap
+   because each one is a one- or two-pixel rect at buffer scale. */
+const view = document.getElementById('c');
+const vctx = view.getContext('2d');
+const buf = document.createElement('canvas');
+const ctx = buf.getContext('2d');
+let W=0, H=0, PIX=3;
 
 function resize(){
-  DPR = Math.min(window.devicePixelRatio||1, 2);   /* 3x on a Retina iPad is a lot of pixels for no visible gain */
-  W = canvas.clientWidth; H = canvas.clientHeight;
-  canvas.width = Math.round(W*DPR); canvas.height = Math.round(H*DPR);
-  seedStars();
+  const cw = view.clientWidth, ch = view.clientHeight;
+  /* aim for a buffer around 560px wide: chunky enough to read as pixel art,
+     fine enough that a planet still has real terrain on it */
+  PIX = Math.max(2, Math.min(5, Math.round(cw/560)));
+  W = Math.max(200, Math.round(cw/PIX));
+  H = Math.max(150, Math.round(ch/PIX));
+  buf.width=W; buf.height=H;
+  view.width=Math.round(cw*Math.min(devicePixelRatio||1,2));
+  view.height=Math.round(ch*Math.min(devicePixelRatio||1,2));
+  vctx.imageSmoothingEnabled=false;
+  ctx.imageSmoothingEnabled=false;
+  seedSky();
 }
 addEventListener('resize', resize);
 
-const toScreenX = wx => (wx - cam.x)*cam.zoom + W/2;
-const toScreenY = wy => (wy - cam.y)*cam.zoom + H/2;
-const toWorldX  = sx => (sx - W/2)/cam.zoom + cam.x;
-const toWorldY  = sy => (sy - H/2)/cam.zoom + cam.y;
+const toScreenX = wx => (wx-cam.x)*cam.zoom + W/2;
+const toScreenY = wy => (wy-cam.y)*cam.zoom + H/2;
+const toWorldX  = sx => (sx-W/2)/cam.zoom + cam.x;
+const toWorldY  = sy => (sy-H/2)/cam.zoom + cam.y;
+/* pointer coords arrive in CSS pixels; the sim thinks in buffer pixels */
+const cssToBuf = v => v/PIX;
 
-function zoomAt(sx, sy, factor){
-  const wx = toWorldX(sx), wy = toWorldY(sy);
-  cam.zoom = Math.max(0.012, Math.min(14, cam.zoom*factor));
-  cam.x = wx - (sx - W/2)/cam.zoom;
-  cam.y = wy - (sy - H/2)/cam.zoom;
+function zoomAt(sx,sy,factor){
+  const wx=toWorldX(sx), wy=toWorldY(sy);
+  cam.zoom=Math.max(0.01,Math.min(22,cam.zoom*factor));
+  cam.x=wx-(sx-W/2)/cam.zoom;
+  cam.y=wy-(sy-H/2)/cam.zoom;
 }
 function fitAll(pad){
   if(!bodies.length) return;
@@ -373,181 +783,265 @@ function fitAll(pad){
     x0=Math.min(x0,b.x-b.r); y0=Math.min(y0,b.y-b.r);
     x1=Math.max(x1,b.x+b.r); y1=Math.max(y1,b.y+b.r);
   }
-  const w=Math.max(40,x1-x0), h=Math.max(40,y1-y0);
+  const w=Math.max(30,x1-x0), h=Math.max(30,y1-y0);
   cam.x=(x0+x1)/2; cam.y=(y0+y1)/2;
-  cam.zoom = Math.max(0.012, Math.min(14, Math.min(W/w, H/h)*(pad||0.82)));
-  following = null;
+  cam.zoom=Math.max(0.01,Math.min(22,Math.min(W/w,H/h)*(pad||0.8)));
+  following=null;
 }
 
-/* ============================ starfield ============================ */
-/* Three parallax layers, seeded once per resize. They drift with the camera at
-   a fraction of its speed, which is what sells the sense of distance. */
-let stars = [];
-function seedStars(){
-  stars = [];
-  const n = Math.round((W*H)/9000);
-  let seed = 1337;
-  const rnd = ()=> (seed = (seed*1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+/* ============================ deep sky ============================ */
+/* Background only: nebula wash, a couple of galaxies and a few hundred stars.
+   None of it is in the simulation — it exists to make the dark feel deep. */
+let stars=[], sky=null;
+function seedSky(){
+  let s=20240;
+  const rnd=()=>{ s=(s*1103515245+12345)&0x7fffffff; return s/0x7fffffff; };
+  stars=[];
+  const n=Math.round(W*H/900);
   for(let i=0;i<n;i++){
-    const layer = i%3;
+    const layer=i%3;
     stars.push({
-      x: rnd()*2-1, y: rnd()*2-1,
-      z: [0.03,0.07,0.13][layer],
-      s: [0.7,1.0,1.5][layer] * (0.6+rnd()*0.8),
-      a: [0.25,0.45,0.7][layer] * (0.5+rnd()*0.6)
+      x:rnd(), y:rnd(),
+      z:[0.05,0.11,0.2][layer],
+      /* most of the field is faint; a handful are bright enough to notice */
+      b:[0.13,0.24,0.42][layer]*(0.35+rnd()*0.9),
+      tw: rnd()<0.18 ? 0.6+rnd()*2.2 : 0,
+      ph: rnd()*6.283,
+      c: rnd()
     });
   }
-}
-function drawStars(){
-  const spanX = W*2, spanY = H*2;
-  ctx.save();
-  for(const st of stars){
-    /* wrap so panning forever never runs out of sky */
-    let sx = (st.x*spanX - cam.x*st.z*cam.zoom) % spanX;
-    let sy = (st.y*spanY - cam.y*st.z*cam.zoom) % spanY;
-    if(sx < -W/2) sx += spanX; if(sx > spanX-W/2) sx -= spanX;
-    if(sy < -H/2) sy += spanY; if(sy > spanY-H/2) sy -= spanY;
-    ctx.globalAlpha = st.a;
-    ctx.fillStyle = '#dfe6ff';
-    ctx.fillRect(sx, sy, st.s, st.s);
+  /* the nebula and galaxies are painted once and blitted with parallax */
+  sky=document.createElement('canvas');
+  sky.width=Math.round(W*1.5); sky.height=Math.round(H*1.5);
+  const g=sky.getContext('2d');
+  g.fillStyle='rgba(0,0,0,0)'; g.fillRect(0,0,sky.width,sky.height);
+  const clouds=[
+    [0.24,0.28,0.55,'rgba(124,54,190,0.30)'],
+    [0.72,0.34,0.46,'rgba(52,58,190,0.24)'],
+    [0.52,0.76,0.60,'rgba(168,44,148,0.20)'],
+    [0.12,0.80,0.38,'rgba(70,32,150,0.24)'],
+    [0.88,0.74,0.34,'rgba(96,40,176,0.18)']
+  ];
+  for(const [cx,cy,rr,col] of clouds){
+    const R=sky.width*rr;
+    const grad=g.createRadialGradient(sky.width*cx,sky.height*cy,0,sky.width*cx,sky.height*cy,R);
+    grad.addColorStop(0,col); grad.addColorStop(1,'rgba(0,0,0,0)');
+    g.fillStyle=grad; g.fillRect(0,0,sky.width,sky.height);
   }
-  ctx.restore();
+  drawGalaxy(g, sky.width*0.30, sky.height*0.30, sky.width*0.11, -0.5, rnd);
+  drawGalaxy(g, sky.width*0.78, sky.height*0.70, sky.width*0.075, 1.1, rnd);
 }
-
-/* ============================ sprites ============================ */
-/* One pre-baked glow per colour, drawn scaled. Building a radial gradient per
-   body per frame is the difference between 700 bodies and about 80. */
-const glowCache = new Map();
-function glowSprite(color){
-  let s = glowCache.get(color);
-  if(s) return s;
-  const R = 96;
-  s = document.createElement('canvas');
-  s.width = s.height = R*2;
-  const g = s.getContext('2d');
-  const grad = g.createRadialGradient(R,R,0,R,R,R);
-  grad.addColorStop(0,    color);
-  grad.addColorStop(0.14, color);
-  grad.addColorStop(0.42, hexA(color,0.30));
-  grad.addColorStop(1,    hexA(color,0));
-  g.fillStyle = grad;
-  g.fillRect(0,0,R*2,R*2);
-  glowCache.set(color, s);
-  return s;
+/* A spiral rendered as scattered dots — cheap, and at pixel scale it reads far
+   better than a smooth gradient would. */
+function drawGalaxy(g,cx,cy,R,rot,rnd){
+  g.save(); g.translate(cx,cy); g.rotate(rot); g.scale(1,0.42);
+  const core=g.createRadialGradient(0,0,0,0,0,R*0.55);
+  core.addColorStop(0,'rgba(255,238,210,0.75)');
+  core.addColorStop(0.35,'rgba(232,178,255,0.30)');
+  core.addColorStop(1,'rgba(0,0,0,0)');
+  g.fillStyle=core; g.beginPath(); g.arc(0,0,R*0.55,0,6.283); g.fill();
+  for(let arm=0;arm<2;arm++){
+    for(let i=0;i<520;i++){
+      const t=i/520;
+      const a=arm*Math.PI + t*3.0 + (rnd()-0.5)*0.30;
+      const rad=R*(0.12+t*0.95) + (rnd()-0.5)*R*0.13;
+      const x=Math.cos(a)*rad, y=Math.sin(a)*rad;
+      const al=(1-t)*0.5*(0.35+rnd()*0.75);
+      g.fillStyle = rnd()<0.28 ? `rgba(190,208,255,${al})` : `rgba(255,226,236,${al})`;
+      g.fillRect(x,y,1,1);
+    }
+  }
+  g.restore();
 }
-function hexA(hex,a){
-  const h = hex.replace('#','');
-  const n = parseInt(h.length===3 ? h.split('').map(c=>c+c).join('') : h, 16);
-  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
-}
-
-/* ============================ render ============================ */
-function render(){
-  ctx.setTransform(DPR,0,0,DPR,0,0);
-  ctx.fillStyle = '#05060c';
+function drawSky(t){
+  ctx.fillStyle='#0a0616';
   ctx.fillRect(0,0,W,H);
-  drawStars();
+  /* nebula and galaxies drift a fraction of the camera: the parallax is what
+     makes the backdrop feel far away */
+  const px=-cam.x*0.02*cam.zoom, py=-cam.y*0.02*cam.zoom;
+  const ox=((px % sky.width)+sky.width)%sky.width - (sky.width-W)/2;
+  const oy=((py % sky.height)+sky.height)%sky.height - (sky.height-H)/2;
+  ctx.globalAlpha=0.85;
+  for(let gx=-1;gx<=1;gx++) for(let gy=-1;gy<=1;gy++)
+    ctx.drawImage(sky, ox+gx*sky.width, oy+gy*sky.height);
+  ctx.globalAlpha=1;
 
-  if(showTrails) drawTrails();
-
-  for(const b of bodies) drawBody(b);
-  if(aim.active) drawAim();
-  if(selected) drawSelection(selected);
+  for(const st of stars){
+    let sx=(st.x*W - cam.x*st.z*cam.zoom)%W; if(sx<0) sx+=W;
+    let sy=(st.y*H - cam.y*st.z*cam.zoom)%H; if(sy<0) sy+=H;
+    let b=st.b;
+    if(st.tw) b *= 0.45+0.55*(0.5+0.5*Math.sin(t*st.tw+st.ph));
+    if(b<0.03) continue;
+    /* a faint blue-white spread, warmer for a few, so the field is not uniform */
+    ctx.fillStyle = st.c<0.72 ? `rgba(226,232,255,${b})`
+                  : st.c<0.9  ? `rgba(255,226,206,${b})`
+                              : `rgba(198,214,255,${b})`;
+    ctx.fillRect(sx|0, sy|0, 1, 1);
+  }
 }
 
+/* ============================ drawing bodies ============================ */
 function drawTrails(){
-  ctx.lineCap = 'round';
   for(const b of bodies){
-    const t = b.trail;
-    if(t.length < 4) continue;
-    const col = b.hole ? '#6f7ce0' : b.color;
-    ctx.lineWidth = Math.max(0.9, Math.min(2.6, b.r*cam.zoom*0.25));
-    /* Two passes: the whole tail faint, the recent half brighter. Two strokes a
-       body buys a sense of direction that a flat line does not have. */
-    ctx.strokeStyle = hexA(col, 0.22);
+    const t=b.trail;
+    if(t.length<4) continue;
+    const pal=(PALETTES[b.spec.pal]||PALETTES.terran).ramp;
+    const c=pal[pal.length-2];
+    ctx.lineWidth=1;
+    ctx.strokeStyle=`rgba(${c[0]},${c[1]},${c[2]},0.16)`;
     ctx.beginPath();
-    ctx.moveTo(toScreenX(t[0]), toScreenY(t[1]));
-    for(let i=2;i<t.length;i+=2) ctx.lineTo(toScreenX(t[i]), toScreenY(t[i+1]));
+    ctx.moveTo(toScreenX(t[0]),toScreenY(t[1]));
+    for(let i=2;i<t.length;i+=2) ctx.lineTo(toScreenX(t[i]),toScreenY(t[i+1]));
     ctx.stroke();
-    const half = Math.max(0, (t.length>>2)*2);
-    if(t.length - half >= 4){
-      ctx.strokeStyle = hexA(col, 0.55);
+    const half=Math.max(0,(t.length>>2)*2);
+    if(t.length-half>=4){
+      ctx.strokeStyle=`rgba(${c[0]},${c[1]},${c[2]},0.45)`;
       ctx.beginPath();
-      ctx.moveTo(toScreenX(t[half]), toScreenY(t[half+1]));
-      for(let i=half+2;i<t.length;i+=2) ctx.lineTo(toScreenX(t[i]), toScreenY(t[i+1]));
+      ctx.moveTo(toScreenX(t[half]),toScreenY(t[half+1]));
+      for(let i=half+2;i<t.length;i+=2) ctx.lineTo(toScreenX(t[i]),toScreenY(t[i+1]));
       ctx.stroke();
     }
   }
 }
-
+function drawParts(){
+  /* additive so overlapping gas builds up into something that looks like depth */
+  ctx.globalCompositeOperation='lighter';
+  for(let i=0;i<parts.length;i++){
+    const p=parts[i];
+    const x=toScreenX(p.x)|0, y=toScreenY(p.y)|0;
+    if(x<-4||x>W+4||y<-4||y>H+4) continue;
+    const fade=1-p.age/p.life;
+    if(p.kind==='gas'){
+      ctx.fillStyle=`rgba(${p.r},${p.g},${p.b},${0.10+fade*0.20})`;
+      const s=Math.max(1,p.size*Math.min(2,cam.zoom*0.5)|0);
+      ctx.fillRect(x,y,s,s);
+    } else {
+      const c=heatColor([p.r,p.g,p.b],p.heat);
+      /* settled rubble holds its brightness; loose debris fades as it ages */
+      const a = p.settled ? 0.85 : 0.35+fade*0.6;
+      ctx.fillStyle=`rgba(${c[0]},${c[1]},${c[2]},${a})`;
+      ctx.fillRect(x,y,p.size,p.size);
+    }
+  }
+  ctx.globalCompositeOperation='source-over';
+}
+function glowRect(x,y,R,col,alpha){
+  ctx.globalCompositeOperation='lighter';
+  const g=ctx.createRadialGradient(x,y,0,x,y,R);
+  g.addColorStop(0,`rgba(${col[0]},${col[1]},${col[2]},${alpha})`);
+  g.addColorStop(1,`rgba(${col[0]},${col[1]},${col[2]},0)`);
+  ctx.fillStyle=g;
+  ctx.fillRect(x-R,y-R,R*2,R*2);
+  ctx.globalCompositeOperation='source-over';
+}
 function drawBody(b){
-  const x = toScreenX(b.x), y = toScreenY(b.y);
-  const r = Math.max(1, b.r*cam.zoom);
-  if(x < -r-80 || x > W+r+80 || y < -r-80 || y > H+r+80) return;
+  const x=toScreenX(b.x), y=toScreenY(b.y);
+  const r=b.r*cam.zoom;
+  if(x<-r-90||x>W+r+90||y<-r-90||y>H+r+90) return;
+  const pal=(PALETTES[b.spec.pal]||PALETTES.terran).ramp;
 
   if(b.hole){
-    /* An accretion ring and a black disc reads as a hole far better than
-       drawing nothing at all, which is what a black circle on black is. */
-    const ring = glowSprite('#8f7bff');
-    const R = r*4.2;
-    ctx.globalAlpha = 0.55;
-    ctx.drawImage(ring, x-R, y-R, R*2, R*2);
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = '#05060c';
-    ctx.beginPath(); ctx.arc(x,y,r,0,6.2832); ctx.fill();
-    ctx.strokeStyle = 'rgba(180,160,255,.85)';
-    ctx.lineWidth = Math.max(0.8, r*0.16);
-    ctx.stroke();
+    glowRect(x,y,Math.max(6,Math.min(r*4.5,80)),[150,110,255],0.5);
+    ctx.fillStyle='#05030c';
+    fillDisc(x,y,Math.max(1,r));
+    ctx.strokeStyle='rgba(198,170,255,.9)';
+    ctx.lineWidth=1;
+    ctx.beginPath(); ctx.arc(x,y,Math.max(1.5,r),0,6.283); ctx.stroke();
     return;
   }
+  /* a comet grows a tail pointing away from whatever is lighting it */
+  if(b.comet) drawTail(b,x,y,r,pal);
 
-  if(b.glow > 0){
-    const R = r*(1 + b.glow*4.5);
-    ctx.globalAlpha = Math.min(1, 0.30 + b.glow*0.5);
-    ctx.drawImage(glowSprite(b.color), x-R, y-R, R*2, R*2);
-    ctx.globalAlpha = 1;
-  }
-  ctx.fillStyle = b.color;
-  ctx.beginPath(); ctx.arc(x,y,r,0,6.2832); ctx.fill();
+  if(b.lum) glowRect(x,y,Math.max(8,Math.min(r*3.2,110)),pal[pal.length-2],0.45);
+  else if(b.heat>0.05) glowRect(x,y,Math.max(4,Math.min(r*(1.6+b.heat*2.2),70)),[255,140,60],0.16+b.heat*0.4);
 
-  /* a sliver of shading so planets read as spheres rather than discs */
-  if(r > 3 && !b.lum){
-    ctx.globalAlpha = 0.30;
-    ctx.fillStyle = '#000';
-    ctx.beginPath(); ctx.arc(x + r*0.32, y + r*0.30, r*0.92, 0, 6.2832); ctx.fill();
-    ctx.globalAlpha = 1;
+  /* the sprite is baked at roughly one sprite pixel per buffer pixel, bucketed
+     so it is not regenerated every frame as you zoom */
+  const want=Math.max(3,Math.min(96,Math.round(r*2)));
+  const res=Math.max(4,Math.min(96,Math.ceil(want/6)*6));
+  const sp=makeSprite(b.spec,res);
+  const d=Math.max(1,Math.round(r*2));
+  ctx.drawImage(sp, Math.round(x-d/2), Math.round(y-d/2), d, d);
+
+  /* molten skin over the top while it is still hot */
+  if(!b.lum && b.heat>0.02 && d>2){
+    ctx.globalAlpha=Math.min(0.72,b.heat*0.8);
+    ctx.globalCompositeOperation='lighter';
+    ctx.fillStyle=`rgb(${(200*b.heat)|0},${(70*b.heat)|0},${(20*b.heat)|0})`;
+    fillDisc(x,y,Math.max(1,r));
+    ctx.globalCompositeOperation='source-over';
+    ctx.globalAlpha=1;
   }
-  if(b.flash > 0){
-    ctx.globalAlpha = b.flash;
-    const R = r*(3 + b.flash*7);
-    ctx.drawImage(glowSprite('#ffffff'), x-R, y-R, R*2, R*2);
-    ctx.globalAlpha = 1;
+  if(b.flash>0) glowRect(x,y,Math.max(6,Math.min(r*(3+b.flash*8),140)),[255,240,220],b.flash*0.7);
+}
+/* a filled circle drawn on the pixel grid, so it keeps a stepped edge */
+function fillDisc(cx,cy,r){
+  const r2=r*r, x0=Math.floor(cx-r), x1=Math.ceil(cx+r), y0=Math.floor(cy-r), y1=Math.ceil(cy+r);
+  for(let y=y0;y<=y1;y++){
+    const dy=y+0.5-cy, w2=r2-dy*dy;
+    if(w2<=0) continue;
+    const w=Math.sqrt(w2);
+    ctx.fillRect(Math.round(cx-w), y, Math.max(1,Math.round(w*2)), 1);
   }
 }
-
+function drawTail(b,x,y,r,pal){
+  const host=dominant(b.x,b.y,b);
+  if(!host||!host.lum) return;
+  const dx=b.x-host.x, dy=b.y-host.y, d=Math.max(0.001,Math.hypot(dx,dy));
+  const len=Math.max(8,Math.min(120,4000/d))*cam.zoom*0.5+r*4;
+  const ux=dx/d, uy=dy/d;
+  ctx.globalCompositeOperation='lighter';
+  for(let i=0;i<44;i++){
+    const t=i/44;
+    const sp=(Math.random()-0.5)*len*0.16*t;
+    const px=x+ux*len*t - uy*sp, py=y+uy*len*t + ux*sp;
+    ctx.fillStyle=`rgba(190,226,255,${(1-t)*0.30})`;
+    ctx.fillRect(px|0,py|0,1,1);
+  }
+  ctx.globalCompositeOperation='source-over';
+}
 function drawSelection(b){
-  const x=toScreenX(b.x), y=toScreenY(b.y), r=Math.max(4, b.r*cam.zoom)+7;
-  ctx.strokeStyle = 'rgba(127,212,255,.9)';
-  ctx.lineWidth = 1.5;
-  ctx.setLineDash([5,5]);
-  ctx.beginPath(); ctx.arc(x,y,r,0,6.2832); ctx.stroke();
+  const x=toScreenX(b.x)|0, y=toScreenY(b.y)|0, r=Math.max(4,b.r*cam.zoom)+4;
+  ctx.strokeStyle='rgba(198,155,255,.95)';
+  ctx.lineWidth=1;
+  ctx.setLineDash([3,3]);
+  ctx.beginPath(); ctx.arc(x+0.5,y+0.5,r,0,6.283); ctx.stroke();
   ctx.setLineDash([]);
 }
 
-/* ============================ aiming ============================ */
-const aim = {active:false, x:0, y:0, dx:0, dy:0, path:[]};
-let currentKind = 'planet';
+function render(t){
+  drawSky(t);
+  if(showTrails) drawTrails();
+  drawParts();
+  for(const b of bodies) drawBody(b);
+  if(aim.active) drawAim();
+  if(selected) drawSelection(selected);
+  /* blow the buffer up to the screen with hard pixel edges */
+  vctx.imageSmoothingEnabled=false;
+  vctx.clearRect(0,0,view.width,view.height);
+  vctx.drawImage(buf,0,0,W,H,0,0,view.width,view.height);
+}
 
-/* Integrate a massless probe through the frozen field so you can see where the
-   thing you are about to throw will actually go. This is the difference
-   between a gravity toy and a gravity guessing game. */
+/* ============================ the brush ============================ */
+/* What a drag will create. The forge edits this directly. */
+const brush = {cls:'rock', pal:'terran', seed:12345, mass:22, dens:0, name:'Rocky world', comet:0, hole:0};
+function brushSpec(){
+  return {cls:brush.cls, pal:brush.pal, seed:brush.seed,
+          dens:brush.dens||undefined, comet:brush.comet, hole:brush.hole, name:brush.name};
+}
+function brushRadius(){ return radiusFor(brush.mass, brush.dens || densityOf(brushSpec())); }
+
+/* ============================ aiming ============================ */
+const aim={active:false,x:0,y:0,dx:0,dy:0,path:[],hit:null};
+const VEL_SCALE=0.055;
+/* A massless probe through the frozen field, so you can see where the throw
+   actually goes instead of guessing. */
 function predict(x,y,vx,vy){
   const pts=[x,y];
-  const dt = 0.9/SUBSTEPS;
-  let px=x, py=y, pvx=vx, pvy=vy;
-  const steps = 900;
-  for(let s=0;s<steps;s++){
-    let ax=0, ay=0;
+  const dt=0.9/SUBSTEPS;
+  let px=x,py=y,pvx=vx,pvy=vy;
+  for(let s=0;s<900;s++){
+    let ax=0,ay=0;
     for(let i=0;i<bodies.length;i++){
       const b=bodies[i];
       const ddx=b.x-px, ddy=b.y-py;
@@ -555,347 +1049,346 @@ function predict(x,y,vx,vy){
       const inv=1/Math.sqrt(d2);
       const f=G*b.m*inv*inv*inv;
       ax+=f*ddx; ay+=f*ddy;
-      if(d2 < b.r*b.r) return {pts, hit:b};   /* stop the line where it lands */
+      if(d2<b.r*b.r) return {pts,hit:b};
     }
-    pvx+=ax*dt; pvy+=ay*dt;
-    px+=pvx*dt; py+=pvy*dt;
+    pvx+=ax*dt; pvy+=ay*dt; px+=pvx*dt; py+=pvy*dt;
     if(s%3===0) pts.push(px,py);
   }
-  return {pts, hit:null};
+  return {pts,hit:null};
 }
-
 function drawAim(){
-  const k = kindById(currentKind);
-  const sx = toScreenX(aim.x), sy = toScreenY(aim.y);
-
+  const sx=toScreenX(aim.x), sy=toScreenY(aim.y);
   if(aim.path.length>3){
-    ctx.strokeStyle = aim.hit ? 'rgba(255,140,120,.85)' : 'rgba(127,212,255,.75)';
-    ctx.lineWidth = 1.6;
-    ctx.setLineDash([7,6]);
+    ctx.strokeStyle=aim.hit?'rgba(255,150,120,.85)':'rgba(198,155,255,.8)';
+    ctx.lineWidth=1;
+    ctx.setLineDash([3,4]);
     ctx.beginPath();
-    ctx.moveTo(toScreenX(aim.path[0]), toScreenY(aim.path[1]));
-    for(let i=2;i<aim.path.length;i+=2) ctx.lineTo(toScreenX(aim.path[i]), toScreenY(aim.path[i+1]));
+    ctx.moveTo(toScreenX(aim.path[0]),toScreenY(aim.path[1]));
+    for(let i=2;i<aim.path.length;i+=2) ctx.lineTo(toScreenX(aim.path[i]),toScreenY(aim.path[i+1]));
     ctx.stroke();
     ctx.setLineDash([]);
   }
-  /* the throw itself */
-  const ex = sx + aim.dx*cam.zoom, ey = sy + aim.dy*cam.zoom;
-  ctx.strokeStyle = 'rgba(255,255,255,.55)';
-  ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(ex,ey); ctx.stroke();
-
-  const r = Math.max(3, radiusFor(k.mass)*cam.zoom);
-  ctx.fillStyle = k.hole ? '#1a1a28' : k.color;
-  ctx.globalAlpha = .85;
-  ctx.beginPath(); ctx.arc(sx,sy,r,0,6.2832); ctx.fill();
-  ctx.globalAlpha = 1;
+  ctx.strokeStyle='rgba(255,255,255,.55)';
+  ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(sx+aim.dx*cam.zoom, sy+aim.dy*cam.zoom); ctx.stroke();
+  const d=Math.max(2,Math.round(brushRadius()*cam.zoom*2));
+  ctx.globalAlpha=.9;
+  ctx.drawImage(makeSprite(brushSpec(), Math.max(4,Math.min(96,Math.ceil(d/6)*6))),
+                Math.round(sx-d/2), Math.round(sy-d/2), d, d);
+  ctx.globalAlpha=1;
 }
-
-/* ============================ input ============================ */
-/* One pointer draws and flings. Two pointers pinch and pan — the gesture an
-   iPad user will try first without being told. */
-const pointers = new Map();
-let pinch = null;
-let panning = null;
-const VEL_SCALE = 0.055;
-
-function localPos(e){
-  const r = canvas.getBoundingClientRect();
-  return {x: e.clientX - r.left, y: e.clientY - r.top};
-}
-function bodyAt(sx,sy){
-  let hit=null, best=Infinity;
-  for(const b of bodies){
-    const d = Math.hypot(toScreenX(b.x)-sx, toScreenY(b.y)-sy);
-    const grab = Math.max(14, b.r*cam.zoom + 8);
-    if(d < grab && d < best){ best=d; hit=b; }
-  }
-  return hit;
-}
-
-canvas.addEventListener('pointerdown', e=>{
-  canvas.setPointerCapture(e.pointerId);
-  const p = localPos(e);
-  pointers.set(e.pointerId, p);
-
-  if(pointers.size === 2){
-    aim.active = false;
-    const [a,b] = [...pointers.values()];
-    pinch = {d: Math.hypot(a.x-b.x, a.y-b.y),
-             cx:(a.x+b.x)/2, cy:(a.y+b.y)/2};
-    return;
-  }
-  if(pointers.size > 2) return;
-
-  /* middle mouse, right mouse or a held space bar pans on a desktop */
-  if(e.button === 1 || e.button === 2 || spaceHeld){
-    panning = {sx:p.x, sy:p.y, cx:cam.x, cy:cam.y};
-    return;
-  }
-
-  const hit = bodyAt(p.x, p.y);
-  if(hit){ selectBody(hit); return; }
-
-  selectBody(null);
-  aim.active = true;
-  aim.x = toWorldX(p.x); aim.y = toWorldY(p.y);
-  aim.dx = 0; aim.dy = 0; aim.path = []; aim.hit = null;
-  updateAim();
-});
-
-canvas.addEventListener('pointermove', e=>{
-  const p = localPos(e);
-  if(!pointers.has(e.pointerId)) return;
-  pointers.set(e.pointerId, p);
-
-  if(pinch && pointers.size >= 2){
-    const [a,b] = [...pointers.values()];
-    const d = Math.hypot(a.x-b.x, a.y-b.y);
-    const cx = (a.x+b.x)/2, cy = (a.y+b.y)/2;
-    if(pinch.d > 0) zoomAt(cx, cy, d/pinch.d);
-    /* two-finger drag pans at the same time, which is what the gesture feels like */
-    cam.x -= (cx - pinch.cx)/cam.zoom;
-    cam.y -= (cy - pinch.cy)/cam.zoom;
-    pinch = {d, cx, cy};
-    following = null;
-    return;
-  }
-  if(panning){
-    cam.x = panning.cx - (p.x - panning.sx)/cam.zoom;
-    cam.y = panning.cy - (p.y - panning.sy)/cam.zoom;
-    following = null;
-    return;
-  }
-  if(aim.active){
-    aim.dx = toWorldX(p.x) - aim.x;
-    aim.dy = toWorldY(p.y) - aim.y;
-    updateAim();
-  }
-});
-
-function endPointer(e){
-  const had = pointers.has(e.pointerId);
-  pointers.delete(e.pointerId);
-  if(pointers.size < 2) pinch = null;
-  if(!had) return;
-  if(panning){ panning = null; return; }
-  if(!aim.active) return;
-  aim.active = false;
-
-  const drag = Math.hypot(aim.dx, aim.dy)*cam.zoom;
-  let vx, vy;
-  if(drag < 6 && orbitAssist){
-    /* a tap, with the assist on: drop it straight into a circular orbit */
-    const host = dominant(aim.x, aim.y, null);
-    if(host){
-      const v = circularVelocity(aim.x, aim.y, host, systemSpin(host));
-      vx = v.vx; vy = v.vy;
-    } else { vx = 0; vy = 0; }
-  } else {
-    vx = aim.dx*VEL_SCALE; vy = aim.dy*VEL_SCALE;
-  }
-  const b = addBody(makeBody(aim.x, aim.y, vx, vy, currentKind));
-  if(b){ accelerate(); for(const q of bodies){ q.ax=q.nax; q.ay=q.nay; } }
-  hideHint();
-}
-canvas.addEventListener('pointerup', endPointer);
-canvas.addEventListener('pointercancel', endPointer);
-canvas.addEventListener('contextmenu', e=>e.preventDefault());
-
 function updateAim(){
-  const k = kindById(currentKind);
-  const drag = Math.hypot(aim.dx, aim.dy)*cam.zoom;
-  let vx = aim.dx*VEL_SCALE, vy = aim.dy*VEL_SCALE;
-  if(drag < 6 && orbitAssist){
-    const host = dominant(aim.x, aim.y, null);
-    if(host){ const v = circularVelocity(aim.x, aim.y, host, systemSpin(host)); vx=v.vx; vy=v.vy; }
+  const drag=Math.hypot(aim.dx,aim.dy)*cam.zoom;
+  let vx=aim.dx*VEL_SCALE, vy=aim.dy*VEL_SCALE;
+  if(drag<6&&orbitAssist){
+    const host=dominant(aim.x,aim.y,null);
+    if(host){ const v=circularVelocity(aim.x,aim.y,host,systemSpin(host)); vx=v.vx; vy=v.vy; }
   }
-  const res = predict(aim.x, aim.y, vx, vy);
-  aim.path = res.pts; aim.hit = res.hit;
+  const res=predict(aim.x,aim.y,vx,vy);
+  aim.path=res.pts; aim.hit=res.hit;
 }
-/* Which way the system already turns, so an assisted drop joins the traffic
-   rather than driving into it. */
 function systemSpin(host){
-  let L = 0;
+  let L=0;
   for(const b of bodies){
     if(b===host) continue;
     const dx=b.x-host.x, dy=b.y-host.y;
-    L += b.m*(dx*(b.vy-host.vy) - dy*(b.vx-host.vx));
+    L+=b.m*(dx*(b.vy-host.vy)-dy*(b.vx-host.vx));
   }
-  return L < 0 ? -1 : 1;
+  return L<0?-1:1;
 }
 
-canvas.addEventListener('wheel', e=>{
-  e.preventDefault();
-  const p = localPos(e);
-  zoomAt(p.x, p.y, Math.pow(0.9992, e.deltaY*(e.deltaMode===1?18:1)));
-  following = null;
-}, {passive:false});
-
-let spaceHeld = false;
-addEventListener('keydown', e=>{
-  if(e.target !== document.body && e.target.tagName === 'INPUT') return;
-  const k = e.key;
-  if(k === ' '){ e.preventDefault(); spaceHeld = true; togglePlay(); }
-  else if(k === 'c' || k === 'C') clearAll();
-  else if(k === 't' || k === 'T') setTrails(!showTrails);
-  else if(k === 'f' || k === 'F') fitAll();
-  else if(k === 'Escape') selectBody(null);
-  else if(k === 'Backspace' || k === 'Delete'){ if(selected) deleteSelected(); }
-  else if(k >= '1' && k <= '6'){ setKind(KINDS[+k-1].id); }
+/* ============================ input ============================ */
+const pointers=new Map();
+let pinch=null, panning=null, spaceHeld=false;
+function localPos(e){
+  const r=view.getBoundingClientRect();
+  return {x:cssToBuf(e.clientX-r.left), y:cssToBuf(e.clientY-r.top)};
+}
+function bodyAt(sx,sy){
+  let hit=null,best=Infinity;
+  for(const b of bodies){
+    const d=Math.hypot(toScreenX(b.x)-sx,toScreenY(b.y)-sy);
+    const grab=Math.max(6,b.r*cam.zoom+4);
+    if(d<grab&&d<best){ best=d; hit=b; }
+  }
+  return hit;
+}
+view.addEventListener('pointerdown',e=>{
+  try{ view.setPointerCapture(e.pointerId); }catch(_){}
+  const p=localPos(e);
+  pointers.set(e.pointerId,p);
+  if(pointers.size===2){
+    aim.active=false;
+    const [a,b]=[...pointers.values()];
+    pinch={d:Math.hypot(a.x-b.x,a.y-b.y),cx:(a.x+b.x)/2,cy:(a.y+b.y)/2};
+    return;
+  }
+  if(pointers.size>2) return;
+  if(e.button===1||e.button===2||spaceHeld){
+    panning={sx:p.x,sy:p.y,cx:cam.x,cy:cam.y};
+    return;
+  }
+  const hit=bodyAt(p.x,p.y);
+  if(hit){ selectBody(hit); return; }
+  selectBody(null);
+  aim.active=true; aim.x=toWorldX(p.x); aim.y=toWorldY(p.y);
+  aim.dx=0; aim.dy=0; aim.path=[]; aim.hit=null;
+  updateAim();
 });
-addEventListener('keyup', e=>{ if(e.key === ' ') spaceHeld = false; });
+view.addEventListener('pointermove',e=>{
+  const p=localPos(e);
+  if(!pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId,p);
+  if(pinch&&pointers.size>=2){
+    const [a,b]=[...pointers.values()];
+    const d=Math.hypot(a.x-b.x,a.y-b.y), cx=(a.x+b.x)/2, cy=(a.y+b.y)/2;
+    if(pinch.d>0) zoomAt(cx,cy,d/pinch.d);
+    cam.x-=(cx-pinch.cx)/cam.zoom; cam.y-=(cy-pinch.cy)/cam.zoom;
+    pinch={d,cx,cy}; following=null;
+    return;
+  }
+  if(panning){
+    cam.x=panning.cx-(p.x-panning.sx)/cam.zoom;
+    cam.y=panning.cy-(p.y-panning.sy)/cam.zoom;
+    following=null; return;
+  }
+  if(aim.active){ aim.dx=toWorldX(p.x)-aim.x; aim.dy=toWorldY(p.y)-aim.y; updateAim(); }
+});
+function endPointer(e){
+  const had=pointers.has(e.pointerId);
+  pointers.delete(e.pointerId);
+  if(pointers.size<2) pinch=null;
+  if(!had) return;
+  if(panning){ panning=null; return; }
+  if(!aim.active) return;
+  aim.active=false;
+  const drag=Math.hypot(aim.dx,aim.dy)*cam.zoom;
+  let vx,vy;
+  if(drag<6&&orbitAssist){
+    const host=dominant(aim.x,aim.y,null);
+    if(host){ const v=circularVelocity(aim.x,aim.y,host,systemSpin(host)); vx=v.vx; vy=v.vy; }
+    else { vx=0; vy=0; }
+  } else { vx=aim.dx*VEL_SCALE; vy=aim.dy*VEL_SCALE; }
+  const b=addBody(makeBody(aim.x,aim.y,vx,vy,brushSpec(),brush.mass));
+  if(b){ accelerate(); for(const q of bodies){ q.ax=q.nax; q.ay=q.nay; } }
+  hideHint();
+}
+view.addEventListener('pointerup',endPointer);
+view.addEventListener('pointercancel',endPointer);
+view.addEventListener('contextmenu',e=>e.preventDefault());
+view.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const p=localPos(e);
+  zoomAt(p.x,p.y,Math.pow(0.9992,e.deltaY*(e.deltaMode===1?18:1)));
+  following=null;
+},{passive:false});
+
+addEventListener('keydown',e=>{
+  if(e.target&&e.target.tagName==='INPUT') return;
+  const k=e.key;
+  if(k===' '){ e.preventDefault(); spaceHeld=true; togglePlay(); }
+  else if(k==='c'||k==='C') clearAll();
+  else if(k==='t'||k==='T') setTrails(!showTrails);
+  else if(k==='f'||k==='F') fitAll();
+  else if(k==='g'||k==='G') toggleForge();
+  else if(k==='Escape') selectBody(null);
+  else if((k==='Backspace'||k==='Delete')&&selected) deleteSelected();
+  else if(k>='1'&&k<='9'){ const kk=KINDS[+k-1]; if(kk) pickKind(kk.id); }
+});
+addEventListener('keyup',e=>{ if(e.key===' ') spaceHeld=false; });
 
 /* ============================ presets ============================ */
-/* Ring of small bodies on circular orbits about a central mass. */
-function ringOf(host, count, rMin, rMax, kind, spin){
+function ringOf(host,count,rMin,rMax,kindId,spin){
+  const k=kindById(kindId);
   for(let i=0;i<count;i++){
-    const t = count===1 ? 0.5 : i/(count-1);
-    const r = rMin + (rMax-rMin)*(t + (Math.random()-0.5)*0.06);
-    const a = Math.random()*Math.PI*2;
-    const x = host.x + Math.cos(a)*r, y = host.y + Math.sin(a)*r;
-    const v = circularVelocity(x, y, host, spin||1);
-    const jitter = 1 + (Math.random()-0.5)*0.02;
-    addBody(makeBody(x, y, v.vx*jitter, v.vy*jitter, kind));
+    const t=count===1?0.5:i/(count-1);
+    const r=rMin+(rMax-rMin)*(t+(Math.random()-0.5)*0.06);
+    const a=Math.random()*Math.PI*2;
+    const x=host.x+Math.cos(a)*r, y=host.y+Math.sin(a)*r;
+    const v=circularVelocity(x,y,host,spin||1);
+    addBody(makeBody(x,y,v.vx*(1+(Math.random()-0.5)*0.02),v.vy,specFromKind(k),k.mass));
   }
 }
-const PRESETS = {
+function place(kindId,x,y,vx,vy,mass){
+  const k=kindById(kindId);
+  return addBody(makeBody(x,y,vx,vy,specFromKind(k),mass===undefined?k.mass:mass));
+}
+const PRESETS={
+  solar(){
+    const sun=place('star',0,0,0,0);
+    [['moon',110],['dwarfp',155],['rocky',210],['iceworld',275],['gas',350],['icegiant',440],['comet',545]]
+      .forEach(([id,r])=>{
+        const a=Math.random()*6.283, x=Math.cos(a)*r, y=Math.sin(a)*r;
+        const v=circularVelocity(x,y,sun,1);
+        const p=place(id,x,y,v.vx,v.vy);
+        if((id==='gas'||id==='icegiant')&&p) ringOf(p,26,p.r+3,p.r+8,'asteroid',1);
+      });
+    ringOf(sun,55,232,264,'asteroid',1);
+  },
   binary(){
-    /* Two stars about a common barycentre, with a few worlds far enough out
-       to survive it. */
-    const d = 150, m = kindById('star').mass;
-    const v = Math.sqrt(G*m/(2*d));
-    const a = addBody(makeBody(-d/2, 0, 0, -v, 'star'));
-    const b = addBody(makeBody( d/2, 0, 0,  v, 'star'));
-    const centre = {x:0, y:0, vx:0, vy:0, m: a.m+b.m};
-    for(let i=0;i<7;i++){
-      const r = 420 + i*130 + Math.random()*60;
-      const ang = Math.random()*Math.PI*2;
-      const x = Math.cos(ang)*r, y = Math.sin(ang)*r;
-      const vel = circularVelocity(x, y, centre, 1);
-      addBody(makeBody(x, y, vel.vx, vel.vy, i%3===0 ? 'giant' : 'planet'));
+    const d=150, m=kindById('star').mass;
+    const v=Math.sqrt(G*m/(2*d));
+    place('star',-d/2,0,0,-v); place('star',d/2,0,0,v);
+    const centre={x:0,y:0,vx:0,vy:0,m:m*2};
+    for(let i=0;i<6;i++){
+      const r=430+i*130, a=Math.random()*6.283;
+      const x=Math.cos(a)*r, y=Math.sin(a)*r;
+      const vel=circularVelocity(x,y,centre,1);
+      place(i%3===0?'gas':'rocky',x,y,vel.vx,vel.vy);
     }
   },
-  solar(){
-    const sun = addBody(makeBody(0,0,0,0,'star'));
-    const orbits = [90,140,200,275,370,470,590];
-    orbits.forEach((r,i)=>{
-      const a = Math.random()*Math.PI*2;
-      const x = Math.cos(a)*r, y = Math.sin(a)*r;
-      const v = circularVelocity(x,y,sun,1);
-      const kind = i<2 ? 'moon' : (i<5 ? 'planet' : 'giant');
-      const p = addBody(makeBody(x,y,v.vx,v.vy,kind));
-      /* a moon or two, on orbits tight enough that the sun does not strip them */
-      if(kind!=='moon' && Math.random()<0.6){
-        const mr = p.r + 14 + Math.random()*10;
-        const ma = Math.random()*Math.PI*2;
-        const mx = p.x + Math.cos(ma)*mr, my = p.y + Math.sin(ma)*mr;
-        const mv = circularVelocity(mx,my,p,1);
-        addBody(makeBody(mx,my,mv.vx,mv.vy,'asteroid'));
-      }
-    });
-  },
-  rings(){
-    const sun = addBody(makeBody(0,0,0,0,'star'));
-    ringOf(sun, 220, 130, 300, 'asteroid', 1);
-    const a = 480;
-    const v = circularVelocity(a,0,sun,1);
-    const g = addBody(makeBody(a,0,v.vx,v.vy,'giant'));
-    ringOf(g, 90, g.r+9, g.r+30, 'asteroid', 1);
+  /* Two worlds on a collision course, which is the whole point of the melt. */
+  smash(){
+    place('rocky',-190,0,7.5,0);
+    place('rocky', 190,0,-7.5,0);
+    place('gas',0,-460,4.2,0);
+    place('icegiant',0,470,-4.0,0);
   },
   cluster(){
-    /* Enough mass in a small volume that it collapses, throws bodies out and
-       finds its own centre. Never resolves the same way twice. */
-    for(let i=0;i<170;i++){
-      const a = Math.random()*Math.PI*2;
-      const r = Math.sqrt(Math.random())*430;
-      const x = Math.cos(a)*r, y = Math.sin(a)*r;
-      const s = 0.30;
-      addBody(makeBody(x, y, -y*s*0.01 + (Math.random()-0.5)*1.4,
-                              x*s*0.01 + (Math.random()-0.5)*1.4,
-                       Math.random()<0.14 ? 'planet' : (Math.random()<0.5?'moon':'asteroid')));
+    for(let i=0;i<130;i++){
+      const a=Math.random()*6.283, r=Math.sqrt(Math.random())*420;
+      const x=Math.cos(a)*r, y=Math.sin(a)*r;
+      const roll=Math.random();
+      place(roll<0.12?'rocky':roll<0.4?'moon':'asteroid',
+            x,y,-y*0.004+(Math.random()-0.5)*1.2, x*0.004+(Math.random()-0.5)*1.2);
     }
-    addBody(makeBody(0,0,0,0,'hole'));
+    place('hole',0,0,0,0);
   }
 };
-function loadPreset(name){
-  bodies = []; selected = null; following = null; simTime = 0;
-  (PRESETS[name]||PRESETS.solar)();
+function loadPreset(n){
+  bodies=[]; parts=[]; selected=null; following=null;
+  (PRESETS[n]||PRESETS.solar)();
   accelerate();
   for(const b of bodies){ b.ax=b.nax; b.ay=b.nay; }
-  fitAll();
-  hideHint();
+  fitAll(); hideHint();
 }
 
 /* ============================ ui ============================ */
-const $ = id => document.getElementById(id);
+const $=id=>document.getElementById(id);
 const elStat=$('stat'), elPlay=$('play'), elHint=$('hint');
+let currentKindId='rocky';
 
-function setKind(id){
-  currentKind = id;
-  for(const el of $('bodies').children) el.classList.toggle('on', el.dataset.k===id);
+function pickKind(id){
+  const k=kindById(id);
+  currentKindId=id;
+  brush.cls=k.cls; brush.pal=k.pal; brush.mass=k.mass; brush.dens=k.dens||0;
+  brush.comet=k.comet||0; brush.hole=k.hole||0; brush.name=k.name;
+  brush.seed=(seedCounter++*2654435761)%100000;
+  for(const el of $('bodies').children) el.classList.toggle('on',el.dataset.k===id);
+  syncForge();
 }
-$('bodies').innerHTML = '';
+/* the palette buttons carry a tiny live sprite rather than a flat swatch */
+function thumb(spec,size){
+  const c=document.createElement('canvas');
+  c.width=c.height=size;
+  c.getContext('2d').drawImage(makeSprite(spec,size),0,0);
+  return c;
+}
 for(const k of KINDS){
-  const b = document.createElement('button');
-  b.className='bd'; b.dataset.k=k.id; b.type='button';
-  b.innerHTML = `<i class="dot" style="background:${k.hole?'#14142a':k.color};`
-    + `box-shadow:${k.hole?'0 0 0 2px rgba(150,130,255,.8)':'0 0 12px '+hexA(k.color,0.9)}"></i>`
-    + `<span class="nm">${k.name}</span>`;
-  b.addEventListener('click', ()=>setKind(k.id));
-  $('bodies').appendChild(b);
+  const btn=document.createElement('button');
+  btn.className='bd'; btn.dataset.k=k.id; btn.type='button';
+  btn.appendChild(thumb(specFromKind(k,k.id.length*7919),18));
+  const nm=document.createElement('span'); nm.className='nm'; nm.textContent=k.name;
+  btn.appendChild(nm);
+  btn.addEventListener('click',()=>pickKind(k.id));
+  $('bodies').appendChild(btn);
 }
-setKind('planet');
 
-function togglePlay(){ running = !running; elPlay.textContent = running ? 'Pause' : 'Play'; }
-elPlay.addEventListener('click', togglePlay);
-function clearAll(){ bodies=[]; selected=null; following=null; simTime=0; }
-$('reset').addEventListener('click', clearAll);
-$('fit').addEventListener('click', ()=>fitAll());
+/* ---- world forge ---- */
+let forgeOpen=false;
+function toggleForge(){ forgeOpen=!forgeOpen; $('forge').classList.toggle('on',forgeOpen); $('forgeBtn').classList.toggle('on',forgeOpen); if(forgeOpen) syncForge(); }
+$('forgeBtn').addEventListener('click',toggleForge);
+$('reroll').addEventListener('click',()=>{ brush.seed=(Math.random()*99999)|0; syncForge(); });
+
+for(const key in CLASSES){
+  const b=document.createElement('button');
+  b.className='chip'; b.dataset.cls=key; b.type='button'; b.textContent=CLASSES[key].name;
+  b.addEventListener('click',()=>{ brush.cls=key; brush.name=CLASSES[key].name+' world'; brush.dens=0; syncForge(); });
+  $('fClass').appendChild(b);
+}
+for(const key of PAL_KEYS){
+  const b=document.createElement('button');
+  b.className='chip'; b.dataset.pal=key; b.type='button'; b.textContent=PALETTES[key].name;
+  b.addEventListener('click',()=>{ brush.pal=key; syncForge(); });
+  $('fPal').appendChild(b);
+}
+/* size and density are the two knobs that decide mass, which is the only thing
+   gravity cares about */
+$('fSize').addEventListener('input',syncForgeFromSliders);
+$('fDens').addEventListener('input',syncForgeFromSliders);
+/* The slider is a radius in quarter-units; mass falls out of it and density,
+   because mass is the only thing gravity actually reads. */
+function syncForgeFromSliders(){
+  const size=+$('fSize').value, dens=+$('fDens').value;
+  brush.dens=dens;
+  brush.mass=Math.max(0.02, massFor(size/4, dens));
+  syncForge(true);
+}
+function syncForge(skipSliders){
+  const spec=brushSpec();
+  const prev=$('fPrev');
+  prev.width=prev.height=48;
+  prev.getContext('2d').clearRect(0,0,48,48);
+  prev.getContext('2d').drawImage(makeSprite(spec,48),0,0);
+  $('fName').textContent=brush.name;
+  $('fMass').textContent='mass '+fmt(brush.mass,brush.mass<10?2:0);
+  $('fRad').textContent='radius '+brushRadius().toFixed(2);
+  for(const el of $('fClass').children) el.classList.toggle('on',el.dataset.cls===brush.cls);
+  for(const el of $('fPal').children) el.classList.toggle('on',el.dataset.pal===brush.pal);
+  if(!skipSliders){
+    const dens=brush.dens||densityOf(spec);
+    $('fDens').value=Math.max(10,Math.min(240,dens));
+    $('fSize').value=Math.max(4,Math.min(100,Math.round(radiusFor(brush.mass,dens)*4)));
+  }
+}
+
+function togglePlay(){ running=!running; elPlay.textContent=running?'Pause':'Play'; }
+elPlay.addEventListener('click',togglePlay);
+function clearAll(){ bodies=[]; parts=[]; selected=null; following=null; selectBody(null); }
+$('reset').addEventListener('click',clearAll);
+$('fit').addEventListener('click',()=>fitAll());
 function setTrails(v){ showTrails=v; $('trails').classList.toggle('on',v); if(!v) for(const b of bodies) b.trail.length=0; }
-$('trails').addEventListener('click', ()=>setTrails(!showTrails));
-$('orbitAssist').addEventListener('click', ()=>{
-  orbitAssist=!orbitAssist; $('orbitAssist').classList.toggle('on',orbitAssist);
-});
+$('trails').addEventListener('click',()=>setTrails(!showTrails));
+$('orbitAssist').addEventListener('click',()=>{ orbitAssist=!orbitAssist; $('orbitAssist').classList.toggle('on',orbitAssist); });
 setTrails(true); $('orbitAssist').classList.add('on');
-
-/* Speed runs 0 to 4x on a curve, so the useful slow end gets most of the track. */
-$('speed').addEventListener('input', e=>{
-  const t = +e.target.value/60;
-  timeScale = t<=0 ? 0 : Math.pow(t,1.9)*4;
-  $('speedv').innerHTML = timeScale.toFixed(timeScale<1?2:1)+'&times;';
+$('speed').addEventListener('input',e=>{
+  const t=+e.target.value/60;
+  timeScale=t<=0?0:Math.pow(t,1.9)*4;
+  $('speedv').innerHTML=timeScale.toFixed(timeScale<1?2:1)+'&times;';
 });
 $('speed').dispatchEvent(new Event('input'));
-
 for(const el of document.querySelectorAll('[data-preset]'))
-  el.addEventListener('click', ()=>loadPreset(el.dataset.preset));
+  el.addEventListener('click',()=>loadPreset(el.dataset.preset));
 
-/* inspector */
 function selectBody(b){
-  selected = b;
-  $('insp').classList.toggle('on', !!b);
-  if(b){ $('ispDot').style.background = b.hole?'#14142a':b.color; $('ispName').textContent = b.name; }
+  selected=b;
+  $('insp').classList.toggle('on',!!b);
+  if(b){
+    $('ispName').textContent=b.name;
+    const ic=$('ispIcon'); ic.width=ic.height=16;
+    ic.getContext('2d').clearRect(0,0,16,16);
+    ic.getContext('2d').drawImage(makeSprite(b.spec,16),0,0);
+  }
 }
-$('ispFollow').addEventListener('click', ()=>{
+$('ispFollow').addEventListener('click',()=>{
   following = following===selected ? null : selected;
-  $('ispFollow').classList.toggle('on', !!following);
+  $('ispFollow').classList.toggle('on',!!following);
 });
 function deleteSelected(){
   if(!selected) return;
-  bodies = bodies.filter(b=>b!==selected);
+  bodies=bodies.filter(b=>b!==selected);
   if(following===selected) following=null;
   selectBody(null);
 }
-$('ispDel').addEventListener('click', deleteSelected);
-
+$('ispDel').addEventListener('click',deleteSelected);
 function updateInspector(){
   if(!selected) return;
-  $('ispMass').textContent = fmt(selected.m);
-  $('ispVel').textContent  = fmt(Math.hypot(selected.vx,selected.vy),2);
-  const o = orbitOf(selected);
-  $('ispHost').textContent = o ? o.host.name : '—';
-  $('ispPer').textContent  = o ? (o.bound ? fmt(o.period,1)+'s' : 'escaping') : '—';
-  $('ispFollow').classList.toggle('on', following===selected);
+  $('ispMass').textContent=fmt(selected.m);
+  $('ispVel').textContent=fmt(Math.hypot(selected.vx,selected.vy),2);
+  const o=orbitOf(selected);
+  $('ispHost').textContent=o?o.host.name:'—';
+  $('ispPer').textContent=o?(o.bound?fmt(o.period,1)+'s':'escaping'):'—';
+  $('ispFollow').classList.toggle('on',following===selected);
 }
 function fmt(v,d){
   if(!isFinite(v)) return '—';
@@ -903,65 +1396,80 @@ function fmt(v,d){
   if(v>=1e3) return (v/1e3).toFixed(1)+'k';
   return v.toFixed(d===undefined?0:d);
 }
-let hintTimer = setTimeout(hideHint, 9000);
+let hintTimer=setTimeout(hideHint,10000);
 function hideHint(){ clearTimeout(hintTimer); elHint.classList.add('gone'); }
 
-/* ============================ loop ============================ */
-let last = performance.now(), fpsAcc = 0, fpsN = 0, fps = 60;
-function frame(now){
-  let dt = (now-last)/1000; last = now;
-  if(dt > 0.25) dt = 0.25;
-  fpsAcc += dt; fpsN++;
-  if(fpsAcc > 0.5){ fps = fpsN/fpsAcc; fpsAcc=0; fpsN=0; }
-
-  if(running && timeScale>0) step(dt*timeScale);
-  if(following){ cam.x = following.x; cam.y = following.y; }
-
-  render();
-  updateInspector();
-  elStat.textContent = `${bodies.length} bodies · ${Math.round(fps)} fps · ${cam.zoom<1?('1:'+Math.round(1/cam.zoom)):(Math.round(cam.zoom)+':1')}`;
-  requestAnimationFrame(frame);
-}
-
 /* ============================ scripting hook ============================ */
-/* A small surface for driving the sandbox from the console or a test. Kept
-   read-mostly: it hands out copies rather than the live bodies. */
 function totalEnergy(){
-  let ke=0, pe=0;
+  let ke=0,pe=0;
   for(let i=0;i<bodies.length;i++){
     const a=bodies[i];
-    ke += 0.5*a.m*(a.vx*a.vx + a.vy*a.vy);
+    ke+=0.5*a.m*(a.vx*a.vx+a.vy*a.vy);
     for(let j=i+1;j<bodies.length;j++){
       const b=bodies[j];
       const dx=b.x-a.x, dy=b.y-a.y;
-      pe -= G*a.m*b.m/Math.sqrt(dx*dx+dy*dy+SOFT*SOFT);
+      pe-=G*a.m*b.m/Math.sqrt(dx*dx+dy*dy+SOFT*SOFT);
     }
   }
   return ke+pe;
 }
-window.orbital = {
-  list: ()=>bodies.map(b=>({id:b.id,x:b.x,y:b.y,vx:b.vx,vy:b.vy,m:b.m,r:b.r,kind:b.kind})),
-  count: ()=>bodies.length,
-  add: (x,y,vx,vy,kind)=>{
-    const b = addBody(makeBody(x,y,vx,vy,kind||'planet'));
+window.orbital={
+  list:()=>bodies.map(b=>({id:b.id,x:b.x,y:b.y,vx:b.vx,vy:b.vy,m:b.m,r:b.r,
+                           cls:b.spec.cls,pal:b.spec.pal,heat:b.heat,name:b.name})),
+  count:()=>bodies.length,
+  particles:()=>parts.length,
+  ringed:()=>parts.filter(p=>p.ring).length,
+  debris:()=>parts.map(p=>({x:p.x,y:p.y,vx:p.vx,vy:p.vy,kind:p.kind,ring:!!p.ring,settled:!!p.settled})),
+  settled:()=>parts.filter(p=>p.settled).length,
+  add:(x,y,vx,vy,kindId,mass)=>{
+    const b=place(kindId||'rocky',x,y,vx,vy,mass);
     if(b){ accelerate(); for(const q of bodies){ q.ax=q.nax; q.ay=q.nay; } }
-    return b ? b.id : null;
+    return b?b.id:null;
   },
-  clear: ()=>clearAll(),
-  preset: n=>loadPreset(n),
-  energy: totalEnergy,
-  momentum: ()=>bodies.reduce((s,b)=>({x:s.x+b.m*b.vx, y:s.y+b.m*b.vy}),{x:0,y:0}),
-  cam,
-  aim,
-  /* Advance by an exact dt so a test does not depend on how fast the machine is. */
-  step: dt=>step(dt),
-  setSpeed: v=>{ timeScale = v; },
-  select: id=>{ selectBody(bodies.find(b=>b.id===id)||null); },
+  clear:()=>clearAll(),
+  /* spray debris directly — handy for a test, and for anyone who wants to
+     build a ring by hand rather than by wrecking a moon */
+  spray:(x,y,vx,vy,n,spread,jitter)=>{
+    for(let i=0;i<n;i++){
+      const a=Math.random()*6.283, sp=(spread||0)*Math.random();
+      const jr=(jitter||0)*Math.sqrt(Math.random()), ja=Math.random()*6.283;
+      spawnPart(x+Math.cos(ja)*jr, y+Math.sin(ja)*jr,
+                vx+Math.cos(a)*sp, vy+Math.sin(a)*sp,
+                'rock',[150,140,132],0,999);
+    }
+    return parts.length;
+  },
+  preset:n=>loadPreset(n),
+  energy:totalEnergy,
+  momentum:()=>bodies.reduce((s,b)=>({x:s.x+b.m*b.vx,y:s.y+b.m*b.vy}),{x:0,y:0}),
+  cam, aim, brush,
+  step:dt=>step(dt),
+  setSpeed:v=>{ timeScale=v; },
+  select:id=>selectBody(bodies.find(b=>b.id===id)||null),
+  sprite:(spec,res)=>makeSprite(spec,res),
+  pix:()=>PIX,
   get running(){ return running; }
 };
 
+/* ============================ loop ============================ */
+let last=performance.now(), fpsAcc=0, fpsN=0, fps=60, clock=0;
+function frame(now){
+  let dt=(now-last)/1000; last=now;
+  if(dt>0.25) dt=0.25;
+  clock+=dt;
+  fpsAcc+=dt; fpsN++;
+  if(fpsAcc>0.5){ fps=fpsN/fpsAcc; fpsAcc=0; fpsN=0; }
+  if(running&&timeScale>0) step(dt*timeScale);
+  if(following){ cam.x=following.x; cam.y=following.y; }
+  render(clock);
+  updateInspector();
+  elStat.textContent=`${bodies.length} bodies · ${parts.length} debris · ${Math.round(fps)} fps`;
+  requestAnimationFrame(frame);
+}
+
 /* ============================ boot ============================ */
 resize();
+pickKind('rocky');
 loadPreset('solar');
 requestAnimationFrame(t=>{ last=t; frame(t); });
 })();
