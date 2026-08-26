@@ -499,9 +499,56 @@ async function open(b, vp){
   ok('no exceptions anywhere', errs.length===0, errs.join(' | '));
   await ctx.close();
 
+  console.log('\n--- the sky holds far more debris ---');
+  ({p,ctx,errs}=await open(b));
+  await p.evaluate(()=>{ window.orbital.clear(); window.orbital.setSpeed(0); });
+  {
+    const cap = await p.evaluate(()=>window.orbital.maxParts());
+    ok('the debris ceiling is well past the old 7000', cap>=60000, String(cap));
+
+    /* pour in more than the old limit and check none of it is quietly dropped */
+    const held = await p.evaluate(()=>{
+      const o=window.orbital;
+      for(let i=0;i<6;i++) o.spray(0,0,0,0,5000,40,600);
+      return o.particles();
+    });
+    ok('thirty thousand motes all survive', held===30000, String(held));
+
+    /* and it still draws them at a playable rate */
+    const fps = await p.evaluate(async()=>{
+      await new Promise(r=>requestAnimationFrame(r));
+      let last=performance.now(); const times=[];
+      await new Promise(res=>{ let n=0;
+        const tick=()=>{ const now=performance.now(); times.push(now-last); last=now;
+                         if(++n<40) requestAnimationFrame(tick); else res(); };
+        requestAnimationFrame(tick); });
+      times.sort((a,b)=>a-b);
+      return 1000/times[times.length>>1];
+    });
+    ok('and still draws them smoothly', fps>40, fps.toFixed(0)+' fps at 30k');
+
+    /* lowering the ceiling trims immediately rather than waiting for age-out */
+    const trimmed = await p.evaluate(()=>{ window.orbital.maxParts(5000); return window.orbital.particles(); });
+    ok('lowering the ceiling trims the excess at once', trimmed===5000, String(trimmed));
+
+    /* and the slider drives it */
+    const viaSlider = await p.evaluate(()=>{
+      const el=document.getElementById('debris');
+      el.value=el.max; el.dispatchEvent(new Event('input'));
+      return {cap:window.orbital.maxParts(), label:document.getElementById('debrisv').textContent};
+    });
+    ok('the debris slider raises the ceiling', viaSlider.cap>=200000, String(viaSlider.cap));
+    ok('and reads out what it is set to', /k$/.test(viaSlider.label), viaSlider.label);
+    ok('no exceptions under a heavy sky', errs.length===0, errs.join(' | '));
+  }
+  await ctx.close();
+
   console.log('\n--- two fingers pinch and pan ---');
   ({p,ctx,errs}=await open(b,{width:1024,height:768}));
   const zb=await p.evaluate(()=>window.orbital.cam.zoom);
+  /* freeze the sky first: the default scene is live and merges bodies on its
+     own, which would otherwise move the count out from under the assertion */
+  await p.evaluate(()=>window.orbital.setSpeed(0));
   const nb=await p.evaluate(()=>window.orbital.count());
   await p.evaluate(()=>{
     const c=document.getElementById('c');

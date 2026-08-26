@@ -74,7 +74,16 @@ That debris then has to end up somewhere:
   same at every speed setting instead of vanishing when you slow down.
 - **Pixels.** The whole sim is drawn into a buffer a few times smaller than the
   window and blown up with nearest-neighbour. That is what makes it pixel art,
-  and it is also why a few thousand debris motes cost nothing to draw.
+  and it is also why debris is cheap to draw.
+- **Debris**, up to 200,000 motes, set by the Debris slider. Getting there was
+  mostly a rendering problem rather than a physics one: a `fillRect` per mote
+  cost more than the entire gravity step, so the motes are now accumulated by
+  hand into a `Uint8ClampedArray` — which saturates at 255, so additive
+  blending falls out for free — and blitted in one `drawImage`. Drawing
+  200,000 of them now costs about a millisecond. Gravity on debris is the
+  remaining cost, and it is capped: below the top handful of bodies by mass,
+  nothing measurably pulls on a mote, so a busy sky only ever evaluates six
+  sources per particle.
 - **Ring damping** eases a fragment's whole velocity toward the circular one for
   its radius. Damping only the radial part looks right and is not: it just makes
   the current radius an apsis and leaves the speed mismatch that made the orbit
