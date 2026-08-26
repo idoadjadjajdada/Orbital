@@ -142,9 +142,9 @@
     <div class="lbl">Palette</div>
     <div class="chips" id="fPal"></div>
     <div class="lbl">Size</div>
-    <div class="slider"><input type="range" id="fSize" min="4" max="100" value="20"></div>
+    <div class="slider"><input type="range" id="fSize" min="4" max="600" value="20"></div>
     <div class="lbl">Density</div>
-    <div class="slider"><input type="range" id="fDens" min="10" max="240" value="100"></div>
+    <div class="slider"><input type="range" id="fDens" min="5" max="3000" value="100"></div>
   </div>
 
   <div class="card insp" id="insp">
@@ -200,6 +200,11 @@ const ROCHE       = 2.6;     /* host radii: inside this, tides keep it a ring */
 const CLUMP_CELL  = 7;       /* world units; the grid accretion buckets into */
 const CLUMP_MIN   = 16;      /* fragments needed before they pull together */
 const CLUMP_SPREAD= 1.5;     /* how alike their velocities must be */
+/* Nothing holds itself up forever. Past these masses a body loses the argument
+   with its own gravity and collapses — with a supernova on the way through. */
+const NEUTRON_MASS = 4200;
+const HOLE_MASS    = 13000;
+const SHOCK_SPEED  = 190;    /* how fast a blast front travels, world units/s */
 
 /* ============================ noise ============================ */
 /* Deterministic value noise, so a world with the same seed always comes back
@@ -401,6 +406,7 @@ function makeBody(x,y,vx,vy,spec,mass){
     /* heat is 0 for settled rock and 1 for freshly shocked magma; it drives both
        the glow and how long before the surface reads as rock again */
     heat: cl.hot ? 1 : 0,
+    stretch: 0, tideAng: 0,
     spin: (Math.random()-0.5)*0.25,
     ang: Math.random()*6.283,
     trail: [], flash: 0
@@ -551,6 +557,151 @@ function heatColor(base, heat){
   return mixRGB(base, hot, clamp01(0.35+t*0.65));
 }
 
+/* ============================ shockwaves ============================ */
+/* An expanding front that shoves whatever it overtakes. One pass per frame over
+   the debris, so it stays cheap even when several are running at once. */
+let waves = [];
+function addWave(x,y,maxR,strength,rgb,vx,vy){
+  waves.push({x,y,r:0,maxR,strength,rgb,vx:vx||0,vy:vy||0,dead:false});
+}
+function stepWaves(dt){
+  for(let i=waves.length-1;i>=0;i--){
+    const w=waves[i];
+    const prev=w.r;
+    w.r += SHOCK_SPEED*dt;
+    w.x += w.vx*dt; w.y += w.vy*dt;
+    const fall = 1 - w.r/w.maxR;                     /* it weakens as it spreads */
+    if(fall>0){
+      const push = w.strength*fall;
+      for(let k=0;k<parts.length;k++){
+        const p=parts[k];
+        const dx=p.x-w.x, dy=p.y-w.y;
+        const d=Math.hypot(dx,dy)||1e-6;
+        /* only what the front crossed during this step */
+        if(d>prev && d<=w.r){
+          p.vx += dx/d*push; p.vy += dy/d*push;
+          if(p.kind!=='gas') p.heat = Math.min(1, p.heat+0.4);
+        }
+      }
+      for(let k=0;k<bodies.length;k++){
+        const b=bodies[k];
+        const dx=b.x-w.x, dy=b.y-w.y;
+        const d=Math.hypot(dx,dy)||1e-6;
+        if(d>prev && d<=w.r){
+          /* a blast moves a pebble far more than it moves a world */
+          const g = push*40/Math.max(1,b.m);
+          b.vx += dx/d*g; b.vy += dy/d*g;
+          if(!b.lum) b.heat = Math.min(1, b.heat + Math.min(0.5, g*0.4));
+        }
+      }
+    }
+    if(w.r>=w.maxR) waves.splice(i,1);
+  }
+}
+
+/* ============================ collapse ============================ */
+/* A star that gets too heavy goes supernova and leaves a neutron star. Anything
+   that gets heavier still leaves a black hole. The shell it throws off is the
+   nebula. */
+function collapseCheck(){
+  for(let i=0;i<bodies.length;i++){
+    const b=bodies[i];
+    if(b.hole) continue;
+    if(b.m>=HOLE_MASS) collapseTo(b,'hole');
+    else if(b.m>=NEUTRON_MASS && b.spec.cls!=='exotic') collapseTo(b,'neutron');
+  }
+}
+function collapseTo(b, kindId){
+  const k = kindById(kindId);
+  const pal = (PALETTES[b.spec.pal]||PALETTES.amber).ramp;
+  const shed = kindId==='hole' ? 0.18 : 0.45;      /* how much it throws away */
+  const thrown = b.m*shed;
+  const n = Math.min(1400, Math.round(160+thrown*0.12));
+  const vShell = kindId==='hole' ? 16 : 26;
+  for(let j=0;j<n;j++){
+    const a=Math.random()*Math.PI*2;
+    const sp=vShell*(0.55+Math.random()*0.8);
+    const rr=b.r*(0.9+Math.random()*0.5);
+    /* half of it stays hot rubble, half becomes the glowing shell */
+    const gasy = Math.random()<0.62;
+    spawnPart(b.x+Math.cos(a)*rr, b.y+Math.sin(a)*rr,
+              b.vx+Math.cos(a)*sp, b.vy+Math.sin(a)*sp,
+              gasy?'gas':'rock',
+              rampAt(pal, 0.45+Math.random()*0.5),
+              gasy?0:1,
+              gasy? 240+Math.random()*260 : 60+Math.random()*90);
+  }
+  addWave(b.x,b.y, b.r*26+220, kindId==='hole'?5.5:8.5,
+          kindId==='hole'?[190,150,255]:[255,226,180], b.vx, b.vy);
+  b.m = Math.max(1, b.m-thrown);
+  b.spec = specFromKind(k, b.spec.seed);
+  b.name = k.name;
+  b.hole = k.hole||0;
+  b.lum = 0; b.gas = 0; b.comet = 0;
+  b.heat = b.hole ? 0 : 1;
+  b.r = radiusFor(b.m, densityOf(b.spec));
+  b.flash = 1;
+  b.trail.length = 0;
+  b.stretch = 0;
+  once('collapse', kindId==='hole'
+    ? 'It collapsed. Nothing that heavy holds itself up.'
+    : 'Supernova. The shell it threw off is the nebula.');
+}
+
+/* ============================ tidal disruption ============================ */
+/* Close enough to a black hole and the pull on the near side beats the pull the
+   body has on itself. It stretches, and then it stops being a body. */
+function tides(dt){
+  for(let i=bodies.length-1;i>=0;i--){
+    const b=bodies[i];
+    if(b.hole){ b.stretch=0; continue; }
+    let worst=0, host=null, hdx=0, hdy=0;
+    for(const h of bodies){
+      if(h===b || !h.hole) continue;
+      const dx=b.x-h.x, dy=b.y-h.y;
+      const d=Math.hypot(dx,dy)||1e-6;
+      /* tidal pull across the body against the body's own grip on itself */
+      const stress = (h.m*b.r*b.r*b.r)/(d*d*d*Math.max(1e-6,b.m));
+      if(stress>worst){ worst=stress; host=h; hdx=dx; hdy=dy; }
+    }
+    b.tideAng = host ? Math.atan2(hdy,hdx) : 0;
+    if(worst>1){
+      b.stretch = Math.min(2.6, b.stretch + dt*(worst-1)*1.5);
+      if(b.stretch>=1.35){ disrupt(b, host, hdx, hdy); }
+    } else {
+      b.stretch = Math.max(0, b.stretch - dt*0.8);
+    }
+  }
+}
+function disrupt(b, host, dx, dy){
+  const d=Math.hypot(dx,dy)||1e-6;
+  const ux=dx/d, uy=dy/d;
+  const pal=(PALETTES[b.spec.pal]||PALETTES.terran).ramp;
+  const isGas=!!b.gas;
+  const n=Math.min(900, Math.round(70*Math.cbrt(b.m)+80));
+  for(let j=0;j<n;j++){
+    /* strung out along the line to the hole: the near half speeds up, the far
+       half falls behind, which is what makes the stream */
+    const t=(Math.random()*2-1);
+    const along=t*b.r*(2.2+b.stretch*2.4);
+    const across=(Math.random()*2-1)*b.r*0.55;
+    const shear=-t*Math.sqrt(G*host.m/d)*0.16;
+    spawnPart(b.x+ux*along-uy*across, b.y+uy*along+ux*across,
+              b.vx+ux*shear-uy*shear*0.2, b.vy+uy*shear+ux*shear*0.2,
+              isGas?'gas':'rock',
+              rampAt(pal,0.35+Math.random()*0.5),
+              isGas?0:0.5+Math.random()*0.5,
+              isGas?120+Math.random()*140:50+Math.random()*70);
+  }
+  b.dead=true;
+  if(selected===b) selected=null;
+  if(following===b) following=null;
+  bodies=bodies.filter(q=>!q.dead);
+  accelerate();
+  for(const q of bodies){ q.ax=q.nax; q.ay=q.nay; }
+  once('tide','Torn apart. Too close to the hole to hold together.');
+}
+
 /* ============================ collisions ============================ */
 /* A gentle touch merges. A real impact shatters: the smaller body is turned
    into molten ejecta thrown out along the impact, and the survivor keeps only
@@ -591,6 +742,9 @@ function mergeBodies(a,b){
   /* the energy of the impact goes into the surface, and it takes time to leave */
   if(!heavy.lum) heavy.heat = Math.min(1, heavy.heat + impact/14 + light.m/M*0.5);
   heavy.trail.length=0;
+  if(impact>3 && light.m>2)
+    addWave(heavy.x,heavy.y, heavy.r*8+impact*10, Math.min(3.5,impact*0.16),
+            [255,214,160], heavy.vx, heavy.vy);
   light.dead=true;
   if(selected===light) selected=heavy;
   if(following===light) following=heavy;
@@ -632,6 +786,11 @@ function shatter(heavy, light, impact){
   heavy.r = radiusFor(heavy.m, densityOf(heavy.spec));
   if(!heavy.lum) heavy.heat = 1;
   heavy.flash = 1;
+  /* A real impact announces itself. The push is kept light on purpose: the
+     ejecta already carries the blast, and a strong front here just blows away
+     the debris that should have been settling into a ring. */
+  addWave(light.x,light.y, Math.max(160, light.r*16+impact*14),
+          Math.min(1.8,impact*0.08), [255,196,140], cmvx, cmvy);
   heavy.trail.length = 0;
   light.dead = true;
   if(selected===light) selected=null;
@@ -694,10 +853,16 @@ function recordTrails(){
   }
 }
 function step(dt){
-  const h=dt/SUBSTEPS;
-  for(let s=0;s<SUBSTEPS;s++) integrate(h);
+  /* Keep each substep near 1/90s of simulated time however fast the clock runs,
+     or fast-forward turns circular orbits into spirals. */
+  const sub = Math.max(SUBSTEPS, Math.min(36, Math.ceil(dt*90)));
+  const h=dt/sub;
+  for(let s=0;s<sub;s++) integrate(h);
   const src = gravitySources();
   stepParts(dt, src);
+  stepWaves(dt);
+  tides(dt);
+  collapseCheck();
   accrete(dt);
   recordTrails();
   for(const b of bodies){
@@ -925,6 +1090,25 @@ function drawParts(){
   }
   ctx.globalCompositeOperation='source-over';
 }
+function drawWaves(){
+  ctx.globalCompositeOperation='lighter';
+  for(const w of waves){
+    const x=toScreenX(w.x), y=toScreenY(w.y), r=w.r*cam.zoom;
+    if(r<1||x+r<0||x-r>W||y+r<0||y-r>H) continue;
+    const fade=1-w.r/w.maxR;
+    const c=w.rgb;
+    ctx.strokeStyle=`rgba(${c[0]},${c[1]},${c[2]},${(0.55*fade*fade).toFixed(3)})`;
+    ctx.lineWidth=Math.max(1,2*fade);
+    ctx.beginPath(); ctx.arc(x,y,r,0,6.283); ctx.stroke();
+    /* a second, softer front just behind gives it thickness */
+    if(r>3){
+      ctx.strokeStyle=`rgba(${c[0]},${c[1]},${c[2]},${(0.22*fade).toFixed(3)})`;
+      ctx.lineWidth=1;
+      ctx.beginPath(); ctx.arc(x,y,r*0.86,0,6.283); ctx.stroke();
+    }
+  }
+  ctx.globalCompositeOperation='source-over';
+}
 function glowRect(x,y,R,col,alpha){
   ctx.globalCompositeOperation='lighter';
   const g=ctx.createRadialGradient(x,y,0,x,y,R);
@@ -961,7 +1145,18 @@ function drawBody(b){
   const res=Math.max(4,Math.min(96,Math.ceil(want/6)*6));
   const sp=makeSprite(b.spec,res);
   const d=Math.max(1,Math.round(r*2));
-  ctx.drawImage(sp, Math.round(x-d/2), Math.round(y-d/2), d, d);
+  if(b.stretch>0.02){
+    /* drawn long along the line to whatever is pulling it apart, and thin
+       across it — the shape everything takes on the way into a hole */
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.rotate(b.tideAng||0);
+    ctx.scale(1+b.stretch*1.9, 1/(1+b.stretch*0.75));
+    ctx.drawImage(sp, -d/2, -d/2, d, d);
+    ctx.restore();
+  } else {
+    ctx.drawImage(sp, Math.round(x-d/2), Math.round(y-d/2), d, d);
+  }
 
   /* molten skin over the top while it is still hot */
   if(!b.lum && b.heat>0.02 && d>2){
@@ -1013,6 +1208,7 @@ function render(t){
   drawSky(t);
   if(showTrails) drawTrails();
   drawParts();
+  drawWaves();
   for(const b of bodies) drawBody(b);
   if(aim.active) drawAim();
   if(selected) drawSelection(selected);
@@ -1256,7 +1452,7 @@ const PRESETS={
   }
 };
 function loadPreset(n){
-  bodies=[]; parts=[]; selected=null; following=null;
+  bodies=[]; parts=[]; waves=[]; selected=null; following=null;
   (PRESETS[n]||PRESETS.solar)();
   accelerate();
   for(const b of bodies){ b.ax=b.nax; b.ay=b.nay; }
@@ -1337,14 +1533,14 @@ function syncForge(skipSliders){
   for(const el of $('fPal').children) el.classList.toggle('on',el.dataset.pal===brush.pal);
   if(!skipSliders){
     const dens=brush.dens||densityOf(spec);
-    $('fDens').value=Math.max(10,Math.min(240,dens));
-    $('fSize').value=Math.max(4,Math.min(100,Math.round(radiusFor(brush.mass,dens)*4)));
+    $('fDens').value=Math.max(5,Math.min(3000,dens));
+    $('fSize').value=Math.max(4,Math.min(600,Math.round(radiusFor(brush.mass,dens)*4)));
   }
 }
 
 function togglePlay(){ running=!running; elPlay.textContent=running?'Pause':'Play'; }
 elPlay.addEventListener('click',togglePlay);
-function clearAll(){ bodies=[]; parts=[]; selected=null; following=null; selectBody(null); }
+function clearAll(){ bodies=[]; parts=[]; waves=[]; selected=null; following=null; selectBody(null); }
 $('reset').addEventListener('click',clearAll);
 $('fit').addEventListener('click',()=>fitAll());
 function setTrails(v){ showTrails=v; $('trails').classList.toggle('on',v); if(!v) for(const b of bodies) b.trail.length=0; }
@@ -1353,7 +1549,7 @@ $('orbitAssist').addEventListener('click',()=>{ orbitAssist=!orbitAssist; $('orb
 setTrails(true); $('orbitAssist').classList.add('on');
 $('speed').addEventListener('input',e=>{
   const t=+e.target.value/60;
-  timeScale=t<=0?0:Math.pow(t,1.9)*4;
+  timeScale=t<=0?0:Math.pow(t,2.6)*60;
   $('speedv').innerHTML=timeScale.toFixed(timeScale<1?2:1)+'&times;';
 });
 $('speed').dispatchEvent(new Event('input'));
@@ -1398,6 +1594,16 @@ function fmt(v,d){
 }
 let hintTimer=setTimeout(hideHint,10000);
 function hideHint(){ clearTimeout(hintTimer); elHint.classList.add('gone'); }
+/* The sim narrates itself the first time something new happens, and then shuts
+   up about it. */
+const said={};
+function say(msg,ms){
+  clearTimeout(hintTimer);
+  elHint.textContent=msg;
+  elHint.classList.remove('gone');
+  hintTimer=setTimeout(hideHint, ms||5200);
+}
+function once(flag,msg){ if(said[flag]) return; said[flag]=1; say(msg); }
 
 /* ============================ scripting hook ============================ */
 function totalEnergy(){
@@ -1415,9 +1621,11 @@ function totalEnergy(){
 }
 window.orbital={
   list:()=>bodies.map(b=>({id:b.id,x:b.x,y:b.y,vx:b.vx,vy:b.vy,m:b.m,r:b.r,
-                           cls:b.spec.cls,pal:b.spec.pal,heat:b.heat,name:b.name})),
+                           cls:b.spec.cls,pal:b.spec.pal,heat:b.heat,name:b.name,
+                           hole:!!b.hole,stretch:b.stretch||0})),
   count:()=>bodies.length,
   particles:()=>parts.length,
+  waves:()=>waves.length,
   ringed:()=>parts.filter(p=>p.ring).length,
   debris:()=>parts.map(p=>({x:p.x,y:p.y,vx:p.vx,vy:p.vy,kind:p.kind,ring:!!p.ring,settled:!!p.settled})),
   settled:()=>parts.filter(p=>p.settled).length,

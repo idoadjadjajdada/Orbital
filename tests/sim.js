@@ -145,9 +145,14 @@ async function open(b, vp){
     o.clear();
     o.add(-150,0, 9,0,'rocky',400);
     o.add( 150,0,-9,0,'rocky',40);
-    for(let i=0;i<1400;i++) o.step(1/60);
+    let peakHeat=0;
+    for(let i=0;i<1400;i++){
+      o.step(1/60);
+      const a=o.list()[0];
+      if(a) peakHeat=Math.max(peakHeat,a.heat);
+    }
     const after=o.list();
-    return {n:o.count(), parts:o.particles(), heat:after[0]?after[0].heat:0, mass:after[0]?after[0].m:0};
+    return {n:o.count(), parts:o.particles(), heat:peakHeat, mass:after[0]?after[0].m:0};
   });
   ok('the smaller world is destroyed', sm.n===1, String(sm.n));
   ok('and thrown out as debris', sm.parts>150, sm.parts+' fragments');
@@ -280,6 +285,122 @@ async function open(b, vp){
      /Asteroid|Moon|Dwarf/.test(moon.made[0].n), JSON.stringify(moon.made));
   await ctx.close();
 
+  console.log('\n--- stars collapse ---');
+  ({p,ctx,errs}=await open(b));
+  const nova = await p.evaluate(()=>{
+    const o=window.orbital;
+    o.clear();
+    o.add(0,0,0,0,'star',4400);       /* straight past what it can hold up */
+    const before=o.list()[0].name;
+    for(let i=0;i<30;i++) o.step(1/60);
+    const after=o.list()[0];
+    return {before, name:after.name, mass:after.m, parts:o.particles(), waves:o.waves()};
+  });
+  ok('a star past the limit collapses', nova.name==='Neutron star',
+     nova.before+' -> '+nova.name);
+  ok('it sheds most of itself doing it', nova.mass<4400*0.7, nova.mass.toFixed(0));
+  ok('the shell it throws is the nebula', nova.parts>200, nova.parts+' motes');
+  ok('and it goes off with a shockwave', nova.waves>0, String(nova.waves));
+
+  const hole = await p.evaluate(()=>{
+    const o=window.orbital;
+    o.clear();
+    o.add(0,0,0,0,'rocky',20000);     /* anything heavy enough, not just stars */
+    for(let i=0;i<30;i++) o.step(1/60);
+    return o.list()[0];
+  });
+  ok('anything heavy enough becomes a black hole', hole.name==='Black hole' && hole.hole,
+     hole.name);
+  const stable = await p.evaluate(()=>{
+    const o=window.orbital;
+    o.clear(); o.add(0,0,0,0,'star',1500); o.add(0,0,0,0,'neutron');
+    for(let i=0;i<120;i++) o.step(1/60);
+    return o.list().map(x=>x.name);
+  });
+  ok('an ordinary star and a neutron star are left alone',
+     stable.includes('Star')||stable.includes('Neutron star'), JSON.stringify(stable));
+  await ctx.close();
+
+  console.log('\n--- shockwaves ---');
+  ({p,ctx,errs}=await open(b));
+  const shock = await p.evaluate(()=>{
+    const o=window.orbital;
+    o.clear();
+    /* debris sitting still, then a blast goes off beside it */
+    o.spray(300,0,0,0,120,0,10);
+    const speed0=o.debris().reduce((s,q)=>s+Math.hypot(q.vx,q.vy),0)/120;
+    o.add(0,0,0,0,'star',4400);
+    let sawWave=false;
+    for(let i=0;i<220;i++){ o.step(1/60); if(o.waves()>0) sawWave=true; }
+    const d=o.debris().filter(q=>Math.hypot(q.x,q.y)>250);
+    const speed1=d.reduce((s,q)=>s+Math.hypot(q.vx,q.vy),0)/Math.max(1,d.length);
+    /* is the far debris now moving outward? */
+    const outward=d.filter(q=>(q.x*q.vx+q.y*q.vy)>0).length/Math.max(1,d.length);
+    return {sawWave, speed0, speed1, outward, n:d.length};
+  });
+  ok('a collapse sends a front out', shock.sawWave);
+  ok('it kicks the debris it overtakes', shock.speed1>shock.speed0+0.5,
+     shock.speed0.toFixed(2)+' -> '+shock.speed1.toFixed(2));
+  ok('and kicks it outward, not at random', shock.outward>0.7,
+     (shock.outward*100).toFixed(0)+'% moving away');
+  await ctx.close();
+
+  console.log('\n--- torn apart by a black hole ---');
+  ({p,ctx,errs}=await open(b));
+  const tide = await p.evaluate(()=>{
+    const o=window.orbital;
+    o.clear();
+    o.add(0,0,0,0,'hole',60000);
+    o.add(260,0,0,2.2,'rocky',40);
+    let maxStretch=0, snappedAt=-1, partsAtSnap=0;
+    for(let i=0;i<1400;i++){
+      o.step(1/60);
+      const w=o.list().find(x=>!x.hole);
+      if(w) maxStretch=Math.max(maxStretch,w.stretch);
+      else if(snappedAt<0){ snappedAt=i; partsAtSnap=o.particles(); }
+    }
+    return {maxStretch, snappedAt, partsAtSnap};
+  });
+  ok('it stretches on the way in', tide.maxStretch>0.9, 'stretch '+tide.maxStretch.toFixed(2));
+  ok('then comes apart', tide.snappedAt>0, 'at step '+tide.snappedAt);
+  ok('into a stream of pieces, not a single gulp', tide.partsAtSnap>150,
+     tide.partsAtSnap+' pieces');
+  const safe = await p.evaluate(()=>{
+    const o=window.orbital;
+    o.clear();
+    o.add(0,0,0,0,'hole',60000);
+    const r=1400, v=Math.sqrt(60000/r);
+    o.add(r,0,0,v,'rocky',40);        /* a wide, safe orbit */
+    for(let i=0;i<2000;i++) o.step(1/60);
+    const w=o.list().find(x=>!x.hole);
+    return {alive:!!w, stretch:w?w.stretch:-1};
+  });
+  ok('but a world at a safe distance is left alone', safe.alive && safe.stretch<0.01,
+     safe.alive ? 'stretch '+safe.stretch.toFixed(3) : 'it died');
+  await ctx.close();
+
+  console.log('\n--- the clock goes faster ---');
+  ({p,ctx,errs}=await open(b));
+  await p.locator('#speed').evaluate(el=>{ el.value=60; el.dispatchEvent(new Event('input')); });
+  await p.waitForTimeout(150);
+  const top = await p.evaluate(()=>parseFloat(document.getElementById('speedv').textContent));
+  ok('the speed control reaches well past 4x', top>=40, top+'x');
+  const fast = await p.evaluate(()=>{
+    const o=window.orbital;
+    o.clear(); o.add(0,0,0,0,'star',1500);
+    const r=420, v=Math.sqrt(1500/r);
+    const id=o.add(r,0,0,v,'moon');
+    const rad=()=>{ const q=o.list().find(z=>z.id===id); return q?Math.hypot(q.x,q.y):-1; };
+    const r0=rad(); let min=r0,max=r0;
+    /* a whole second of simulated time per call, as 60x fast-forward does */
+    for(let i=0;i<600;i++){ o.step(1.0); const rr=rad(); if(rr<0) return {lost:true};
+      if(rr<min)min=rr; if(rr>max)max=rr; }
+    return {r0,min,max,drift:Math.max(max-r0,r0-min)/r0};
+  });
+  ok('and an orbit still holds at full speed', !fast.lost && fast.drift<0.05,
+     fast.lost?'body lost':'radius '+fast.min.toFixed(0)+'–'+fast.max.toFixed(0));
+  await ctx.close();
+
   console.log('\n--- the world forge ---');
   ({p,ctx,errs}=await open(b));
   await p.locator('#forgeBtn').click(); await p.waitForTimeout(250);
@@ -297,6 +418,19 @@ async function open(b, vp){
   const massAfter = await p.evaluate(()=>window.orbital.brush.mass);
   ok('a bigger world weighs more', massAfter>massBefore*2,
      massBefore.toFixed(1)+' -> '+massAfter.toFixed(1));
+  /* the sliders should reach far enough to build something that collapses */
+  const huge = await p.evaluate(()=>{
+    const sz=document.getElementById('fSize'), dn=document.getElementById('fDens');
+    const keepS=sz.value, keepD=dn.value;
+    sz.value=sz.max; sz.dispatchEvent(new Event('input'));
+    dn.value=dn.max; dn.dispatchEvent(new Event('input'));
+    const m=window.orbital.brush.mass;
+    /* put the brush back: the assertions after this one build with it */
+    sz.value=keepS; sz.dispatchEvent(new Event('input'));
+    dn.value=keepD; dn.dispatchEvent(new Event('input'));
+    return m;
+  });
+  ok('and the sliders reach far past a black hole', huge>13000, huge.toExponential(2));
   ok('the preview shows the world you designed',
      await p.evaluate(()=>{
        const c=document.getElementById('fPrev');

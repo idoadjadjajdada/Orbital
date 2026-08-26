@@ -16,7 +16,7 @@ Open `index.html`. That's the whole install.
 | Scroll / pinch | zoom |
 | Two-finger drag, middle-drag, or space+drag | pan |
 | `1`–`6` | pick a body class |
-| `Space` `C` `T` `F` | pause · clear · trails · fit |
+| `Space` `C` `T` `F` `G` | pause · clear · trails · fit · forge |
 
 Built for desktop and iPad: one finger draws and flings, two fingers pinch and
 pan, and a mouse wheel zooms about the cursor.
@@ -35,6 +35,19 @@ Hit two worlds together hard enough and they do not politely merge. The smaller
 one is destroyed and thrown out as molten debris that cools from white through
 orange to plain rock while it flies. A gas world throws a coloured plume
 instead, strung out by whatever gravity is nearby.
+
+Nothing holds itself up forever. Feed a star past about 4,200 and it goes
+**supernova** — a blast front, a shell thrown off that becomes the nebula, and
+a neutron star left behind. Feed anything past about 13,000 and it collapses
+into a **black hole**. The Forge sliders reach far enough to build something
+that collapses the moment you place it.
+
+Get too close to a hole and you are **torn apart**: the pull across a body
+beats the grip it has on itself, so it stretches, keeps stretching, and then
+stops being a body at all — becoming a long stream of pieces falling in.
+
+Heavy impacts and collapses send out a **shockwave** that shoves whatever it
+overtakes, debris and worlds alike.
 
 That debris then has to end up somewhere:
 
