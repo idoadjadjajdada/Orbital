@@ -13,10 +13,11 @@ Open `index.html`. That's the whole install.
 | Drag from empty space | fling a new body; the dotted line is where it will actually go |
 | Tap empty space | with **Auto-orbit** on, drops the body straight into a circular orbit |
 | Tap a body | select it — see its mass, speed, what it orbits and its period |
+| **Drag** on, then drag a body | pick it up and move it; let go and it carries the speed your hand had |
 | Scroll / pinch | zoom |
 | Two-finger drag, middle-drag, or space+drag | pan |
 | `1`–`6` | pick a body class |
-| `Space` `C` `T` `F` `G` | pause · clear · trails · fit · forge |
+| `Space` `C` `T` `D` `F` `G` | pause · clear · trails · drag · fit · forge |
 
 Built for desktop and iPad: one finger draws and flings, two fingers pinch and
 pan, and a mouse wheel zooms about the cursor.
@@ -40,11 +41,20 @@ Hit squarely and hard enough and neither one stays solid. Both **go liquid** —
 every pixel of both worlds, molten, still carrying the speed it came in with —
 and from there it is only motes: the two of them drive through each other, mix,
 knock about, lose the motion to those collisions, and their own gravity gathers
-what is left. It comes back as one round thing wearing a colour that is neither
-of the two that went in, still glowing, cooling back to rock over the following
-minute. Two gas giants do the same and come back as a bigger gas giant. Nothing
-about that is animated: how long it takes is however long the sloshing takes to
-die down.
+what is left.
+
+It does not become a world again for a long while, and not because anything is
+waiting on a clock. Three things have to be true at once: the sloshing has to
+have died down, gravity has to have pulled the thing round, and it has to have
+gone **cold enough to be solid**. Magma is not a planet. So what you watch is a
+lopsided glowing cloud being drawn in, rounding off, darkening from the skin
+inward — and only then does a world appear, wearing a colour that is neither of
+the two that went in and still faintly warm.
+
+Hit it off centre and the melt comes out spinning: it goes cold while it is
+still a two-to-one lozenge, and it is held there as particles until gravity has
+finished the job. Two gas giants do the same but skip the cooling — gas has no
+melting point, so a gas world re-forms as soon as gravity has gathered it.
 
 Below that it just merges, and a small fast projectile against a big world
 still shatters and throws molten debris.
@@ -154,11 +164,31 @@ That debris then has to end up somewhere:
   far side. Rock arriving at rock keeps almost none of its approach; the
   impulse can only ever reduce one, never create one, so no timestep can make
   it blow up.
-- **Settling** is what turns a cloud back into a world: its own gravity has to
-  beat the motion inside it. Spin does not count — a cloud turning as a whole
-  is already a body, and taking the bulk rotation out first is the difference
-  between an off-centre hit re-forming and never settling at all. It keeps the
-  turn it gathered with.
+- **Settling** is what turns a cloud back into a world, and it has three
+  conditions, none of them timed. Its own gravity has to beat the motion inside
+  it; spin does not count — a cloud turning as a whole is already a body, and
+  taking the bulk rotation out first is the difference between an off-centre
+  hit re-forming and never settling at all, and it keeps the turn it gathered
+  with. Its rock has to be **below the melting point**, measured over the rock
+  only, since gas has no melting point and a gas world is not waiting on one.
+  And it has to be **round**, measured as the ratio of the principal axes of
+  the mass it is made of — but only where gravity is the thing deciding its
+  shape. Under a real tide the equilibrium figure is prolate, not a sphere, so
+  holding out for one would mean nothing near a hole ever pulled itself back
+  together.
+- **Heat leaves through the surface.** A mote packed in among five or six
+  others is not the surface, and holds its heat about twice as long as one out
+  on the skin — so a melt darkens from the outside in with the glow still
+  showing through it, and the middle is the last part to go solid. The
+  neighbour count falls out of the contact pass, which is already visiting
+  every touching pair.
+- **A held world is out of the integrator's hands, not out of the sim.** While
+  you are dragging one it is skipped by the position and velocity update, so it
+  stops falling — but it still pulls on everything else from wherever you are
+  holding it, and it still collides. What it carries away is put on the same
+  scale a fling is: the clock does not run at hand speed, so a cursor's true
+  world velocity is nonsense as an orbital one, and a lazy sweep across the
+  screen would otherwise be a thousand units a second.
 - **Melting** is decided by energy, not speed: the impact carries this much per
   unit mass, holding the pair together costs about this much. Two equal worlds
   meeting at the speed they would fall together at come in at a quarter of the
@@ -204,4 +234,6 @@ no amount of clicking around would reveal.
 
 `window.orbital` is a small scripting hook — `list()`, `add()`, `step(dt)`,
 `energy()`, `preset()`. The tests drive the sim through it with an exact `dt`
-so results do not depend on machine speed.
+so results do not depend on machine speed. The ones about picking a world up go
+the other way and put a real cursor on the real canvas, because what is under
+test there is what a hand does.

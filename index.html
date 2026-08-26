@@ -169,6 +169,7 @@
       <input type="range" id="speed" min="0" max="60" value="29">
       <span class="readout" id="speedv">1.0&times;</span>
     </div>
+    <button class="btn" id="dragBtn" title="Grab a world and move it, and let go to throw it — D">Drag</button>
     <button class="btn" id="orbitAssist" title="Tap empty space to drop a body into a circular orbit">Auto-orbit</button>
     <button class="btn" id="trails" title="Orbit trails — T">Trails</button>
     <div class="card slider" title="How much debris the sky will hold at once">
@@ -185,7 +186,7 @@
   </div>
 </div>
 
-<div class="hint" id="hint">Drag to fling a world. Smash two together and watch them melt.</div>
+<div class="hint" id="hint">Drag to fling a world. Smash two together and watch them melt. Hit Drag to pick one up.</div>
 
 <script>
 (function(){
@@ -405,7 +406,7 @@ function specFromKind(k, seed){
 /* ============================ state ============================ */
 let bodies = [], parts = [];
 let nextId = 1;
-let running = true, showTrails = true, orbitAssist = true;
+let running = true, showTrails = true, orbitAssist = true, dragMode = false;
 let timeScale = 1, selected = null, following = null;
 const cam = {x:0, y:0, zoom:1};
 
@@ -442,6 +443,9 @@ function spawnPart(x,y,vx,vy,kind,rgb,heat,life,pm,size){
               into rubble carries its mass in however many motes it can afford,
               so those need to say how much each of them is worth. */
            pm: pm||PART_MASS, blob:0, dens:0, cell:0,
+           /* how many other motes it is currently touching. A buried mote has
+              five or six; one out on the skin has two or three. */
+           nb:0,
            /* a gas mote is a puff with a width and an optical depth rather
               than a speck with a colour: how much of it is stacked up along a
               line of sight is the whole of how gas looks */
@@ -485,7 +489,7 @@ function stepParts(dt, sources){
       /* swallowed: the debris settles and its mass joins the body */
       if(d2 < sR2[s]){
         const b=sources[s];
-        b.m += p.kind==='gas' ? p.pm*0.1 : p.pm;
+        b.m += p.pm;
         b.r = radiusFor(b.m, densityOf(b.spec));
         sR2[s]=b.r*b.r; sM[s]=b.m;
         if(p.heat>0.4) b.heat = Math.min(1, b.heat + 0.02);
@@ -543,7 +547,15 @@ function stepParts(dt, sources){
       }
     }
     p.age += p.settled ? dt*0.12 : dt;   /* settled debris lingers; strays fade */
-    if(p.kind!=='gas') p.heat = Math.max(0, p.heat - dt*0.055);
+    /* Heat leaves through the surface. A mote packed in among five or six
+       others is not the surface — it is the inside of the thing — so it keeps
+       its heat about twice as long as one out on the skin. That is what puts a
+       darkening crust on a cooling melt with the glow still showing through it,
+       and why the middle is the last part of a world to go solid. */
+    if(p.kind!=='gas'){
+      const skin = p.blob ? 0.5 + 0.5*Math.max(0, 1 - p.nb/5) : 1;
+      p.heat = Math.max(0, p.heat - dt*0.055*skin);
+    }
     if(p.age>p.life) parts.splice(i,1);
   }
 }
@@ -554,15 +566,19 @@ function stepParts(dt, sources){
    notice. Inside it they stay a ring, which is exactly why Saturn has one. */
 let clumpTimer = 0;
 /* would a clump of this mass and size survive being born here? */
-function tornIfBornAt(x, y, m, r){
+/* the strongest tide pulling across something of this mass and size, here,
+   measured against its own grip on itself. One is the Roche limit. */
+function tideAt(x, y, m, r){
+  let worst=0;
   for(const h of bodies){
     const dx=x-h.x, dy=y-h.y;
-    const d2=dx*dx+dy*dy;
-    const d=Math.sqrt(d2)||1e-6;
-    if(TIDE_K*(h.m*r*r*r)/(d*d*d*Math.max(1e-6,m)) > 1) return true;
+    const d=Math.sqrt(dx*dx+dy*dy)||1e-6;
+    const s=TIDE_K*(h.m*r*r*r)/(d*d*d*Math.max(1e-6,m));
+    if(s>worst) worst=s;
   }
-  return false;
+  return worst;
 }
+function tornIfBornAt(x, y, m, r){ return tideAt(x,y,m,r) > 1; }
 function accrete(dt){
   clumpTimer -= dt;
   if(clumpTimer > 0) return;
@@ -895,6 +911,7 @@ function rubbleContacts(){
   for(let i=0;i<parts.length;i++){
     const p=parts[i];
     if(!p.blob) continue;
+    p.nb=0;
     /* one integer per cell rather than "x,y": no string to build or hash, and
        at this call rate that alone was worth having */
     const key=(Math.floor(p.x*inv)+32768)*65536 + (Math.floor(p.y*inv)+32768);
@@ -936,6 +953,8 @@ function rubbleContacts(){
                collision a merge rather than a bounce. It can only ever reduce
                an approach, never create one, so no timestep can blow it up. */
             if(it===0){
+              /* touching, so each of them is that much less exposed */
+              p.nb++; q.nb++;
               const rvn=(q.vx-p.vx)*nx + (q.vy-p.vy)*ny;
               if(rvn<0){
                 const jn = -(1+CONTACT_E)*rvn/(1/p.pm + 1/q.pm);
@@ -953,42 +972,80 @@ function rubbleContacts(){
 /* How fast the inside of a cloud is still moving, against how fast it would
    have to move to leave. Under about a third and it is a body, not a cloud. */
 const SETTLE_FRAC = 0.34;
+/* Liquid rock is not a world. A melt has to lose its heat before it can be
+   one — nothing else about it changes at this number, it is simply the point
+   below which the material has gone stiff and stopped being a fluid. */
+const SOLID_HEAT = 0.35;
+/* And it has to be round. Not close enough to round to pass for it: a cloud
+   between two sloshes is momentarily quiet without being anything like a
+   sphere, and a peanut that has stopped wobbling is still a peanut. What
+   makes a planet round is its own gravity winning against the shape it
+   happened to be left in, and until that has happened it is not a planet. */
+const ROUND_MAX = 1.3;
+/* long axis over short, from the mass distribution: the eigenvalues of the
+   second-moment matrix are the squares of the two axes. */
+function axisRatio(Sxx, Syy, Sxy){
+  const half=(Sxx+Syy)/2;
+  const d=Math.sqrt(((Sxx-Syy)/2)*((Sxx-Syy)/2) + Sxy*Sxy);
+  const lo=half-d;
+  if(lo<=1e-9) return 99;
+  return Math.sqrt((half+d)/lo);
+}
+function isRound(Sxx, Syy, Sxy){ return axisRatio(Sxx,Syy,Sxy) <= ROUND_MAX; }
+/* what the last cloud to become a world looked like at the moment it did */
+let lastSettle=null;
 function settleToBody(group, b){
+  b.why='';
   if(bodies.length>=MAX_BODIES) return false;
-  if(group.length < 40) return false;
+  if(group.length < 40){ b.why='small'; return false; }
   /* Spin is not sloshing. A cloud turning as a whole is already a body — that
      is what a rotating planet is — so the bulk rotation comes out before the
      dispersion is measured, or an off-centre hit could never settle at all. */
-  let L=0, I=0;
+  let L=0, I=0, Sxx=0, Syy=0, Sxy=0;
   for(const j of group){
     const q=parts[j];
     const dx=q.x-b.x, dy=q.y-b.y;
     L += q.pm*(dx*(q.vy-b.vy) - dy*(q.vx-b.vx));
     I += q.pm*(dx*dx+dy*dy);
+    Sxx += q.pm*dx*dx; Syy += q.pm*dy*dy; Sxy += q.pm*dx*dy;
   }
   const w = I>1e-9 ? L/I : 0;
 
-  let s2=0, hot=0, gas=0, rr=0, gg=0, bb=0;
+  let s2=0, hot=0, gas=0, rock=0, rr=0, gg=0, bb=0;
   for(const j of group){
     const q=parts[j];
     const dx=q.x-b.x, dy=q.y-b.y;
     const dvx=q.vx-b.vx + w*dy, dvy=q.vy-b.vy - w*dx;
     s2 += (dvx*dvx+dvy*dvy)*q.pm;
-    hot += q.heat*q.pm;
-    if(q.kind==='gas') gas += q.pm;
+    /* only the rock has a melting point. Gas that has been through a collision
+       is hot too, and it does not care: there is nothing in it that has to go
+       stiff before it can be a planet, so a gas world re-forms as soon as
+       gravity has gathered it. */
+    if(q.kind==='gas') gas += q.pm; else { rock += q.pm; hot += q.heat*q.pm; }
     rr+=q.r; gg+=q.g; bb+=q.b;
   }
   const sigma = Math.sqrt(s2/b.m);
+  const heat  = rock>1e-9 ? hot/rock : 0;
   const vesc  = Math.sqrt(2*G*b.m/Math.max(0.55,b.r));
-  if(sigma > SETTLE_FRAC*vesc) return false;
+  b.sigma=sigma; b.vesc=vesc; b.spin=w; b.round=axisRatio(Sxx,Syy,Sxy); b.hot=heat;
+  if(sigma > SETTLE_FRAC*vesc){ b.why='sloshing'; return false; }
   /* but a cloud spinning fast enough to throw its own edge off is not one
      either — it is about to shed, and it should be left to do that */
-  if(Math.abs(w)*b.r > 0.8*vesc) return false;
+  if(Math.abs(w)*b.r > 0.8*vesc){ b.why='spinning'; return false; }
+  /* still liquid: gravity may have gathered it, but what it has gathered is a
+     ball of magma, and that is a thing you can watch cool rather than a world */
+  if(heat > SOLID_HEAT){ b.why='molten'; return false; }
+  /* And gravity has to have actually pulled it round — but only where gravity
+     is the thing deciding its shape. Under a real tide the equilibrium figure
+     is not a sphere, it is a prolate one drawn out along the pull, so holding
+     out for a sphere would mean nothing near a hole ever pulled itself back
+     together. The long and short axes come out of the second moments the spin
+     did. */
+  if(tideAt(b.x, b.y, b.m, b.r) < 0.25 && !isRound(Sxx, Syy, Sxy)){ b.why='lumpy'; return false; }
   /* and not somewhere it would be pulled straight back apart */
-  if(tornIfBornAt(b.x, b.y, b.m, b.r)) return false;
+  if(tornIfBornAt(b.x, b.y, b.m, b.r)){ b.why='tide'; return false; }
 
   const gassy = gas > b.m*0.5;
-  const heat  = hot/b.m;
   const kindId = gassy ? (b.m>220?'gas':'icegiant')
                : b.m<1.4 ? 'asteroid' : b.m<5 ? 'moon' : b.m<26 ? 'dwarfp'
                : heat>0.5 ? 'molten' : 'rocky';
@@ -1005,6 +1062,9 @@ function settleToBody(group, b){
   nb.heat = Math.max(nb.heat||0, heat);
   nb.spin = w;                     /* it keeps the turn it gathered with */
   nb.flash = 0.5;
+  lastSettle={round:+axisRatio(Sxx,Syy,Sxy).toFixed(3), heat:+heat.toFixed(3),
+              spin:w, sigma:+(sigma/vesc).toFixed(3), n:group.length, m:b.m,
+              tide:+tideAt(b.x,b.y,b.m,b.r).toFixed(3)};
   for(const j of group) parts[j].dead = true;
   return true;
 }
@@ -1416,12 +1476,17 @@ function integrate(dt){
   const n=bodies.length;
   for(let i=0;i<n;i++){
     const b=bodies[i];
+    /* a world in your hand goes where the hand goes. It still pulls on
+       everything else from wherever that is, and it still collides — the only
+       thing suspended is what moves it. */
+    if(b.held) continue;
     b.x+=b.vx*dt+0.5*b.ax*dt*dt;
     b.y+=b.vy*dt+0.5*b.ay*dt*dt;
   }
   accelerate();
   for(let i=0;i<n;i++){
     const b=bodies[i];
+    if(b.held){ b.ax=b.nax; b.ay=b.nay; continue; }
     b.vx+=0.5*(b.ax+b.nax)*dt;
     b.vy+=0.5*(b.ay+b.nay)*dt;
     b.ax=b.nax; b.ay=b.nay;
@@ -2080,6 +2145,75 @@ function systemSpin(host){
   return L<0?-1:1;
 }
 
+/* ============================ holding a world ============================ */
+/* Grab one and it stops being the sim's to move: it follows the cursor, and
+   what it is doing when you let go is what it carries away. */
+let held=null;
+/* The clock does not run at hand speed, so the cursor's true world velocity is
+   useless as an orbital one — an unhurried sweep across the screen is a
+   thousand units a second. A throw is put on the same scale a fling is, so
+   flicking a world across the view sends it off about as fast as dragging a
+   new one across the view would. */
+const TOSS = VEL_SCALE*0.12;
+function throwVel(){
+  if(!held) return {vx:0,vy:0};
+  /* a hand that has stopped moving is not throwing anything, whatever it was
+     doing half a second ago */
+  if((performance.now()-held.t)/1000 > 0.13) return {vx:0,vy:0};
+  return {vx: held.cvx*TOSS, vy: held.cvy*TOSS};
+}
+function grabHold(b, wx, wy){
+  held={b, ox:b.x-wx, oy:b.y-wy, tx:b.x, ty:b.y,
+        cvx:0, cvy:0, t:performance.now()};
+  b.held=true;
+  following=null;
+  view.style.cursor='grabbing';
+}
+function moveHold(wx, wy){
+  if(!held) return;
+  const nx=wx+held.ox, ny=wy+held.oy;
+  const now=performance.now();
+  /* smoothed over about a tenth of a second of real time, or one twitchy
+     pointer event on the way up turns a nudge into a rocket */
+  const dtr=Math.min(0.2, Math.max(0.004, (now-held.t)/1000));
+  const k=1-Math.exp(-dtr/0.09);
+  held.cvx += ((nx-held.tx)/dtr - held.cvx)*k;
+  held.cvy += ((ny-held.ty)/dtr - held.cvy)*k;
+  held.tx=nx; held.ty=ny; held.t=now;
+}
+function applyHold(){
+  if(!held) return;
+  const b=held.b;
+  /* it can be eaten, merged or torn apart while you are holding it */
+  if(b.dead || bodies.indexOf(b)<0){
+    b.held=false; held=null;
+    view.style.cursor = dragMode ? 'grab' : 'crosshair';
+    return;
+  }
+  b.x=held.tx; b.y=held.ty;
+  const v=throwVel();
+  b.vx=v.vx; b.vy=v.vy;
+}
+function dropHold(){
+  if(!held) return;
+  const b=held.b, v=throwVel();
+  b.held=false;
+  held=null;
+  view.style.cursor = dragMode ? 'grab' : 'crosshair';
+  if(b.dead || bodies.indexOf(b)<0) return;
+  if(!v.vx && !v.vy && orbitAssist){
+    /* set down rather than thrown. Same courtesy a tap on empty space gets:
+       put it in the circular orbit for where it has been left, or it simply
+       drops out of the sky. */
+    const host=dominant(b.x,b.y,b);
+    if(host){ const c=circularVelocity(b.x,b.y,host,systemSpin(host)); v.vx=c.vx; v.vy=c.vy; }
+  }
+  b.vx=v.vx; b.vy=v.vy;
+  b.trail.length=0;              /* the drag path is not an orbit */
+  accelerate();
+  for(const q of bodies){ q.ax=q.nax; q.ay=q.nay; }
+}
+
 /* ============================ input ============================ */
 const pointers=new Map();
 let pinch=null, panning=null, spaceHeld=false;
@@ -2102,6 +2236,7 @@ view.addEventListener('pointerdown',e=>{
   pointers.set(e.pointerId,p);
   if(pointers.size===2){
     aim.active=false;
+    dropHold();
     const [a,b]=[...pointers.values()];
     pinch={d:Math.hypot(a.x-b.x,a.y-b.y),cx:(a.x+b.x)/2,cy:(a.y+b.y)/2};
     return;
@@ -2112,7 +2247,11 @@ view.addEventListener('pointerdown',e=>{
     return;
   }
   const hit=bodyAt(p.x,p.y);
-  if(hit){ selectBody(hit); return; }
+  if(hit){
+    selectBody(hit);
+    if(dragMode) grabHold(hit, toWorldX(p.x), toWorldY(p.y));
+    return;
+  }
   selectBody(null);
   aim.active=true; aim.x=toWorldX(p.x); aim.y=toWorldY(p.y);
   aim.dx=0; aim.dy=0; aim.path=[]; aim.hit=null;
@@ -2135,6 +2274,7 @@ view.addEventListener('pointermove',e=>{
     cam.y=panning.cy-(p.y-panning.sy)/cam.zoom;
     following=null; return;
   }
+  if(held){ moveHold(toWorldX(p.x), toWorldY(p.y)); return; }
   if(aim.active){ aim.dx=toWorldX(p.x)-aim.x; aim.dy=toWorldY(p.y)-aim.y; updateAim(); }
 });
 function endPointer(e){
@@ -2143,6 +2283,7 @@ function endPointer(e){
   if(pointers.size<2) pinch=null;
   if(!had) return;
   if(panning){ panning=null; return; }
+  if(held){ dropHold(); return; }
   if(!aim.active) return;
   aim.active=false;
   const drag=Math.hypot(aim.dx,aim.dy)*cam.zoom;
@@ -2172,6 +2313,7 @@ addEventListener('keydown',e=>{
   if(k===' '){ e.preventDefault(); spaceHeld=true; togglePlay(); }
   else if(k==='c'||k==='C') clearAll();
   else if(k==='t'||k==='T') setTrails(!showTrails);
+  else if(k==='d'||k==='D') setDragMode(!dragMode);
   else if(k==='f'||k==='F') fitAll();
   else if(k==='g'||k==='G') toggleForge();
   else if(k==='Escape') selectBody(null);
@@ -2239,6 +2381,7 @@ const PRESETS={
   }
 };
 function loadPreset(n){
+  held=null;
   bodies=[]; parts=[]; waves=[]; selected=null; following=null;
   (PRESETS[n]||PRESETS.solar)();
   accelerate();
@@ -2327,12 +2470,19 @@ function syncForge(skipSliders){
 
 function togglePlay(){ running=!running; elPlay.textContent=running?'Pause':'Play'; }
 elPlay.addEventListener('click',togglePlay);
-function clearAll(){ bodies=[]; parts=[]; waves=[]; blobs=[]; selected=null; following=null; selectBody(null); }
+function clearAll(){ held=null; lastSettle=null; bodies=[]; parts=[]; waves=[]; blobs=[]; selected=null; following=null; selectBody(null); }
 $('reset').addEventListener('click',clearAll);
 $('fit').addEventListener('click',()=>fitAll());
 function setTrails(v){ showTrails=v; $('trails').classList.toggle('on',v); if(!v) for(const b of bodies) b.trail.length=0; }
 $('trails').addEventListener('click',()=>setTrails(!showTrails));
 $('orbitAssist').addEventListener('click',()=>{ orbitAssist=!orbitAssist; $('orbitAssist').classList.toggle('on',orbitAssist); });
+function setDragMode(v){
+  dragMode=v;
+  $('dragBtn').classList.toggle('on',v);
+  view.style.cursor = v ? 'grab' : 'crosshair';
+  if(!v) dropHold();
+}
+$('dragBtn').addEventListener('click',()=>setDragMode(!dragMode));
 setTrails(true); $('orbitAssist').classList.add('on');
 $('speed').addEventListener('input',e=>{
   const t=+e.target.value/60;
@@ -2372,6 +2522,7 @@ $('ispFollow').addEventListener('click',()=>{
 });
 function deleteSelected(){
   if(!selected) return;
+  if(held&&held.b===selected){ held.b.held=false; held=null; }
   bodies=bodies.filter(b=>b!==selected);
   if(following===selected) following=null;
   selectBody(null);
@@ -2424,6 +2575,10 @@ window.orbital={
                            cls:b.spec.cls,pal:b.spec.pal,heat:b.heat,name:b.name,
                            hole:!!b.hole,stretch:b.stretch||0})),
   count:()=>bodies.length,
+  /* where a point in the world lands on the actual page, so a test can put a
+     real cursor on a real world */
+  screen:(wx,wy)=>{ const r=view.getBoundingClientRect();
+                    return {x:r.left+toScreenX(wx)*PIX, y:r.top+toScreenY(wy)*PIX}; },
   particles:()=>parts.length,
   waves:()=>waves.length,
   ringed:()=>parts.filter(p=>p.ring).length,
@@ -2431,27 +2586,50 @@ window.orbital={
   clouds:()=>blobs.filter(b=>b.m>0).map(b=>{
     const own=parts.filter(p=>blobs[p.blob-1]===b);
     /* principal extents, so a test can say "this is not a circle" without
-       anybody having decided in advance what shape it should be */
-    let sxx=0, syy=0, sxy=0;
-    for(const p of own){ const dx=p.x-b.x, dy=p.y-b.y; sxx+=dx*dx; syy+=dy*dy; sxy+=dx*dy; }
+       anybody having decided in advance what shape it should be. Weighted by
+       mass and taken about where the mass currently is, so it is the same
+       number the settle test uses rather than a near neighbour of it — two
+       worlds that have melted together do not have the same mote size. */
+    let sxx=0, syy=0, sxy=0, mm=0, cx=0, cy=0;
+    let hot=0, nb=0;
+    for(const p of own){ cx+=p.x*p.pm; cy+=p.y*p.pm; mm+=p.pm; }
+    if(mm>0){ cx/=mm; cy/=mm; } else { cx=b.x; cy=b.y; }
+    for(const p of own){ const dx=p.x-cx, dy=p.y-cy;
+                         sxx+=p.pm*dx*dx; syy+=p.pm*dy*dy; sxy+=p.pm*dx*dy;
+                         hot+=p.heat; nb+=p.nb; }
     const n=Math.max(1,own.length);
-    sxx/=n; syy/=n; sxy/=n;
+    const w=mm>0?mm:1;
+    sxx/=w; syy/=w; sxy/=w;
     const tr=sxx+syy, det=sxx*syy-sxy*sxy;
     const disc=Math.max(0, tr*tr/4-det);
     const l1=tr/2+Math.sqrt(disc), l2=tr/2-Math.sqrt(disc);
     return {x:b.x, y:b.y, m:b.m, n:own.length,
             long:Math.sqrt(Math.max(0,l1)), short:Math.sqrt(Math.max(0,l2)),
-            elong: l2>1e-9 ? Math.sqrt(l1/l2) : 999};
+            elong: l2>1e-9 ? Math.sqrt(l1/l2) : 999,
+            heat: hot/n, buried: nb/n,
+            /* what is keeping it from being a world yet */
+            why: b.why||'', sigma: b.sigma||0, vesc: b.vesc||0,
+            spin: b.spin||0, round: b.round||0};
   }),
   debris:()=>parts.map(p=>({x:p.x,y:p.y,vx:p.vx,vy:p.vy,kind:p.kind,ring:!!p.ring,
                            settled:!!p.settled,r:p.r,g:p.g,b:p.b,pm:p.pm,heat:p.heat})),
   settled:()=>parts.filter(p=>p.settled).length,
+  /* the shape and the temperature of the last cloud that became a world, at
+     the moment it did */
+  lastSettle:()=>lastSettle && Object.assign({},lastSettle),
   add:(x,y,vx,vy,kindId,mass)=>{
     const b=place(kindId||'rocky',x,y,vx,vy,mass);
     if(b){ accelerate(); for(const q of bodies){ q.ax=q.nax; q.ay=q.nay; } }
     return b?b.id:null;
   },
   clear:()=>clearAll(),
+  /* picking a world up, for a test that would rather not synthesise pointer
+     events at particular pixels */
+  drag:v=>setDragMode(!!v),
+  holding:()=>held?held.b.id:null,
+  grab:id=>{ const b=bodies.find(x=>x.id===id); if(b) grabHold(b,b.x,b.y); return !!b; },
+  moveTo:(x,y)=>moveHold(x,y),
+  drop:()=>dropHold(),
   /* spray debris directly — handy for a test, and for anyone who wants to
      build a ring by hand rather than by wrecking a moon */
   spray:(x,y,vx,vy,n,spread,jitter)=>{
@@ -2501,6 +2679,7 @@ function frame(now){
   clock+=dt;
   fpsAcc+=dt; fpsN++;
   if(fpsAcc>0.5){ fps=fpsN/fpsAcc; fpsAcc=0; fpsN=0; }
+  applyHold();
   if(running&&timeScale>0) step(dt*timeScale);
   if(following){ cam.x=following.x; cam.y=following.y; }
   render(clock);

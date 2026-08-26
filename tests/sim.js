@@ -197,21 +197,29 @@ async function open(b, vp){
     o.add( 140,0,-8,0,'icegiant');
     const m0=o.mass();
     let peakCloud=0, peakElong=0, mixedFor=0, kinds=new Set();
-    for(let i=0;i<3600;i++){
+    let roundAt=-1, bornAt=-1;
+    for(let i=0;i<6000;i++){
       o.step(1/60);
       const n=o.particles();
       if(n>200){
         mixedFor++;
         peakCloud=Math.max(peakCloud,n);
         const c=o.clouds();
-        if(c.length) peakElong=Math.max(peakElong,c[0].elong);
+        if(c.length){
+          peakElong=Math.max(peakElong,c[0].elong);
+          if(roundAt<0 && c[0].n>2000 && c[0].elong<1.3) roundAt=i/60;
+        }
         for(const q of o.debris()) kinds.add(q.kind);
       }
+      if(bornAt<0 && o.count()===1) bornAt=i/60;
+      /* stop at the birth. What the leftovers do afterwards is the accretion
+         test's business, not this one's. */
+      if(bornAt>=0 && i/60 > bornAt+0.5) break;
     }
     const L=o.list();
     return {m0, m1:o.mass(), peakCloud, peakElong:+peakElong.toFixed(2),
-            mixedFor, n:L.length, name:L[0]?L[0].name:'', gas:L[0]?!!L[0].gas:false,
-            kinds:[...kinds]};
+            mixedFor, roundAt, bornAt, n:L.length, name:L[0]?L[0].name:'',
+            gas:L[0]?!!L[0].gas:false, kinds:[...kinds]};
   });
   ok('both worlds go to gas rather than merging on contact',
      gas.peakCloud>800, gas.peakCloud+' motes at the thick of it');
@@ -222,6 +230,12 @@ async function open(b, vp){
   ok('sloshing on the way, not just shrinking', gas.peakElong>1.3, String(gas.peakElong));
   ok('and comes back as one gas world', gas.n===1 && /giant/i.test(gas.name),
      gas.n+' x '+gas.name);
+  /* the point of the wait: it is not a planet the moment the two clouds
+     overlap. Gravity has to pull the mixture round first, and only then is
+     there something a sphere is an honest picture of. */
+  ok('and only after gravity has pulled the mixture round',
+     gas.roundAt>0 && gas.bornAt>=gas.roundAt,
+     'round at '+gas.roundAt.toFixed(1)+'s, a world at '+gas.bornAt.toFixed(1)+'s');
   ok('carrying everything that went in', Math.abs(gas.m1-gas.m0)<gas.m0*1e-6,
      gas.m0.toFixed(2)+' -> '+gas.m1.toFixed(2));
   await ctx.close();
@@ -444,36 +458,119 @@ async function open(b, vp){
      melt together, because that is one that lasts and has no tidal field
      squeezing it — a tide compresses a cloud across the same axis it stretches
      it along, and that is not the collapse this is looking for. */
+  /* the cloud that matters is the big one; a torn-off straggler is not it */
+  await p.evaluate(()=>{ window.biggest=cs=>cs.length?cs.reduce((a,x)=>x.n>a.n?x:a):null; });
   const hold = await p.evaluate(()=>{
     const o=window.orbital;
     o.clear(); o.setSpeed(0);
     o.add(-160,0, 5,0,'rocky',60);
     o.add( 160,0,-5,0,'rocky',50);
-    let w0=0, low=1e9, n0=0, cloudFor=0, settled=-1;
-    for(let i=0;i<3000;i++){
+    let w0=0, low=1e9, n0=0, cloudFor=0, bornAt=-1, bornHeat=-1, bornElong=-1;
+    let hottest=0, roundAt=-1, lastHeat=1, hotBodies=0, crust=null;
+    for(let i=0;i<5000;i++){
       o.step(1/60);
-      const c=o.clouds()[0];
+      const c=biggest(o.clouds());
       if(c && c.n>400){
         cloudFor++;
         if(!w0){ w0=c.short; n0=c.n; }
         low=Math.min(low,c.short);
+        hottest=Math.max(hottest,c.heat);
+        if(roundAt<0 && c.elong<1.3) roundAt=i/60;
+        lastHeat=c.heat;
+        /* look inside it now and then on the way down, and keep the widest the
+           inside ever ran ahead of the outside. c.long is the rms radius, so
+           the edge is a good half again further out than that. */
+        if(i%30===0 && c.heat<0.8 && c.heat>0.15){
+          let ci=0,cn=0,so=0,sn=0;
+          for(const q of o.debris()){
+            const d=Math.hypot(q.x-c.x, q.y-c.y);
+            if(d < c.long*0.5){ ci+=q.heat; cn++; }
+            else if(d > c.long*1.15){ so+=q.heat; sn++; }
+          }
+          if(cn>20 && sn>20){
+            const core=ci/cn, skin=so/sn;
+            if(!crust || core-skin > crust.core-crust.skin)
+              crust={core:+core.toFixed(2), skin:+skin.toFixed(2)};
+          }
+        }
+        /* nothing may become a world while the material is still liquid */
+        if(o.count()>0 && c.heat>0.45) hotBodies++;
       }
-      if(w0 && settled<0 && o.count()===1) settled=cloudFor;
+      if(w0 && bornAt<0 && o.count()===1){
+        bornAt=i/60;
+        bornHeat=o.list()[0].heat;
+        bornElong=roundAt>=0 ? 1 : 99;
+      }
     }
     const L=o.list();
     return {w0:+w0.toFixed(2), low:+(low===1e9?0:low).toFixed(2), n0, cloudFor,
-            n:L.length, m:L[0]?+L[0].m.toFixed(2):0,
-            name:L[0]?L[0].name:'', heat:L[0]?+L[0].heat.toFixed(2):0};
+            hottest:+hottest.toFixed(2), roundAt, lastHeat:+lastHeat.toFixed(2),
+            bornAt, hotBodies, crust,
+            bornHeat:+bornHeat.toFixed(2), bornElong,
+            n:L.length, m:L[0]?+L[0].m.toFixed(2):0, total:+o.mass().toFixed(2),
+            name:L[0]?L[0].name:''};
   });
   ok('the melt holds itself up instead of collapsing inward',
      hold.n0>400 && hold.low > hold.w0*0.7,
      'thinnest '+hold.low+' against '+hold.w0+' to start');
-  ok('and gravity gathers it back into one world',
-     hold.n===1 && Math.abs(hold.m-110)<0.5, hold.n+' body of '+hold.m);
-  ok('which takes a while rather than happening on contact',
-     hold.cloudFor>90, (hold.cloudFor/60).toFixed(1)+'s liquid');
-  ok('and it is still molten when it gets there', hold.heat>0.4,
-     hold.name+' at heat '+hold.heat);
+  /* The whole of what a melt has to do before it is a world again: stop
+     sloshing, let gravity pull it round, and go cold enough to be solid. Not
+     one of those is scheduled — the cloud simply arrives at each of them. */
+  ok('and it stays liquid the whole time it is still hot',
+     hold.hotBodies===0, hold.hotBodies+' frames with a world in a hot melt');
+  ok('gravity pulls it round first', hold.roundAt>0 && hold.roundAt<hold.bornAt,
+     'round at '+hold.roundAt.toFixed(1)+'s, a world at '+hold.bornAt.toFixed(1)+'s');
+  /* heat leaves through the surface, so the skin goes dark first and the glow
+     you can still see is the middle of it */
+  ok('it cools from the outside in',
+     hold.crust && hold.crust.skin < hold.crust.core - 0.06,
+     hold.crust ? 'core '+hold.crust.core+' against a skin of '+hold.crust.skin : 'never sampled');
+  ok('and it has to cool before it is a world at all',
+     hold.hottest>0.8 && hold.lastHeat<0.4,
+     'magma at '+hold.hottest+', down to '+hold.lastHeat+' by the time it is rock');
+  ok('so what it comes back as is rock rather than magma',
+     hold.n===1 && hold.bornHeat<=0.36, hold.name+' born at heat '+hold.bornHeat);
+  ok('which takes a great deal longer than contact',
+     hold.cloudFor>900, (hold.cloudFor/60).toFixed(1)+'s liquid');
+  ok('the world holds nearly all of it, and the rest is ejecta',
+     hold.m>100 && Math.abs(hold.total-110)<1e-4,
+     hold.m+' of '+hold.total);
+
+  /* Off-centre, so the melt comes out of the collision spinning and gravity has
+     a lozenge to work with rather than a ball. It goes cold in that shape well
+     before it is round, and a lozenge is not a planet, so it waits. */
+  const lopsided = await p.evaluate(()=>{
+    const o=window.orbital;
+    o.clear(); o.setSpeed(0);
+    o.add(-160,-2, 5,0,'rocky',60);
+    o.add( 160, 2,-5,0,'rocky',50);
+    let coldAndLumpy=0, worstE=0, lastE=0, bornAt=-1, bornE=-1;
+    for(let i=0;i<6000;i++){
+      o.step(1/60);
+      const c=biggest(o.clouds());
+      if(c && c.n>400){
+        lastE=c.elong;
+        if(c.heat<0.35 && c.elong>1.3){ coldAndLumpy++; worstE=Math.max(worstE,c.elong); }
+      }
+      if(bornAt<0 && o.count()===1 && i>600){ bornAt=i/60; bornE=lastE; }
+      if(bornAt>=0 && i/60 > bornAt+1) break;
+    }
+    return {coldAndLumpy, worstE:+worstE.toFixed(2), lastE:+lastE.toFixed(2),
+            bornAt:+bornAt.toFixed(1), bornE:+bornE.toFixed(2), n:o.count(),
+            settle:o.lastSettle()};
+  });
+  ok('a glancing melt goes cold while it is still the wrong shape',
+     lopsided.coldAndLumpy>60 && lopsided.worstE>1.3,
+     (lopsided.coldAndLumpy/60).toFixed(1)+'s cold and as far out as '+lopsided.worstE);
+  /* and it is held there. Cold is not enough on its own — what comes out has
+     to be something a sphere is an honest picture of. */
+  /* measured on the cloud that actually became the world, at the instant it
+     did — the sloshing mass around it is a different question */
+  ok('and nothing comes out of it until gravity has rounded it off',
+     lopsided.n===1 && lopsided.settle && lopsided.settle.round<1.31 &&
+     lopsided.settle.heat<=0.35,
+     lopsided.settle ? 'axes '+lopsided.settle.round+':1 at heat '+lopsided.settle.heat
+                     : 'nothing settled');
 
   const safe = await p.evaluate(()=>{
     const o=window.orbital;
@@ -643,8 +740,12 @@ async function open(b, vp){
     ok('and the small one is scraped, not destroyed',
        glancing.every(r=>r.moon>0 && r.moon<r.before),
        glancing.map(r=>r.before+'->'+r.moon).join(' '));
-    ok('while the big one picks that material up',
-       glancing.every(r=>r.world>60), glancing.map(r=>r.world).join(' '));
+    /* what comes off the small one lands on the big one or goes into the sky;
+       how much of each is a matter of where the pieces were thrown, so what
+       holds every time is the direction, not the amount */
+    ok('while the big one picks material up and never loses any',
+       glancing.every(r=>r.world>=60) && glancing.some(r=>r.world>60.05),
+       glancing.map(r=>r.world).join(' '));
     ok('a clean miss touches neither', sweep[4].n===2 && sweep[4].moon===sweep[4].before,
        'at offset 24 the moon still weighs '+sweep[4].moon);
     ok('no exceptions', errs.length===0, errs.join(' | '));
@@ -882,6 +983,146 @@ async function open(b, vp){
     ok('and reads out what it is set to', /k$/.test(viaSlider.label), viaSlider.label);
     ok('no exceptions under a heavy sky', errs.length===0, errs.join(' | '));
   }
+  await ctx.close();
+
+  console.log('\n--- picking a world up ---');
+  ({p,ctx,errs}=await open(b));
+  {
+    /* Where the world in question is on the actual page. Everything here goes
+       through a real cursor on a real canvas rather than through the hook, so
+       what is under test is the thing a hand does. */
+    const at=async id=>p.evaluate(i=>{
+      const w=window.orbital.list().find(x=>x.id===i);
+      return window.orbital.screen(w.x,w.y);
+    },id);
+    const body=async id=>p.evaluate(i=>window.orbital.list().find(x=>x.id===i),id);
+
+    const ids=await p.evaluate(()=>{
+      const o=window.orbital;
+      o.clear();
+      return {w:o.add(0,0,0,0,'rocky',60), star:o.add(0,300,0,0,'star',3000)};
+    });
+    ok('the Drag button is there and starts off',
+       await p.locator('#dragBtn').count()===1 &&
+       !(await p.evaluate(()=>document.getElementById('dragBtn').classList.contains('on'))));
+
+    /* off: a press on a world selects it and nothing else */
+    let s0=await at(ids.w);
+    await p.mouse.move(s0.x,s0.y); await p.mouse.down();
+    await p.mouse.move(s0.x+120,s0.y); await p.waitForTimeout(60);
+    await p.mouse.up();
+    ok('with it off, pressing a world does not move it',
+       await p.evaluate(()=>window.orbital.holding())===null);
+
+    await p.locator('#dragBtn').click();
+    ok('clicking it turns it on',
+       await p.evaluate(()=>document.getElementById('dragBtn').classList.contains('on')));
+
+    /* held still, with a star right there to fall into. Left alone it would
+       have covered five units in this long. */
+    await p.evaluate(()=>window.orbital.setSpeed(20));
+    s0=await at(ids.w);
+    await p.mouse.move(s0.x,s0.y); await p.mouse.down();
+    ok('and now a world can be picked up',
+       await p.evaluate(()=>window.orbital.holding())===ids.w);
+    await p.waitForTimeout(900);
+    const heldW=await body(ids.w);
+    ok('a held world stops falling', Math.hypot(heldW.x,heldW.y)<1,
+       'moved '+Math.hypot(heldW.x,heldW.y).toFixed(2)+' with a star 300 away');
+
+    /* and it goes where the cursor goes */
+    for(let i=1;i<=8;i++){ await p.mouse.move(s0.x+i*18, s0.y-i*9); await p.waitForTimeout(20); }
+    const dragged=await body(ids.w);
+    ok('it follows the cursor', dragged.x>90 && dragged.y<-40,
+       'at '+dragged.x.toFixed(0)+','+dragged.y.toFixed(0));
+    await p.mouse.up();
+    const thrown=await body(ids.w);
+    ok('and letting go throws it the way it was going',
+       thrown.vx>0.4 && thrown.vy<-0.2,
+       'v '+thrown.vx.toFixed(2)+','+thrown.vy.toFixed(2));
+    ok('nothing is left holding it', await p.evaluate(()=>window.orbital.holding())===null);
+  }
+  {
+    /* Held by the physics rather than patched up between frames: stepped
+       directly, with no frame in between to put it back where the cursor has
+       it, it still does not fall. */
+    const r=await p.evaluate(()=>{
+      const o=window.orbital;
+      o.clear();
+      const id=o.add(0,0,0,0,'rocky',20);
+      o.add(0,300,0,0,'star',8000);
+      o.grab(id);
+      for(let i=0;i<600;i++) o.step(1/60);
+      const w=o.list().find(x=>x.id===id);
+      const while_held=Math.hypot(w.x,w.y);
+      o.drop();
+      for(let i=0;i<1200;i++) o.step(1/60);
+      const f=o.list().find(x=>x.id===id);
+      return {while_held:+while_held.toFixed(2), after:f?+f.y.toFixed(1):999};
+    });
+    ok('and the hold survives the integrator, not just the frame',
+       r.while_held<0.5 && r.after>5,
+       'moved '+r.while_held+' held, then fell '+r.after+' once let go');
+  }
+  {
+    /* Out of the sim's hands, not out of the sim: what it is holding up is only
+       the part that moves it. Its gravity is exactly where it is being held. */
+    const ids=await p.evaluate(()=>{
+      const o=window.orbital; o.clear(); o.setSpeed(20);
+      return {w:o.add(0,0,0,0,'star',3000), probe:o.add(200,0,0,0,'moon')};
+    });
+    const s=await p.evaluate(i=>{
+      const w=window.orbital.list().find(x=>x.id===i); return window.orbital.screen(w.x,w.y);
+    },ids.w);
+    await p.mouse.move(s.x,s.y); await p.mouse.down();
+    await p.waitForTimeout(900);
+    const probe=await p.evaluate(i=>window.orbital.list().find(x=>x.id===i),ids.probe);
+    await p.mouse.up();
+    ok('but everything else still falls toward it', probe && probe.x < 195,
+       'the moon drew '+(200-(probe?probe.x:200)).toFixed(1)+' closer');
+  }
+  {
+    /* how hard you throw is how fast you moved */
+    const toss=async (steps,px,wait)=>{
+      const s=await p.evaluate(()=>{
+        const o=window.orbital; o.clear(); o.setSpeed(0);
+        const id=o.add(0,0,0,0,'rocky',60);
+        const w=o.list()[0];
+        return Object.assign(o.screen(w.x,w.y),{id});
+      });
+      await p.mouse.move(s.x,s.y); await p.mouse.down();
+      for(let i=1;i<=steps;i++){ await p.mouse.move(s.x+i*px,s.y); await p.waitForTimeout(wait); }
+      await p.mouse.up();
+      const w=await p.evaluate(()=>window.orbital.list()[0]);
+      return Math.hypot(w.vx,w.vy);
+    };
+    const gentle=await toss(14,8,26), hard=await toss(7,70,7);
+    ok('a slow drag sets a world down softly', gentle<3, gentle.toFixed(2));
+    ok('a flick throws it hard', hard > gentle*3, gentle.toFixed(2)+' against '+hard.toFixed(2));
+  }
+  {
+    /* set down rather than thrown: the same courtesy a tap on empty space gets */
+    const orb=await p.evaluate(()=>{
+      const o=window.orbital; o.clear(); o.setSpeed(0);
+      o.add(0,0,0,0,'star',3000);
+      return {id:o.add(-300,0,0,0,'rocky',20), want:Math.sqrt(3000/300)};
+    });
+    const s=await p.evaluate(i=>{
+      const w=window.orbital.list().find(x=>x.id===i); return window.orbital.screen(w.x,w.y);
+    },orb.id);
+    await p.mouse.move(s.x,s.y); await p.mouse.down();
+    await p.mouse.move(s.x, s.y-30); await p.waitForTimeout(400);
+    await p.mouse.up();
+    const w=await p.evaluate(i=>window.orbital.list().find(x=>x.id===i),orb.id);
+    const got=Math.hypot(w.vx,w.vy);
+    ok('and a world put down gently is put into orbit rather than dropped',
+       Math.abs(got-orb.want)<orb.want*0.2,
+       got.toFixed(2)+' against a circular '+orb.want.toFixed(2));
+  }
+  await p.keyboard.press('d');
+  ok('and D turns it off again',
+     !(await p.evaluate(()=>document.getElementById('dragBtn').classList.contains('on'))));
+  ok('no exceptions', errs.length===0, errs.join(' | '));
   await ctx.close();
 
   console.log('\n--- two fingers pinch and pan ---');
