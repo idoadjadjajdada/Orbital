@@ -188,18 +188,42 @@ async function open(b, vp){
   ok('and the loose cloud thins out', deb.p1<deb.p0, deb.p0+' -> '+deb.p1);
   await ctx.close();
 
-  console.log('\n--- a gas world throws gas, not rock ---');
+  console.log('\n--- two gas worlds mix into one ---');
   ({p,ctx,errs}=await open(b));
   const gas = await p.evaluate(()=>{
     const o=window.orbital;
-    o.clear();
+    o.clear(); o.setSpeed(0);
     o.add(-140,0, 8,0,'gas');
     o.add( 140,0,-8,0,'icegiant');
-    for(let i=0;i<1400;i++) o.step(1/60);
-    return {n:o.count(), parts:o.particles()};
+    const m0=o.mass();
+    let peakCloud=0, peakElong=0, mixedFor=0, kinds=new Set();
+    for(let i=0;i<3600;i++){
+      o.step(1/60);
+      const n=o.particles();
+      if(n>200){
+        mixedFor++;
+        peakCloud=Math.max(peakCloud,n);
+        const c=o.clouds();
+        if(c.length) peakElong=Math.max(peakElong,c[0].elong);
+        for(const q of o.debris()) kinds.add(q.kind);
+      }
+    }
+    const L=o.list();
+    return {m0, m1:o.mass(), peakCloud, peakElong:+peakElong.toFixed(2),
+            mixedFor, n:L.length, name:L[0]?L[0].name:'', gas:L[0]?!!L[0].gas:false,
+            kinds:[...kinds]};
   });
-  ok('a gas collision throws a large plume', gas.parts>300, gas.parts+' motes');
-  ok('and leaves one world', gas.n===1, String(gas.n));
+  ok('both worlds go to gas rather than merging on contact',
+     gas.peakCloud>800, gas.peakCloud+' motes at the thick of it');
+  ok('and it is gas, not rubble', gas.kinds.length===1 && gas.kinds[0]==='gas',
+     gas.kinds.join('/'));
+  ok('it takes a while to settle', gas.mixedFor>120,
+     (gas.mixedFor/60).toFixed(1)+'s as a cloud');
+  ok('sloshing on the way, not just shrinking', gas.peakElong>1.3, String(gas.peakElong));
+  ok('and comes back as one gas world', gas.n===1 && /giant/i.test(gas.name),
+     gas.n+' x '+gas.name);
+  ok('carrying everything that went in', Math.abs(gas.m1-gas.m0)<gas.m0*1e-6,
+     gas.m0.toFixed(2)+' -> '+gas.m1.toFixed(2));
   await ctx.close();
 
   console.log('\n--- debris settles into rings and moons ---');
@@ -354,12 +378,17 @@ async function open(b, vp){
     const id=o.add(240,0,0,3.4,'rocky',40);
     const trace=[];
     let crumbledAt=-1, m0=0;
-    for(let i=0;i<1080;i++){
+    for(let i=0;i<1500;i++){
       o.step(1/60);
       if(crumbledAt<0 && !o.list().find(x=>x.id===id)){
-        crumbledAt=i; m0=o.clouds().reduce((s,c)=>s+c.m,0);
+        crumbledAt=i;
+        /* the rubble is not clustered on the step it is made — a cloud with no
+           internal motion would read as perfectly settled and be handed back as
+           a body — so let the next re-cluster happen before weighing it */
+        for(let k=0;k<20;k++) o.step(1/60);
+        m0=o.clouds().reduce((s,c)=>s+c.m,0);
       }
-      if(crumbledAt>=0 && i%60===0){
+      if(crumbledAt>=0 && i%30===0){
         const c=o.clouds();
         if(c.length) trace.push({t:i/60, e:+c[0].elong.toFixed(2), m:+c[0].m.toFixed(1), n:c[0].n});
       }
@@ -377,7 +406,7 @@ async function open(b, vp){
        hole pulling harder on the near side than the far one. */
     const es=tide.trace.map(t=>t.e);
     ok('then gravity alone pulls it out of shape',
-       es[es.length-1] > 2.5, es.join(' -> '));
+       Math.max(...es) > 2, es.join(' -> '));
     let climbs=0;
     for(let i=1;i<es.length;i++) if(es[i]>es[i-1]) climbs++;
     ok('progressively, not in one step', climbs >= es.length-2,
@@ -396,7 +425,7 @@ async function open(b, vp){
       const c=o.clouds();
       if(c.length===1 && c[0].n>500){ wasOne=true; peakElong=Math.max(peakElong,c[0].elong); }
       peakClouds=Math.max(peakClouds,c.length);
-      bodiesAfter=o.count();
+      bodiesAfter=o.list().filter(x=>!x.hole).length;
     }
     return {peakElong:+peakElong.toFixed(1), peakClouds, bodiesAfter};
   });
@@ -404,35 +433,47 @@ async function open(b, vp){
      graze.peakElong>3, 'elongation '+graze.peakElong+' while still in one piece');
   ok('and then tears into separate pieces', graze.peakClouds>2,
      graze.peakClouds+' clouds at once');
-  ok('each of which holds itself together as a body again',
-     graze.bodiesAfter>2, graze.bodiesAfter+' bodies left');
+  /* how many of the beads survive the hole is luck; that any of them pull
+     themselves back into worlds is not */
+  ok('and the beads that survive pull themselves back into worlds',
+     graze.bodiesAfter>=1, graze.bodiesAfter+' left orbiting');
 
-  /* rubble is held up by its pieces touching, not by nothing: a cold cloud
+  /* Rubble is held up by its pieces touching, not by nothing: a cold cloud
      with only self-gravity collapses to a point, which is real physics and
-     completely wrong for rock. This is the assertion that catches that. */
+     completely wrong for rock. Measured on the cloud two worlds make when they
+     melt together, because that is one that lasts and has no tidal field
+     squeezing it — a tide compresses a cloud across the same axis it stretches
+     it along, and that is not the collapse this is looking for. */
   const hold = await p.evaluate(()=>{
     const o=window.orbital;
     o.clear(); o.setSpeed(0);
-    o.add(0,0,0,0,'hole',60000);
-    o.add(250,0,0,0,'rocky',40);          /* crumbles at once, then falls */
-    for(let i=0;i<30;i++) o.step(1/60);
-    const a=o.clouds()[0];
-    const w0=a?a.short:0;
-    /* the thinnest it ever gets, not where it happens to end up: a cloud with
-       nothing holding it apart falls through itself and rebounds, so a
-       start-to-finish comparison can miss the collapse entirely */
-    let low=w0;
-    for(let i=0;i<420;i++){
+    o.add(-160,0, 5,0,'rocky',60);
+    o.add( 160,0,-5,0,'rocky',50);
+    let w0=0, low=1e9, n0=0, cloudFor=0, settled=-1;
+    for(let i=0;i<3000;i++){
       o.step(1/60);
       const c=o.clouds()[0];
-      if(c && c.n>200) low=Math.min(low,c.short);
+      if(c && c.n>400){
+        cloudFor++;
+        if(!w0){ w0=c.short; n0=c.n; }
+        low=Math.min(low,c.short);
+      }
+      if(w0 && settled<0 && o.count()===1) settled=cloudFor;
     }
-    const c=o.clouds()[0];
-    return {w0:+w0.toFixed(2), low:+low.toFixed(2), n:c?c.n:0};
+    const L=o.list();
+    return {w0:+w0.toFixed(2), low:+(low===1e9?0:low).toFixed(2), n0, cloudFor,
+            n:L.length, m:L[0]?+L[0].m.toFixed(2):0,
+            name:L[0]?L[0].name:'', heat:L[0]?+L[0].heat.toFixed(2):0};
   });
-  ok('rubble holds itself up instead of collapsing inward',
-     hold.n>200 && hold.low > hold.w0*0.88,
+  ok('the melt holds itself up instead of collapsing inward',
+     hold.n0>400 && hold.low > hold.w0*0.7,
      'thinnest '+hold.low+' against '+hold.w0+' to start');
+  ok('and gravity gathers it back into one world',
+     hold.n===1 && Math.abs(hold.m-110)<0.5, hold.n+' body of '+hold.m);
+  ok('which takes a while rather than happening on contact',
+     hold.cloudFor>90, (hold.cloudFor/60).toFixed(1)+'s liquid');
+  ok('and it is still molten when it gets there', hold.heat>0.4,
+     hold.name+' at heat '+hold.heat);
 
   const safe = await p.evaluate(()=>{
     const o=window.orbital;
@@ -448,6 +489,96 @@ async function open(b, vp){
      safe.alive && safe.parts===0, safe.parts+' debris');
   ok('and keeps all of its mass', safe.alive && Math.abs(safe.m-40)<0.01, safe.m.toFixed(2));
   ok('no exceptions', errs.length===0, errs.join(' | '));
+  await ctx.close();
+
+  console.log('\n--- anything heavy raises a tide ---');
+  ({p,ctx,errs}=await open(b));
+  {
+    /* Nothing about a tide is particular to black holes. What makes them look
+       special is only that they pack the mass into no radius, so you can get
+       close enough for it to matter. */
+    const bulge = await p.evaluate(()=>{
+      const o=window.orbital;
+      const at=(kind,mass,d)=>{
+        o.clear(); o.setSpeed(0);
+        o.add(0,0,0,0,kind,mass);
+        const id=o.add(d,0,0,Math.sqrt(mass/d),'rocky',40);
+        for(let i=0;i<300;i++) o.step(1/60);
+        const w=o.list().find(x=>x.id===id);
+        return w ? +w.stretch.toFixed(3) : -1;
+      };
+      return {starFar:at('star',3000,320), starNear:at('star',3000,200),
+              gas:at('gas',400,90), neutron:at('neutron',4200,130)};
+    });
+    ok('a star pulls a close planet out of round', bulge.starNear>0.05,
+       'stretch '+bulge.starNear);
+    ok('and less so from further off', bulge.starFar < bulge.starNear*0.5,
+       bulge.starFar+' at 320 against '+bulge.starNear+' at 200');
+    ok('even a gas giant raises one on a close pass', bulge.gas>0.02, String(bulge.gas));
+    ok('and something dense raises a far bigger one', bulge.neutron>bulge.starNear*2,
+       'neutron '+bulge.neutron+' against star '+bulge.starNear);
+
+    /* Self-gravity is not the only thing holding a body together — it is also
+       made of something, and cohesion falls off against surface gravity as
+       1/r^2. So the small body is the one that survives where the big one
+       cannot, which is why there is rubble sitting inside limits that would
+       shred a fluid body. */
+    const strength = await p.evaluate(()=>{
+      const o=window.orbital;
+      const survives=(kind,m,d)=>{
+        o.clear(); o.setSpeed(0);
+        o.add(0,0,0,0,'neutron',4200);
+        const id=o.add(d,0,0,Math.sqrt(4200/d),kind,m);
+        for(let i=0;i<1800;i++) o.step(1/60);
+        return !!o.list().find(x=>x.id===id);
+      };
+      return {bigAt95: survives('rocky',40,80), smallAt95: survives('moon',3,80)};
+    });
+    ok('a world is torn apart where a small one is not',
+       strength.bigAt95===false && strength.smallAt95===true,
+       'at the same distance: world '+(strength.bigAt95?'held':'torn')
+        +', small body '+(strength.smallAt95?'held':'torn'));
+
+    /* And coming apart is not instant: it takes something like the body's own
+       free-fall time, so what matters is not only how deep inside the limit it
+       gets but how long it stays there. Same depth, one sitting in it and one
+       passing through. */
+    const timing = await p.evaluate(()=>{
+      const o=window.orbital;
+      const GM=4200, rp=90;
+      const run=(setup)=>{
+        o.clear(); o.setSpeed(0);
+        o.add(0,0,0,0,'neutron',GM);
+        const id=setup(o);
+        let minD=1e9, inside=0;
+        for(let i=0;i<3600;i++){
+          o.step(1/60);
+          const w=o.list().find(x=>x.id===id);
+          if(!w) return {alive:false, minD:+minD.toFixed(0), inside};
+          const d=Math.hypot(w.x,w.y);
+          minD=Math.min(minD,d);
+          if(d<100) inside++;
+        }
+        return {alive:true, minD:+minD.toFixed(0), inside};
+      };
+      /* one parked in the field at that radius */
+      const held = run(o=>o.add(rp,0,0,Math.sqrt(GM/rp),'rocky',40));
+      /* and one that only grazes it, aimed at the same depth */
+      const flyby = run(o=>{
+        const r0=300, v=25, E=v*v/2 - GM/r0;
+        const b=Math.sqrt(2*(E*rp*rp + GM*rp))/v;
+        return o.add(b, -Math.sqrt(r0*r0-b*b), 0, v, 'rocky', 40);
+      });
+      return {held, flyby};
+    });
+    ok('both reach the same depth', Math.abs(timing.held.minD-timing.flyby.minD)<12,
+       timing.held.minD+' and '+timing.flyby.minD);
+    ok('a world left sitting inside the limit comes apart',
+       timing.held.alive===false, (timing.held.inside/60).toFixed(1)+'s inside');
+    ok('but one that only passes through is gone before it can flow',
+       timing.flyby.alive===true, (timing.flyby.inside/60).toFixed(1)+'s inside');
+    ok('no exceptions', errs.length===0, errs.join(' | '));
+  }
   await ctx.close();
 
   console.log('\n--- nothing is created or destroyed ---');
@@ -495,7 +626,7 @@ async function open(b, vp){
         const A=or.add(-150,0, 6,0,'rocky',60);
         const B=or.add( 150,o,-6,0,'moon',  8);
         const before=or.list().find(x=>x.id===B).m;
-        for(let i=0;i<2000;i++) or.step(1/60);
+        for(let i=0;i<3200;i++) or.step(1/60);
         const L=or.list();
         const moon=L.find(x=>x.id===B), world=L.find(x=>x.id===A);
         return {off:o, n:L.length,

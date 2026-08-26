@@ -34,11 +34,20 @@ only thing gravity actually reads.
 Two worlds meeting mostly do not merge and mostly do not explode. Past about
 thirty degrees off centre they **clip** each other: the pixels that overlapped
 are scraped off, both survive, both get deflected, and the bigger one picks up
-most of what it tore loose on the way past. A merge needs a much squarer hit
-than people expect, and only a square, fast one destroys the smaller world and
-throws it out as molten debris that cools from white through orange to plain
-rock while it flies. A gas world throws a coloured plume instead, strung out by
-whatever gravity is nearby.
+most of what it tore loose on the way past.
+
+Hit squarely and hard enough and neither one stays solid. Both **go liquid** —
+every pixel of both worlds, molten, still carrying the speed it came in with —
+and from there it is only motes: the two of them drive through each other, mix,
+knock about, lose the motion to those collisions, and their own gravity gathers
+what is left. It comes back as one round thing wearing a colour that is neither
+of the two that went in, still glowing, cooling back to rock over the following
+minute. Two gas giants do the same and come back as a bigger gas giant. Nothing
+about that is animated: how long it takes is however long the sloshing takes to
+die down.
+
+Below that it just merges, and a small fast projectile against a big world
+still shatters and throws molten debris.
 
 **Gas is drawn as a density field**, not as a heap of translucent squares.
 Every mote lays down a soft puff of optical depth, and what you see is how much
@@ -54,7 +63,22 @@ does to it afterwards. Feed anything past about 13,000 and it collapses
 into a **black hole**. The Forge sliders reach far enough to build something
 that collapses the moment you place it.
 
-Get too close to a hole and you are **spaghettified**. Past the Roche limit a
+**Anything heavy raises a tide.** A star pulls a close planet out of round, a
+gas giant does it to something passing, and a dense enough thing close enough
+takes a world apart entirely. What makes black holes look special is only that
+they pack the mass into no radius, so you can get near enough for it to matter.
+A body sitting in a tidal field is drawn into a prolate figure pointed at
+whatever is pulling on it, and how far from round it gets is the same number
+that decides whether it survives at all.
+
+Two things decide whether it survives. Small bodies have **strength** —
+cohesion falls off against surface gravity as 1/r², so a moon holds together
+where a world would not, which is why there is rubble sitting inside limits
+that would shred a fluid body. And coming apart **takes time**: about the
+body's own free-fall time, so a world parked inside the limit comes apart while
+one that only passes through the same depth is gone before it can flow.
+
+Get too close and you are **spaghettified**. Past the Roche limit a
 world stops being a body at all: it is replaced, once, by rubble sampled
 straight out of its own sprite — one mote per pixel, in place, at the speed it
 was going — so the instant it happens looks like nothing happened. From then
@@ -124,6 +148,27 @@ That debris then has to end up somewhere:
   no longer decides how much matter exists — which is what the shatter and the
   supernova shell were both quietly doing, one creating 10% and the other
   losing most of a star.
+- **Contacts are inelastic**, and that is what makes a collision a merge. A
+  positional pass that only separates overlapping motes stores no energy and
+  loses none, so two clouds driven together slide straight through and out the
+  far side. Rock arriving at rock keeps almost none of its approach; the
+  impulse can only ever reduce one, never create one, so no timestep can make
+  it blow up.
+- **Settling** is what turns a cloud back into a world: its own gravity has to
+  beat the motion inside it. Spin does not count — a cloud turning as a whole
+  is already a body, and taking the bulk rotation out first is the difference
+  between an off-centre hit re-forming and never settling at all. It keeps the
+  turn it gathered with.
+- **Melting** is decided by energy, not speed: the impact carries this much per
+  unit mass, holding the pair together costs about this much. Two equal worlds
+  meeting at the speed they would fall together at come in at a quarter of the
+  threshold, so a touch merges; it takes about two and a half times that to
+  liquefy them.
+- **Molten rock takes its hue from its temperature** and shows what it is made
+  of as light and dark, rather than being tinted towards orange — rock and
+  orange have nearly the same green in them, so tinting turns everything to
+  sand and you lose the two worlds folded into the melt. Rubble draws opaque;
+  only loose debris is additive, or a packed melt saturates to a white smear.
 - **Rubble** holds itself together with the monopole term — every mote toward
   its own cloud's centre of mass — which is what dominates for a roughly round
   blob and costs one pass instead of the n² every pair would. The clouds are

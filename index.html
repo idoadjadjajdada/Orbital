@@ -213,6 +213,9 @@ const CLUMP_MIN   = 16;      /* fragments needed before they pull together */
 const CLUMP_SPREAD= 1.5;     /* how alike their velocities must be */
 /* Nothing holds itself up forever. Past these masses a body loses the argument
    with its own gravity and collapses — with a supernova on the way through. */
+/* how much of a hold a body's own material has on itself, as an acceleration
+   scale — see the stress calculation in tides() */
+const COHESION = 0.8;
 const TIDE_K = 8;      /* fluid Roche coefficient, 2^3 — see tides() */
 const NEUTRON_MASS = 4200;
 const HOLE_MASS    = 13000;
@@ -418,6 +421,9 @@ function makeBody(x,y,vx,vy,spec,mass){
     /* heat is 0 for settled rock and 1 for freshly shocked magma; it drives both
        the glow and how long before the surface reads as rock again */
     heat: cl.hot ? 1 : 0,
+    /* how far from round the tide it is sitting in has pulled it, and which
+       way. Zero unless something is actually pulling. */
+    stretch: 0, tideAng: 0, tideT: 0,
     spin: (Math.random()-0.5)*0.25,
     ang: Math.random()*6.283,
     trail: [], flash: 0
@@ -490,7 +496,7 @@ function stepParts(dt, sources){
     if(p.dead){ parts.splice(i,1); continue; }
     /* rubble pulls on itself. This is the whole reason a crumbling world holds
        a shape at all instead of dissolving the moment it stops being a body. */
-    if(p.blob){
+    if(p.blob>0){
       const bl = blobs[p.blob-1];
       if(bl && bl.m>0){
         const dx=bl.x-p.x, dy=bl.y-p.y;
@@ -550,7 +556,6 @@ let clumpTimer = 0;
 /* would a clump of this mass and size survive being born here? */
 function tornIfBornAt(x, y, m, r){
   for(const h of bodies){
-    if(!h.hole) continue;
     const dx=x-h.x, dy=y-h.y;
     const d2=dx*dx+dy*dy;
     const d=Math.sqrt(d2)||1e-6;
@@ -567,10 +572,11 @@ function accrete(dt){
   const cells = new Map();
   for(let i=0;i<parts.length;i++){
     const p = parts[i];
-    /* rubble is already a cloud that knows it is one; loose debris has to
-       have settled into orbit before it is allowed to notice */
-    if(p.kind==='gas' || p.ring) continue;
-    if(!p.settled && !p.blob) continue;
+    /* Rubble is not this pass's business. A cloud knows it is one, and it
+       becomes a body when its own motion has died down — grabbing a seven-unit
+       cell out of the middle of one and calling that a planet just shreds a
+       melt into gravel. */
+    if(p.kind==='gas' || p.ring || p.blob || !p.settled) continue;
     const cx = Math.floor(p.x/CLUMP_CELL), cy = Math.floor(p.y/CLUMP_CELL);
     const key = cx+','+cy;
     let c = cells.get(key);
@@ -630,9 +636,13 @@ function nearestPalette(r,g,b){
 /* rock ejecta glows white-hot and fades down through orange to its own colour */
 function heatColor(base, heat){
   if(heat<=0) return base;
-  const hot = heat>0.66 ? [255,246,214] : heat>0.33 ? [255,168,64] : [196,72,28];
-  const t = heat>0.66 ? (heat-0.66)/0.34 : heat>0.33 ? (heat-0.33)/0.33 : heat/0.33;
-  return mixRGB(base, hot, clamp01(0.35+t*0.65));
+  /* the same run as the debris uses: hue from the temperature, the material
+     showing through as how light or dark it is */
+  const t = heat<0.5 ? heat/0.5 : (heat-0.5)/0.5;
+  const hot = heat<0.5 ? [170+85*t, 40+80*t, 10+10*t]
+                       : [255, 120+100*t, 20+130*t];
+  const sh = 0.55+0.5*(0.3*base[0]+0.6*base[1]+0.1*base[2])/255;
+  return mixRGB(base, [hot[0]*sh,hot[1]*sh,hot[2]*sh], Math.min(0.9, clamp01(heat*1.1)));
 }
 
 /* ============================ shockwaves ============================ */
@@ -777,6 +787,7 @@ function stepBlobs(){
   for(let i=0;i<parts.length;i++){
     const p=parts[i];
     if(!p.blob) continue;
+    if(p.blob<0) continue;            /* claimed, waiting on the next re-cluster */
     const b=blobs[p.blob-1];
     if(!b){ p.blob=0; continue; }
     b.sx+=p.x*p.pm; b.sy+=p.y*p.pm; b.sm+=p.pm; b.n++;
@@ -824,15 +835,32 @@ function reblob(){
       for(const j of group) parts[j].blob=0;
       continue;
     }
-    let sx=0,sy=0,sm=0,dens=0;
-    for(const j of group){ const q=parts[j]; sx+=q.x*q.pm; sy+=q.y*q.pm; sm+=q.pm; dens=q.dens||dens; }
+    let sx=0,sy=0,sm=0,dens=0,vx=0,vy=0;
+    for(const j of group){
+      const q=parts[j];
+      sx+=q.x*q.pm; sy+=q.y*q.pm; sm+=q.pm; dens=q.dens||dens;
+      vx+=q.vx*q.pm; vy+=q.vy*q.pm;
+    }
     const b={x:sx/sm, y:sy/sm, m:sm, dens:dens||100, n:group.length, sx:0, sy:0, sm:0};
     b.r=radiusFor(b.m,b.dens);
+    b.vx=vx/sm; b.vy=vy/sm;
+    /* Molten rock sloshing about is not a planet yet. It becomes one when its
+       own gravity has beaten the motion inside it — which is a thing that
+       takes time, because what removes that motion is the pieces knocking into
+       each other. Nothing schedules it; the cloud simply stops sloshing. */
+    if(settleToBody(group, b)) continue;
     next.push(b);
     const id=next.length;
     for(const j of group) parts[j].blob=id;
   }
   blobs=next;
+  /* motes a settle just turned into a body. Ids were handed out against
+     `next` rather than against the array, so removing these disturbs nothing. */
+  if(parts.some(q=>q.dead)){
+    parts = parts.filter(q=>!q.dead);
+    accelerate();
+    for(const q of bodies){ q.ax=q.nax; q.ay=q.nay; }
+  }
 }
 
 /* Rubble does not collapse to a point, and the reason is not gravity — it is
@@ -846,6 +874,8 @@ function reblob(){
    pass cannot, whatever dt is. It loses energy doing it, which is also what a
    pile of gravel does. */
 const RELAX = 0.5;
+/* how much of an approach survives a hit — rock on rock, almost none */
+const CONTACT_E = 0.05;
 const RELAX_PASSES = 2;   /* one pass does not fully resolve a packed interior */
 /* the grid is built once and both passes run over it: the motes move by a
    fraction of a cell in a pass, so rebinning between them buys nothing */
@@ -898,11 +928,85 @@ function rubbleContacts(){
             const nx=dx/d, ny=dy/d;
             p.x-=nx*push; p.y-=ny*push;
             q.x+=nx*push; q.y+=ny*push;
+            /* And they hit each other, which is the part that matters. Pushing
+               them apart by position alone stores no energy and loses none, so
+               two clouds driven together slide through and out the far side.
+               Rock arriving at rock is very nearly perfectly inelastic: almost
+               none of the approach survives the hit, and that is what makes a
+               collision a merge rather than a bounce. It can only ever reduce
+               an approach, never create one, so no timestep can blow it up. */
+            if(it===0){
+              const rvn=(q.vx-p.vx)*nx + (q.vy-p.vy)*ny;
+              if(rvn<0){
+                const jn = -(1+CONTACT_E)*rvn/(1/p.pm + 1/q.pm);
+                p.vx-=jn*nx/p.pm; p.vy-=jn*ny/p.pm;
+                q.vx+=jn*nx/q.pm; q.vy+=jn*ny/q.pm;
+              }
+            }
           }
         }
       }
     }
   }
+}
+
+/* How fast the inside of a cloud is still moving, against how fast it would
+   have to move to leave. Under about a third and it is a body, not a cloud. */
+const SETTLE_FRAC = 0.34;
+function settleToBody(group, b){
+  if(bodies.length>=MAX_BODIES) return false;
+  if(group.length < 40) return false;
+  /* Spin is not sloshing. A cloud turning as a whole is already a body — that
+     is what a rotating planet is — so the bulk rotation comes out before the
+     dispersion is measured, or an off-centre hit could never settle at all. */
+  let L=0, I=0;
+  for(const j of group){
+    const q=parts[j];
+    const dx=q.x-b.x, dy=q.y-b.y;
+    L += q.pm*(dx*(q.vy-b.vy) - dy*(q.vx-b.vx));
+    I += q.pm*(dx*dx+dy*dy);
+  }
+  const w = I>1e-9 ? L/I : 0;
+
+  let s2=0, hot=0, gas=0, rr=0, gg=0, bb=0;
+  for(const j of group){
+    const q=parts[j];
+    const dx=q.x-b.x, dy=q.y-b.y;
+    const dvx=q.vx-b.vx + w*dy, dvy=q.vy-b.vy - w*dx;
+    s2 += (dvx*dvx+dvy*dvy)*q.pm;
+    hot += q.heat*q.pm;
+    if(q.kind==='gas') gas += q.pm;
+    rr+=q.r; gg+=q.g; bb+=q.b;
+  }
+  const sigma = Math.sqrt(s2/b.m);
+  const vesc  = Math.sqrt(2*G*b.m/Math.max(0.55,b.r));
+  if(sigma > SETTLE_FRAC*vesc) return false;
+  /* but a cloud spinning fast enough to throw its own edge off is not one
+     either — it is about to shed, and it should be left to do that */
+  if(Math.abs(w)*b.r > 0.8*vesc) return false;
+  /* and not somewhere it would be pulled straight back apart */
+  if(tornIfBornAt(b.x, b.y, b.m, b.r)) return false;
+
+  const gassy = gas > b.m*0.5;
+  const heat  = hot/b.m;
+  const kindId = gassy ? (b.m>220?'gas':'icegiant')
+               : b.m<1.4 ? 'asteroid' : b.m<5 ? 'moon' : b.m<26 ? 'dwarfp'
+               : heat>0.5 ? 'molten' : 'rocky';
+  const k = kindById(kindId);
+  const spec = specFromKind(k);
+  const n = group.length;
+  /* it wears the colour of everything that went into it, which after two
+     worlds have mixed is neither of the colours they started as */
+  spec.pal = nearestPalette(rr/n, gg/n, bb/n);
+  spec.dens = b.dens;
+  const nb = addBody(makeBody(b.x, b.y, b.vx, b.vy, spec, b.m));
+  if(!nb) return false;
+  nb.name = k.name;
+  nb.heat = Math.max(nb.heat||0, heat);
+  nb.spin = w;                     /* it keeps the turn it gathered with */
+  nb.flash = 0.5;
+  for(const j of group) parts[j].dead = true;
+  return true;
 }
 
 /* ============================ tidal disruption ============================ */
@@ -921,20 +1025,49 @@ function tides(dt){
   for(let i=bodies.length-1;i>=0;i--){
     const b=bodies[i];
     if(b.hole) continue;
-    let worst=0, host=null;
+    let worst=0, ang=0;
     for(const h of bodies){
-      if(h===b || !h.hole) continue;
+      if(h===b) continue;
       const dx=b.x-h.x, dy=b.y-h.y;
       const d=Math.hypot(dx,dy)||1e-6;
+      /* Contact is the collision's business, not the tide's. */
+      if(d <= h.r+b.r) continue;
       /* Tidal pull across the body against the body's own grip on itself.
-         TIDE_K is the fluid coefficient: something that can deform comes apart
-         at roughly twice the distance a rigid body would, and 2^3 in here is
-         that factor. Crossing it does not mean the world is destroyed — only
-         that it can no longer be rigid. What happens next is up to the motes. */
-      const stress = TIDE_K*(h.m*b.r*b.r*b.r)/(d*d*d*Math.max(1e-6,b.m));
-      if(stress>worst){ worst=stress; host=h; }
+         Nothing about this is particular to black holes — a star raises a tide
+         on a planet, a planet raises one on its moon, and a big enough
+         anything close enough will take a world apart. What makes holes look
+         special is only that they pack the mass into no radius, so you can get
+         close enough for it to matter. TIDE_K is the fluid coefficient:
+         something that can deform comes apart at roughly twice the distance a
+         rigid body would, and 2^3 in here is that factor. */
+      let stress = TIDE_K*(h.m*b.r*b.r*b.r)/(d*d*d*Math.max(1e-6,b.m));
+      /* Self-gravity is not the only thing holding a body together — it is
+         also made of something. Cohesion adds an acceleration that goes as
+         1/r, so against surface gravity it falls off as 1/r^2: negligible for
+         a world, decisive for a small one. That is why there are moons and
+         rubble sitting well inside limits that would shred a fluid body, and
+         without it every close pass ends in gravel. */
+      stress /= 1 + COHESION*b.r/(G*Math.max(1e-6,b.m));
+      if(stress>worst){ worst=stress; ang=Math.atan2(dy,dx); }
     }
-    if(worst>1 && host) crumble(b);
+    b.tideAng = ang;
+    /* Coming apart is not instant. A body has to sit inside the limit for
+       something like its own free-fall time before it has actually flowed
+       anywhere, so a fast pass through the zone survives and a slow approach
+       or a captured orbit does not. Nothing else distinguishes the two. */
+    if(worst>1){
+      const tDyn = Math.sqrt(b.r*b.r*b.r/(G*Math.max(1e-6,b.m)));
+      b.tideT = (b.tideT||0) + dt*(worst-1);
+      if(b.tideT > tDyn){ crumble(b); continue; }
+    } else if(b.tideT) {
+      b.tideT = Math.max(0, b.tideT - dt*2);
+    }
+    /* Below that it holds together, but not in the shape it would have alone.
+       A body in a tidal field settles into a prolate figure pointed at what is
+       pulling on it, and how far from round it gets is the same number that
+       decides whether it survives at all. Reaches about 1.35:1 just before the
+       limit, which is roughly where a real fluid body gives up. */
+    b.stretch += (worst - b.stretch)*Math.min(1, dt*1.5);
   }
 }
 /* Every pixel of a body's sprite, as a world position and a colour. Both the
@@ -965,22 +1098,32 @@ function spritePixels(b, want){
   return {px:out, step};
 }
 /* the body, as rubble, in place — one mote per sprite pixel */
-function crumble(b){
+function crumble(b, hot, cap){
   const dens = densityOf(b.spec);
   /* enough motes to look solid, few enough that a heavy world is affordable.
      Whatever the count works out to, the mass is divided between them, so what
      the hole eventually eats is exactly what it was. */
-  const want = Math.max(90, Math.min(3600, Math.round(b.m/PART_MASS)));
+  const want = Math.max(90, Math.min(cap||3600, Math.round(b.m/PART_MASS)));
   const {px, step} = spritePixels(b, want);
   const pm = b.m/Math.max(1,px.length);
-  const hot = b.heat||0;
+  const heat = hot===undefined ? (b.heat||0) : hot;
   for(const c of px){
+    /* not every part of it is equally hot, and the variation is what stops a
+       melt reading as one flat glowing shape */
+    /* spread across the orange band rather than piled at white-hot, or the
+       whole thing reads as one pale glare instead of molten rock */
+    const h = heat>0 ? Math.min(1, heat*(0.35+Math.random()*0.55)) : heat;
     const q=spawnPart(c.x, c.y, b.vx, b.vy,
-                      b.gas?'gas':'rock', [c.r,c.g,c.b], hot, 1e9, pm, 1);
+                      b.gas?'gas':'rock', [c.r,c.g,c.b], h, 1e9, pm, 1);
     /* how far apart these sat when they were still a world: the distance they
        will hold each other at, and the distance beyond which they have stopped
        touching and are no longer the same object */
-    if(q){ q.dens=dens; q.cell=step; q.blob=-1; }
+    if(q){
+      q.dens=dens; q.cell=step; q.blob=-1;
+      /* gas rubble is still gas: it is drawn as depth, and a parcel this size
+         is what one sprite pixel of a gas world was worth */
+      if(q.kind==='gas'){ q.puff=step*1.5; q.dep=1.1; q.spread=0.05; }
+    }
   }
   b.dead=true;
   if(selected===b) selected=null;
@@ -988,7 +1131,12 @@ function crumble(b){
   bodies=bodies.filter(q=>!q.dead);
   accelerate();
   for(const q of bodies){ q.ax=q.nax; q.ay=q.nay; }
-  reblob();
+  /* deliberately not re-clustered here. A cloud that has only just been made
+     has no internal motion at all — every mote still carries the velocity of
+     the world it was — so clustering it this instant would find it perfectly
+     settled and hand it straight back as a body. It waits for the next
+     re-cluster, by which time anything else that crumbled alongside it is part
+     of the same cloud and the two are moving through each other. */
   once('tide','Past the Roche limit. It cannot hold itself together any more.');
 }
 
@@ -1051,6 +1199,11 @@ const SHATTER_SPEED = 5.5;
    hitting rock is close to perfectly inelastic; almost none of the energy comes
    back, it goes into heat and into the material that gets thrown off. */
 const GRAZE_BOUNCE  = 0.12;
+/* Impact energy against the energy holding the pair together, above which
+   neither one stays solid. Two equal worlds meeting at exactly the speed they
+   would fall together at come in at a quarter of this, so a touch merges; it
+   takes something like two and a half times that speed to liquefy them. */
+const MELT_Q = 1.4;
 const GRAZE_FRICTION= 0.10;
 function collide(){
   let changed = false;
@@ -1092,7 +1245,20 @@ function collide(){
         }
       }
       changed = true;
-      if(heavy.hole || impact < SHATTER_SPEED || light.m < heavy.m*0.02) mergeBodies(a,b);
+      if(heavy.hole || light.m < heavy.m*0.02){ mergeBodies(a,b); continue; }
+
+      /* Whether a square hit melts the pair comes from energy, not speed. The
+         impact carries this much kinetic energy per unit of the mass involved;
+         holding the pair together against it costs about this much. When the
+         first beats the second, neither one is solid afterwards — which for
+         two worlds of comparable size is what happens at around the speed they
+         would fall together at anyway. */
+      const mu = heavy.m*light.m/(heavy.m+light.m);
+      const Q  = 0.5*mu*impact*impact/(heavy.m+light.m);
+      const Qbind = G*(heavy.m+light.m)/Math.max(0.55, heavy.r+light.r);
+      if(light.m > heavy.m*0.1 && Q > MELT_Q*Qbind){ meltPair(a,b,impact); continue; }
+
+      if(impact < SHATTER_SPEED) mergeBodies(a,b);
       else shatter(heavy, light, impact);
     }
   }
@@ -1102,6 +1268,25 @@ function collide(){
     accelerate();
     for(const b of bodies){ b.ax=b.nax; b.ay=b.nay; }
   }
+}
+/* Two worlds hit hard enough to liquefy. Neither survives as a body: both are
+   turned into their own pixels, molten, still carrying the velocity they came
+   in with. Everything after that is the rubble doing what rubble does — the
+   two clouds drive through each other, knock about, lose the motion to those
+   collisions, and their own gravity gathers what is left. It comes back as one
+   round thing wearing a colour that is neither of the two that went in, and it
+   is still glowing for a good while afterwards. None of that is animated; the
+   time it takes is however long the sloshing takes to die down. */
+function meltPair(a,b,impact){
+  /* a heavy pair could be two full clouds at once, so each gets a smaller
+     share of the budget than a lone world being torn apart would */
+  const cap = 1800;
+  crumble(a, 1, cap);
+  crumble(b, 1, cap);
+  addWave((a.x+b.x)/2, (a.y+b.y)/2, Math.max(140, (a.r+b.r)*7+impact*9),
+          Math.min(1.2, impact*0.05), [255,208,150],
+          (a.vx*a.m+b.vx*b.m)/(a.m+b.m), (a.vy*a.m+b.vy*b.m)/(a.m+b.m));
+  once('melt','Both of them went liquid. Give it a moment to pull back together.');
 }
 function grazeOff(a,b,heavy,light,nx,ny,d,rr,bpar,vn,tvx,tvy,vt,impact){
   /* How deep the cut is decides how much comes off: how far inside the sum of
@@ -1539,7 +1724,7 @@ function drawGas(z, ox, oy){
     }
   }
   if(!hit) return false;
-  const img=partsLayer(true);
+  const img=partsLayer('gas');
   const d=pImg2.data;
   for(let yy=by0;yy<=by1;yy++){
     let idx=(yy*W+bx0)<<2;
@@ -1568,7 +1753,8 @@ function drawGas(z, ox, oy){
    (the clamped array saturates at 255 for free). */
 let pLayer=null, pCtx=null, pImg=null, pData=null;
 let gLayer=null, gCtx=null, pImg2=null;
-function partsLayer(gas){
+let sLayer=null, sCtx=null, sImg=null;
+function partsLayer(which){
   if(!pLayer || pLayer.width!==W || pLayer.height!==H){
     pLayer=document.createElement('canvas');
     pLayer.width=W; pLayer.height=H;
@@ -1579,8 +1765,12 @@ function partsLayer(gas){
     gLayer.width=W; gLayer.height=H;
     gCtx=gLayer.getContext('2d');
     pImg2=gCtx.createImageData(W,H);
+    sLayer=document.createElement('canvas');
+    sLayer.width=W; sLayer.height=H;
+    sCtx=sLayer.getContext('2d');
+    sImg=sCtx.createImageData(W,H);
   }
-  return gas ? pImg2 : pData;
+  return which==='gas' ? pImg2 : which==='solid' ? sImg.data : pData;
 }
 function drawParts(){
   if(!parts.length) return;
@@ -1588,9 +1778,16 @@ function drawParts(){
   /* clouds first: they sit behind the rock they were thrown out with */
   drawGas(z, ox, oy);
 
-  const d = partsLayer(false);
-  d.fill(0);
-  let touched = false;
+  /* Two passes over the rock, because there are two different things here.
+     A crumbled world is solid material: it is opaque, and stacking it up must
+     not make it brighter or a melt turns into one white smear with none of the
+     two worlds' colours left in it. Loose debris is the other thing — sparse,
+     glowing, and genuinely additive where it piles up. */
+  const solid = partsLayer('solid');
+  const loose = partsLayer('loose');
+  solid.fill(0); loose.fill(0);
+  let anySolid=false, anyLoose=false;
+
   for(let i=0;i<parts.length;i++){
     const p=parts[i];
     if(p.kind==='gas') continue;
@@ -1602,38 +1799,77 @@ function drawParts(){
     const h=p.heat;
     let cr=p.r, cg=p.g, cb=p.b;
     if(h>0){
+      /* Dull red -> orange -> yellow-white with temperature. The hue is the
+         heat's; what the rock is made of comes through as how light or dark
+         each patch of it is, which is how lava actually reads — and it is what
+         lets you still see two different worlds folded into one melt. Tinting
+         the rock towards orange instead just turns everything to sand, because
+         rock and orange have nearly the same green in them. */
       let hr,hg,hb,t;
-      if(h>0.66){ hr=255;hg=246;hb=214; t=(h-0.66)/0.34; }
-      else if(h>0.33){ hr=255;hg=168;hb=64; t=(h-0.33)/0.33; }
-      else { hr=196;hg=72;hb=28; t=h/0.33; }
-      let k=0.35+t*0.65; if(k>1) k=1; else if(k<0) k=0;
+      if(h<0.5){ t=h/0.5;        hr=170+85*t;  hg=40+80*t;   hb=10+10*t; }
+      else     { t=(h-0.5)/0.5;  hr=255;       hg=120+100*t; hb=20+130*t; }
+      const lum=(0.3*cr+0.6*cg+0.1*cb)/255;
+      const sh=0.55+0.5*lum;
+      hr*=sh; hg*=sh; hb*=sh;
+      let k=h*1.1; if(k>0.9) k=0.9; else if(k<0) k=0;
       cr+=(hr-cr)*k; cg+=(hg-cg)*k; cb+=(hb-cb)*k;
     }
-    /* settled rubble holds its brightness; loose debris fades as it ages */
-    const a = p.settled ? 0.85 : 0.35+fade*0.6;
-    /* A mote of a crumbled world stands for a patch of it that big. Drawing
-       it one pixel wide turns a solid thing into a dot cloud the moment you
-       zoom in, so it is drawn at the size it actually occupies. */
-    const s = p.cell>0 ? Math.max(1, Math.ceil(p.cell*z)) : p.size;
+    /* A mote of a crumbled world stands for a patch of it that big. Drawing it
+       one pixel wide turns a solid thing into a dot cloud the moment you zoom
+       in, so it is drawn at the size it actually occupies. */
+    const rubble = p.cell>0;
+    const s = rubble ? Math.max(1, Math.ceil(p.cell*z)) : p.size;
     let x0=x<0?0:x, y0=y<0?0:y;
     const x1=x+s>W?W:x+s, y1=y+s>H?H:y+s;
     if(x1<=x0||y1<=y0) continue;
-    const ir=cr*a, ig=cg*a, ib=cb*a;
-    for(let yy=y0;yy<y1;yy++){
-      let idx=(yy*W+x0)<<2;
-      for(let xx=x0;xx<x1;xx++){
-        d[idx]+=ir; d[idx+1]+=ig; d[idx+2]+=ib; d[idx+3]=255;
-        idx+=4;
+
+    if(rubble){
+      anySolid=true;
+      for(let yy=y0;yy<y1;yy++){
+        let idx=(yy*W+x0)<<2;
+        for(let xx=x0;xx<x1;xx++){
+          solid[idx]=cr; solid[idx+1]=cg; solid[idx+2]=cb; solid[idx+3]=255;
+          idx+=4;
+        }
+      }
+      /* and hot material gives off light as well as sitting there. Solid on
+         its own is rock; solid plus what it is radiating is lava. */
+      if(h>0.55){
+        anyLoose=true;
+        const e=(h-0.55)*0.5;
+        const ir=cr*e, ig=cg*e, ib=cb*e;
+        for(let yy=y0;yy<y1;yy++){
+          let idx=(yy*W+x0)<<2;
+          for(let xx=x0;xx<x1;xx++){
+            loose[idx]+=ir; loose[idx+1]+=ig; loose[idx+2]+=ib; loose[idx+3]=255;
+            idx+=4;
+          }
+        }
+      }
+    } else {
+      anyLoose=true;
+      /* settled debris holds its brightness; strays fade as they age */
+      const a = p.settled ? 0.85 : 0.35+fade*0.6;
+      const ir=cr*a, ig=cg*a, ib=cb*a;
+      for(let yy=y0;yy<y1;yy++){
+        let idx=(yy*W+x0)<<2;
+        for(let xx=x0;xx<x1;xx++){
+          loose[idx]+=ir; loose[idx+1]+=ig; loose[idx+2]+=ib; loose[idx+3]=255;
+          idx+=4;
+        }
       }
     }
-    touched = true;
   }
-  if(!touched) return;
-  pCtx.putImageData(pImg,0,0);
-  /* additive: overlapping hot debris builds up into something with depth */
-  ctx.globalCompositeOperation='lighter';
-  ctx.drawImage(pLayer,0,0);
-  ctx.globalCompositeOperation='source-over';
+  if(anySolid){
+    sCtx.putImageData(sImg,0,0);
+    ctx.drawImage(sLayer,0,0);
+  }
+  if(anyLoose){
+    pCtx.putImageData(pImg,0,0);
+    ctx.globalCompositeOperation='lighter';
+    ctx.drawImage(pLayer,0,0);
+    ctx.globalCompositeOperation='source-over';
+  }
 }
 function drawWaves(){
   ctx.globalCompositeOperation='lighter';
@@ -1690,9 +1926,24 @@ function drawBody(b){
   const res=Math.max(4,Math.min(96,Math.ceil(want/6)*6));
   const sp=makeSprite(b.spec,res);
   const d=Math.max(1,Math.round(r*2));
-  /* A body is always drawn round. Anything that is being pulled out of shape
-     is not a body any more — it is rubble, and rubble draws itself. */
-  ctx.drawImage(sp, Math.round(x-d/2), Math.round(y-d/2), d, d);
+  if(b.stretch>0.02){
+    /* The equilibrium figure of a body in a tidal field: prolate, pointed at
+       whatever is raising the tide. Bounded by the same number that decides
+       disruption, so it can never draw a needle — past 1 it is not a body to
+       draw at all, it is rubble, and rubble draws itself. */
+    /* Past 1 it is on its way apart but has not finished flowing yet, and it
+       goes on visibly drawing out while that happens — so the figure is not
+       clamped at the limit, only at something a body could still be. */
+    const k=Math.min(2.2,b.stretch);
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.rotate(b.tideAng);
+    ctx.scale(1+k*0.35, 1/(1+k*0.22));
+    ctx.drawImage(sp, -d/2, -d/2, d, d);
+    ctx.restore();
+  } else {
+    ctx.drawImage(sp, Math.round(x-d/2), Math.round(y-d/2), d, d);
+  }
 
   /* molten skin over the top while it is still hot */
   if(!b.lum && b.heat>0.02 && d>2){
@@ -2171,7 +2422,7 @@ function totalEnergy(){
 window.orbital={
   list:()=>bodies.map(b=>({id:b.id,x:b.x,y:b.y,vx:b.vx,vy:b.vy,m:b.m,r:b.r,
                            cls:b.spec.cls,pal:b.spec.pal,heat:b.heat,name:b.name,
-                           hole:!!b.hole})),
+                           hole:!!b.hole,stretch:b.stretch||0})),
   count:()=>bodies.length,
   particles:()=>parts.length,
   waves:()=>waves.length,
@@ -2223,6 +2474,9 @@ window.orbital={
     }
     return parts.length;
   },
+  /* take a body apart on demand, for a test that wants rubble without having
+     to arrange a black hole to make it */
+  crumble:id=>{ const b=bodies.find(x=>x.id===id); if(b){ crumble(b); return true; } return false; },
   preset:n=>loadPreset(n),
   energy:totalEnergy,
   /* everything the sim is holding, bodies and motes alike */
