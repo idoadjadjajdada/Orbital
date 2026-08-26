@@ -349,34 +349,81 @@ async function open(b, vp){
   ({p,ctx,errs}=await open(b));
   const tide = await p.evaluate(()=>{
     const o=window.orbital;
-    o.clear();
+    o.clear(); o.setSpeed(0);
     o.add(0,0,0,0,'hole',60000);
-    o.add(260,0,0,2.2,'rocky',40);
-    let maxStretch=0, snappedAt=-1, partsAtSnap=0;
-    for(let i=0;i<1400;i++){
+    const id=o.add(240,0,0,3.4,'rocky',40);
+    let maxStretch=0, gone=-1, firstDebris=-1, rose=false, lastM=1e9;
+    for(let i=0;i<900;i++){
       o.step(1/60);
-      const w=o.list().find(x=>!x.hole);
-      if(w) maxStretch=Math.max(maxStretch,w.stretch);
-      else if(snappedAt<0){ snappedAt=i; partsAtSnap=o.particles(); }
+      const w=o.list().find(x=>x.id===id);
+      if(w){
+        maxStretch=Math.max(maxStretch,w.stretch);
+        /* it should waste away, never claw its own stream back */
+        if(w.m > lastM+0.4) rose=true;
+        lastM=w.m;
+      } else if(gone<0) gone=i;
+      if(firstDebris<0 && o.particles()>20) firstDebris=i;
     }
-    return {maxStretch, snappedAt, partsAtSnap};
+    return {maxStretch, gone, firstDebris, parts:o.particles(), rose};
   });
-  ok('it stretches on the way in', tide.maxStretch>0.9, 'stretch '+tide.maxStretch.toFixed(2));
-  ok('then comes apart', tide.snappedAt>0, 'at step '+tide.snappedAt);
-  ok('into a stream of pieces, not a single gulp', tide.partsAtSnap>150,
-     tide.partsAtSnap+' pieces');
+  ok('it goes ellipsoidal on the way in', tide.maxStretch>0.5,
+     'stretch '+tide.maxStretch.toFixed(2));
+  ok('it starts shedding long before it is gone',
+     tide.firstDebris>0 && tide.gone-tide.firstDebris>120,
+     'shedding from step '+tide.firstDebris+', gone at '+tide.gone);
+  ok('and never takes its own stream back', !tide.rose);
+  ok('all of its mass ends up in the stream',
+     Math.abs(tide.parts*0.055-40)<3, (tide.parts*0.055).toFixed(1)+' of 40');
+
+  /* The point of the rewrite: nothing places the stream along that line. It is
+     shed co-moving at the surface, and gravity alone draws it out — the inside
+     of it orbits faster than the outside. Measured on a grazing pass, where
+     the body survives, so no further shedding can be confused for stretching. */
+  const drawn = await p.evaluate(()=>{
+    const o=window.orbital;
+    o.clear(); o.setSpeed(0);
+    o.add(0,0,0,0,'hole',60000);
+    o.add(600,0,0,Math.sqrt(60000/600)*0.5,'rocky',40);
+    const span=()=>{ let lo=1e9,hi=-1e9;
+      for(const q of o.debris()){ const r=Math.hypot(q.x,q.y); if(r<lo)lo=r; if(r>hi)hi=r; }
+      return hi>lo ? hi-lo : 0; };
+    /* run to just past the pass, when it has shed what it is going to shed */
+    for(let i=0;i<5300;i++) o.step(1/60);
+    const n0=o.particles(), s0=span();
+    let quiet=true;
+    const marks=[];
+    for(let k=0;k<5;k++){
+      for(let i=0;i<800;i++) o.step(1/60);
+      if(o.particles()>n0) quiet=false;     /* nothing new was shed */
+      marks.push(+span().toFixed(0));
+    }
+    return {n0, s0:+s0.toFixed(0), marks, quiet};
+  });
+  ok('the stream starts as a clump', drawn.s0<120, 'span '+drawn.s0);
+  ok('and gravity alone draws it out', drawn.marks[4] > drawn.s0*5,
+     'span '+drawn.s0+' -> '+drawn.marks.join(' -> '));
+  ok('with nothing further shed to do it', drawn.quiet, drawn.n0+' motes throughout');
+  /* measured from the first mark, not from s0: the stream genuinely compacts
+     as it rounds perihelion before it starts pulling apart, so s0 is not the
+     floor of the growth */
+  ok('it stretches the whole way, not in one jump',
+     drawn.marks.every((v,i)=> i===0 || v > drawn.marks[i-1]), drawn.marks.join(' -> '));
+
   const safe = await p.evaluate(()=>{
     const o=window.orbital;
-    o.clear();
+    o.clear(); o.setSpeed(0);
     o.add(0,0,0,0,'hole',60000);
     const r=1400, v=Math.sqrt(60000/r);
     o.add(r,0,0,v,'rocky',40);        /* a wide, safe orbit */
     for(let i=0;i<2000;i++) o.step(1/60);
     const w=o.list().find(x=>!x.hole);
-    return {alive:!!w, stretch:w?w.stretch:-1};
+    return {alive:!!w, stretch:w?w.stretch:-1, m:w?w.m:0, parts:o.particles()};
   });
-  ok('but a world at a safe distance is left alone', safe.alive && safe.stretch<0.01,
-     safe.alive ? 'stretch '+safe.stretch.toFixed(3) : 'it died');
+  ok('but a world at a safe distance is left alone',
+     safe.alive && safe.stretch<0.01 && safe.parts===0,
+     'stretch '+safe.stretch.toFixed(3)+', '+safe.parts+' debris');
+  ok('and keeps all of its mass', safe.alive && Math.abs(safe.m-40)<0.01, safe.m.toFixed(2));
+  ok('no exceptions', errs.length===0, errs.join(' | '));
   await ctx.close();
 
   console.log('\n--- the clock goes faster ---');

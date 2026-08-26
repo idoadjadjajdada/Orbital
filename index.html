@@ -213,6 +213,7 @@ const CLUMP_MIN   = 16;      /* fragments needed before they pull together */
 const CLUMP_SPREAD= 1.5;     /* how alike their velocities must be */
 /* Nothing holds itself up forever. Past these masses a body loses the argument
    with its own gravity and collapses — with a supernova on the way through. */
+const TIDE_K = 8;      /* fluid Roche coefficient, 2^3 — see tides() */
 const NEUTRON_MASS = 4200;
 const HOLE_MASS    = 13000;
 const SHOCK_SPEED  = 190;    /* how fast a blast front travels, world units/s */
@@ -417,7 +418,7 @@ function makeBody(x,y,vx,vy,spec,mass){
     /* heat is 0 for settled rock and 1 for freshly shocked magma; it drives both
        the glow and how long before the surface reads as rock again */
     heat: cl.hot ? 1 : 0,
-    stretch: 0, tideAng: 0,
+    stretch: 0, tideAng: 0, tideM0: 0, tidal: false,
     spin: (Math.random()-0.5)*0.25,
     ang: Math.random()*6.283,
     trail: [], flash: 0
@@ -438,16 +439,18 @@ function spawnPart(x,y,vx,vy,kind,rgb,heat,life){
     parts[evictPtr++ % parts.length] = p;
   } else parts.push(p);
 }
-let sX=new Float64Array(0), sY, sM, sR2;
+let sX=new Float64Array(0), sY, sM, sR2, sNo;
 function stepParts(dt, sources){
   const ns = sources.length;
   if(sX.length < ns){
     sX=new Float64Array(ns); sY=new Float64Array(ns);
     sM=new Float64Array(ns); sR2=new Float64Array(ns);
+    sNo=new Uint8Array(ns);
   }
   for(let s=0;s<ns;s++){
     const b=sources[s];
     sX[s]=b.x; sY[s]=b.y; sM[s]=b.m; sR2[s]=b.r*b.r;
+    sNo[s]=b.tidal?1:0;
   }
   const soft2 = SOFT*SOFT;
   for(let i=parts.length-1;i>=0;i--){
@@ -462,7 +465,7 @@ function stepParts(dt, sources){
       const pull = sM[s]/d2;
       if(pull>hostPull){ hostPull=pull; hostIdx=s; }
       /* swallowed: the debris settles and its mass joins the body */
-      if(d2 < sR2[s]){
+      if(d2 < sR2[s] && !sNo[s]){
         const b=sources[s];
         b.m += p.kind==='gas' ? PART_MASS*0.1 : PART_MASS;
         b.r = radiusFor(b.m, densityOf(b.spec));
@@ -516,6 +519,17 @@ function stepParts(dt, sources){
    that has not noticed yet. Outside the Roche limit they are allowed to
    notice. Inside it they stay a ring, which is exactly why Saturn has one. */
 let clumpTimer = 0;
+/* would a clump of this mass and size survive being born here? */
+function tornIfBornAt(x, y, m, r){
+  for(const h of bodies){
+    if(!h.hole) continue;
+    const dx=x-h.x, dy=y-h.y;
+    const d2=dx*dx+dy*dy;
+    const d=Math.sqrt(d2)||1e-6;
+    if(TIDE_K*(h.m*r*r*r)/(d*d*d*Math.max(1e-6,m)) > 1) return true;
+  }
+  return false;
+}
 function accrete(dt){
   clumpTimer -= dt;
   if(clumpTimer > 0) return;
@@ -549,6 +563,11 @@ function accrete(dt){
     const kindId = mass < 1.4 ? 'asteroid' : mass < 5 ? 'moon' : 'dwarfp';
     const k = kindById(kindId);
     const spec = specFromKind(k);
+    /* Nothing forms where the tide would take it apart again. This is the same
+       test tides() runs, asked before the body exists rather than after — the
+       stream falling into a hole would otherwise keep condensing into little
+       worlds and merging back into the one being shredded. */
+    if(tornIfBornAt(mx, my, mass, radiusFor(mass, densityOf(spec)))) continue;
     /* wear the colour of the rubble it came from */
     let rr=0,gg=0,bb=0;
     for(const i of group){ const p=parts[i]; rr+=p.r; gg+=p.g; bb+=p.b; }
@@ -677,49 +696,113 @@ function collapseTo(b, kindId){
 }
 
 /* ============================ tidal disruption ============================ */
-/* Close enough to a black hole and the pull on the near side beats the pull the
-   body has on itself. It stretches, and then it stops being a body. */
+/* Close enough to a black hole and the pull across a body beats the grip the
+   body has on itself, and it comes apart.
+
+   The obvious way to draw that is to squash the sprite into a longer and
+   longer needle and then swap the whole thing for particles. It looks wrong,
+   because it is wrong: nothing about that shape comes from gravity, and the
+   moment of breakup is a cut rather than a consequence.
+
+   So the body actually loses itself instead. Once the tide wins, material
+   leaves continuously through the two ends of the line to the hole — the
+   points where the tide has already beaten the body's own gravity — and each
+   mote leaves at the speed the body was going, nothing more. From there it is
+   an ordinary particle. The stream stretches because the inside of it orbits
+   faster than the outside, which is the actual reason real ones stretch. We
+   never place a single fragment along that line by hand. */
 function tides(dt){
   for(let i=bodies.length-1;i>=0;i--){
     const b=bodies[i];
     if(b.hole){ b.stretch=0; continue; }
-    let worst=0, host=null, hdx=0, hdy=0;
+    let worst=0, host=null, hdx=0, hdy=0, hd=0;
     for(const h of bodies){
       if(h===b || !h.hole) continue;
       const dx=b.x-h.x, dy=b.y-h.y;
       const d=Math.hypot(dx,dy)||1e-6;
-      /* tidal pull across the body against the body's own grip on itself */
-      const stress = (h.m*b.r*b.r*b.r)/(d*d*d*Math.max(1e-6,b.m));
-      if(stress>worst){ worst=stress; host=h; hdx=dx; hdy=dy; }
+      /* Tidal pull across the body against the body's own grip on itself.
+         TIDE_K is the fluid coefficient: something that can deform comes apart
+         at roughly twice the distance a rigid body would, and 2^3 in here is
+         that factor. It also buys the room the stream needs — without it a
+         body starts shedding barely outside the hole and is eaten before
+         gravity has had time to draw anything out. */
+      const stress = TIDE_K*(h.m*b.r*b.r*b.r)/(d*d*d*Math.max(1e-6,b.m));
+      if(stress>worst){ worst=stress; host=h; hdx=dx; hdy=dy; hd=d; }
     }
     b.tideAng = host ? Math.atan2(hdy,hdx) : 0;
-    if(worst>1){
-      b.stretch = Math.min(2.6, b.stretch + dt*(worst-1)*1.5);
-      if(b.stretch>=1.35){ disrupt(b, host, hdx, hdy); }
+    /* while the tide is beating its own gravity it cannot pick anything back
+       up — that is what the condition means. Without this it spends the whole
+       disruption re-swallowing the stream it just shed. */
+    b.tidal = worst>1 && !!host;
+    if(worst>1 && host){
+      if(!b.tideM0) b.tideM0 = b.m;
+      /* the body itself only goes ellipsoidal — a real tidally distorted body
+         does. The needle is the stream, and the stream draws itself. */
+      b.stretch = Math.min(0.85, b.stretch + dt*(worst-1)*1.4);
+      shedTide(b, host, hdx, hdy, hd, worst, dt);
+      /* what is left once most of it has already streamed away is too small to
+         hold together as anything; let the last of it go at once */
+      if(b.m < Math.max(PART_MASS*45, (b.tideM0||b.m)*0.12)) disperse(b, host, hdx, hdy, hd);
     } else {
       b.stretch = Math.max(0, b.stretch - dt*0.8);
+      b.tideM0 = 0;
     }
   }
 }
-function disrupt(b, host, dx, dy){
-  const d=Math.hypot(dx,dy)||1e-6;
+/* material leaving through the two tidal points, carrying the body's velocity
+   and nothing else. Mass really leaves the body, and the hole really eats it
+   later through the ordinary accretion path, so none of it is bookkeeping. */
+function shedTide(b, host, dx, dy, d, stress, dt){
   const ux=dx/d, uy=dy/d;
   const pal=(PALETTES[b.spec.pal]||PALETTES.terran).ramp;
   const isGas=!!b.gas;
-  const n=Math.min(900, Math.round(70*Math.cbrt(b.m)+80));
+  /* How hard the tide is winning sets how fast it comes apart, but the rate
+     saturates. Scaling it straight off the stress goes as 1/d^3, which means a
+     body on a plunging orbit loses nothing until it is already at the horizon
+     and then loses everything at once — physically defensible, and it reads as
+     a pop. Saturating it starts the stream as soon as the tide wins, which is
+     also when there is still room for gravity to draw it out. */
+  let want = 460*(1 - 1/stress)*dt;
+  let n = want|0;
+  if(Math.random() < want-n) n++;
+  const most = Math.floor(b.m/PART_MASS);
+  if(n>most) n=most;
+  if(n<=0) return;
   for(let j=0;j<n;j++){
-    /* strung out along the line to the hole: the near half speeds up, the far
-       half falls behind, which is what makes the stream */
-    const t=(Math.random()*2-1);
-    const along=t*b.r*(2.2+b.stretch*2.4);
-    const across=(Math.random()*2-1)*b.r*0.55;
-    const shear=-t*Math.sqrt(G*host.m/d)*0.16;
+    const side = Math.random()<0.5 ? -1 : 1;
+    /* just clear of the surface: material leaving through the Lagrange point
+       is past it by definition, and anything spawned inside the radius gets
+       swallowed straight back up by the ordinary accretion pass */
+    const along = side*b.r*(1.45+Math.random()*0.45);
+    const across = (Math.random()*2-1)*b.r*0.3;
+    /* leaves at the body's own velocity. Everything after this is gravity. */
+    const jit = b.r*0.02;
     spawnPart(b.x+ux*along-uy*across, b.y+uy*along+ux*across,
-              b.vx+ux*shear-uy*shear*0.2, b.vy+uy*shear+ux*shear*0.2,
+              b.vx+(Math.random()*2-1)*jit, b.vy+(Math.random()*2-1)*jit,
               isGas?'gas':'rock',
               rampAt(pal,0.35+Math.random()*0.5),
-              isGas?0:0.5+Math.random()*0.5,
-              isGas?120+Math.random()*140:50+Math.random()*70);
+              isGas?0:0.25+Math.random()*0.45,
+              isGas?120+Math.random()*140:150+Math.random()*120);
+  }
+  b.m = Math.max(PART_MASS, b.m - n*PART_MASS);
+  b.r = radiusFor(b.m, densityOf(b.spec));
+  once('tide','Being pulled apart. The tide is winning.');
+}
+/* the last of a body that has already streamed most of itself away */
+function disperse(b, host, dx, dy, d){
+  const pal=(PALETTES[b.spec.pal]||PALETTES.terran).ramp;
+  const isGas=!!b.gas;
+  const n=Math.min(700, Math.max(24, Math.round(b.m/PART_MASS)));
+  for(let j=0;j<n;j++){
+    /* scattered through what is left of the body, at the body's velocity */
+    const a=Math.random()*6.283, rr=b.r*Math.sqrt(Math.random());
+    const jit=b.r*0.05;
+    spawnPart(b.x+Math.cos(a)*rr, b.y+Math.sin(a)*rr,
+              b.vx+(Math.random()*2-1)*jit, b.vy+(Math.random()*2-1)*jit,
+              isGas?'gas':'rock',
+              rampAt(pal,0.35+Math.random()*0.5),
+              isGas?0:0.3+Math.random()*0.5,
+              isGas?120+Math.random()*140:150+Math.random()*120);
   }
   b.dead=true;
   if(selected===b) selected=null;
@@ -727,7 +810,7 @@ function disrupt(b, host, dx, dy){
   bodies=bodies.filter(q=>!q.dead);
   accelerate();
   for(const q of bodies){ q.ax=q.nax; q.ay=q.nay; }
-  once('tide','Torn apart. Too close to the hole to hold together.');
+  once('tidegone','Torn apart. Nothing left to hold it together.');
 }
 
 /* ============================ collisions ============================ */
@@ -1223,12 +1306,16 @@ function drawBody(b){
   const sp=makeSprite(b.spec,res);
   const d=Math.max(1,Math.round(r*2));
   if(b.stretch>0.02){
-    /* drawn long along the line to whatever is pulling it apart, and thin
-       across it — the shape everything takes on the way into a hole */
+    /* leaning along the line to whatever is pulling at it — a real tidally
+       distorted body goes ellipsoidal, and that is all this is */
     ctx.save();
     ctx.translate(x,y);
     ctx.rotate(b.tideAng||0);
-    ctx.scale(1+b.stretch*1.9, 1/(1+b.stretch*0.75));
+    /* only a bulge. Draw the body out into a needle and it swallows its own
+       stream — the sprite reaches further along the axis than the material
+       leaving the surface does, so the part that is actually being pulled off
+       is hidden underneath the part that is only pretending to be. */
+    ctx.scale(1+b.stretch*0.42, 1/(1+b.stretch*0.28));
     ctx.drawImage(sp, -d/2, -d/2, d, d);
     ctx.restore();
   } else {
