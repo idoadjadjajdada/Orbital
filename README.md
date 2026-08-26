@@ -31,14 +31,26 @@ The **Forge** panel puts that under your control — composition, palette, size
 and density, with a live preview. Density and size decide mass, and mass is the
 only thing gravity actually reads.
 
-Hit two worlds together hard enough and they do not politely merge. The smaller
-one is destroyed and thrown out as molten debris that cools from white through
-orange to plain rock while it flies. A gas world throws a coloured plume
-instead, strung out by whatever gravity is nearby.
+Two worlds meeting mostly do not merge and mostly do not explode. Past about
+thirty degrees off centre they **clip** each other: the pixels that overlapped
+are scraped off, both survive, both get deflected, and the bigger one picks up
+most of what it tore loose on the way past. A merge needs a much squarer hit
+than people expect, and only a square, fast one destroys the smaller world and
+throws it out as molten debris that cools from white through orange to plain
+rock while it flies. A gas world throws a coloured plume instead, strung out by
+whatever gravity is nearby.
+
+**Gas is drawn as a density field**, not as a heap of translucent squares.
+Every mote lays down a soft puff of optical depth, and what you see is how much
+of it is stacked along the line of sight — thin edges wispy, deep cores solid.
+Nothing about the shading is drawn; it is where the gas actually is.
 
 Nothing holds itself up forever. Feed a star past about 4,200 and it goes
 **supernova** — a blast front, a shell thrown off that becomes the nebula, and
-a neutron star left behind. Feed anything past about 13,000 and it collapses
+a neutron star left behind. Every nebula gets its own colour, rolled once per
+collapse, and it is still hanging there minutes later. Its shape is not rolled
+at all: it comes out of where the shell happened to be thrown and what gravity
+does to it afterwards. Feed anything past about 13,000 and it collapses
 into a **black hole**. The Forge sliders reach far enough to build something
 that collapses the moment you place it.
 
@@ -93,6 +105,25 @@ That debris then has to end up somewhere:
   remaining cost, and it is capped: below the top handful of bodies by mass,
   nothing measurably pulls on a mote, so a busy sky only ever evaluates six
   sources per particle.
+- **Opacity** is `1-exp(-kd)` on the column density — Beer-Lambert, the same
+  law that decides how thick a real cloud looks. Depth is then banded into a
+  handful of steps: rendered continuously a cloud comes out as soft round
+  blobs, which is the one thing this is not allowed to look like, and stepping
+  it gives the flat shaded bands that read as pixel art. It is the density
+  doing the shading either way.
+- **Hit-and-run.** The impact parameter — how far the line one body is
+  travelling along misses the other's centre by — decides the whole outcome,
+  and it is measured off the approach rather than off the overlap, which is
+  nearly zero at the instant they first touch. What gets scraped off is the
+  sprite pixels that would have been inside the other body at closest
+  approach. They leave at the speed their own world was going, so momentum
+  takes care of itself, and they are ordinary debris afterwards — which is why
+  the other body sweeps up so much of it.
+- **Mass is conserved exactly**, through every collision, collapse and
+  crumble. Motes carry their own mass, so a mote count chosen for how it looks
+  no longer decides how much matter exists — which is what the shatter and the
+  supernova shell were both quietly doing, one creating 10% and the other
+  losing most of a star.
 - **Rubble** holds itself together with the monopole term — every mote toward
   its own cloud's centre of mass — which is what dominates for a roughly round
   blob and costs one pass instead of the n² every pair would. The clouds are

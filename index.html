@@ -436,6 +436,16 @@ function spawnPart(x,y,vx,vy,kind,rgb,heat,life,pm,size){
               into rubble carries its mass in however many motes it can afford,
               so those need to say how much each of them is worth. */
            pm: pm||PART_MASS, blob:0, dens:0, cell:0,
+           /* a gas mote is a puff with a width and an optical depth rather
+              than a speck with a colour: how much of it is stacked up along a
+              line of sight is the whole of how gas looks */
+           /* a parcel holding more gas is a bigger parcel — area goes with
+              how much of it there is */
+           puff: kind==='gas' ? (3.4+Math.random()*3.4)*Math.sqrt((pm||PART_MASS)/PART_MASS) : 0,
+           /* and it grows with the flow it is part of, which is why an old
+              remnant is enormous and faint */
+           spread: kind==='gas' ? 0.3 : 0,
+           dep:  kind==='gas' ? (0.5+Math.random()*0.7)*((pm||PART_MASS)/PART_MASS) : 0,
            size: size || (kind==='gas' ? (1+Math.random()*1.6) : (Math.random()<0.25?2:1))};
   if(parts.length>=MAX_PARTS){
     /* overwrite in rotation rather than shifting the whole array down one */
@@ -684,20 +694,48 @@ function collapseTo(b, kindId){
   const pal = (PALETTES[b.spec.pal]||PALETTES.amber).ramp;
   const shed = kindId==='hole' ? 0.18 : 0.45;      /* how much it throws away */
   const thrown = b.m*shed;
-  const n = Math.min(1400, Math.round(160+thrown*0.12));
+
+  /* Every nebula gets its own colour. Real ones take theirs from whatever the
+     star was made of and how hard the shock is hitting it, which is not
+     something worth simulating — but the fact that no two look alike is worth
+     keeping, so the tint is rolled per collapse and every mote of this one
+     shares it. The shape is not rolled at all: it comes out of where the shell
+     happens to be thrown and what gravity does to it afterwards. */
+  const hue = Math.random()*6.283;
+  const tint = [ 128+120*Math.sin(hue), 128+120*Math.sin(hue+2.09), 128+120*Math.sin(hue+4.19) ];
+  const mix  = 0.35+Math.random()*0.4;
+
+  /* a few hundred motes is a spray; a nebula needs enough of them that the
+     depth field has structure to it */
+  const n = Math.min(4200, Math.round(600+thrown*0.9));
+  /* likewise: the shell is made of what the star threw off, so however many
+     motes it takes to look like a nebula, between them they weigh that */
+  const shellPM = thrown/n;
   const vShell = kindId==='hole' ? 16 : 26;
   for(let j=0;j<n;j++){
     const a=Math.random()*Math.PI*2;
-    const sp=vShell*(0.55+Math.random()*0.8);
+    /* Speed varies a lot across the shell, and that alone is what stops it
+       staying a ring: the fast side runs away, the slow side falls back, and
+       gravity does the rest. */
+    const sp=vShell*(0.8+Math.random()*0.45);
     const rr=b.r*(0.9+Math.random()*0.5);
-    /* half of it stays hot rubble, half becomes the glowing shell */
-    const gasy = Math.random()<0.62;
-    spawnPart(b.x+Math.cos(a)*rr, b.y+Math.sin(a)*rr,
+    /* most of it is the glowing shell; the rest stays hot rubble */
+    const gasy = Math.random()<0.78;
+    const base = rampAt(pal, 0.45+Math.random()*0.5);
+    const col = gasy ? mixRGB(base, tint, mix*(0.5+Math.random()*0.7)) : base;
+    const q = spawnPart(b.x+Math.cos(a)*rr, b.y+Math.sin(a)*rr,
               b.vx+Math.cos(a)*sp, b.vy+Math.sin(a)*sp,
               gasy?'gas':'rock',
-              rampAt(pal, 0.45+Math.random()*0.5),
+              col,
               gasy?0:1,
-              gasy? 240+Math.random()*260 : 60+Math.random()*90);
+              /* a nebula is the part of this that is still there much later */
+              gasy? 2600+Math.random()*2200 : 60+Math.random()*90,
+              shellPM);
+    if(q && gasy){
+      q.puff   = 3.0+Math.random()*5.5;
+      q.dep    = 2.0+Math.random()*2.4;
+      q.spread = 2.2+Math.random()*1.8;
+    }
   }
   addWave(b.x,b.y, b.r*26+220, kindId==='hole'?5.5:8.5,
           kindId==='hole'?[190,150,255]:[255,226,180], b.vx, b.vy);
@@ -714,6 +752,7 @@ function collapseTo(b, kindId){
     ? 'It collapsed. Nothing that heavy holds itself up.'
     : 'Supernova. The shell it threw off is the nebula.');
 }
+
 
 /* ============================ rubble clouds ============================ */
 /* A cloud of motes that pull on each other, so it holds a shape. Cohesion is
@@ -898,14 +937,11 @@ function tides(dt){
     if(worst>1 && host) crumble(b);
   }
 }
-/* the body, as rubble, in place — one mote per sprite pixel */
-function crumble(b){
-  const dens = densityOf(b.spec);
-  /* enough motes to look solid, few enough that a heavy world is affordable.
-     Whatever the count works out to, the mass is divided between them, so what
-     the hole eventually eats is exactly what it was. */
-  const want = Math.max(90, Math.min(3600, Math.round(b.m/PART_MASS)));
-  let res = Math.max(7, Math.min(72, Math.round(Math.sqrt(want/0.785))));
+/* Every pixel of a body's sprite, as a world position and a colour. Both the
+   crumble and the scraping a graze does work off the same pixels, so a world
+   comes apart into the terrain it was actually wearing. */
+function spritePixels(b, want){
+  const res = Math.max(7, Math.min(72, Math.round(Math.sqrt(want/0.785))));
   const sp = makeSprite(b.spec, res);
   const g = document.createElement('canvas');
   g.width=g.height=res;
@@ -913,33 +949,38 @@ function crumble(b){
   gc.imageSmoothingEnabled=false;
   gc.drawImage(sp,0,0);
   const D = gc.getImageData(0,0,res,res).data;
-
-  /* count first so every mote can carry an equal share of the real mass */
-  let n=0;
-  for(let k=3;k<D.length;k+=4) if(D[k]>8) n++;
-  if(!n) n=1;
-  const pm = b.m/n;
   const step = (b.r*2)/res;
   const sin=Math.sin(b.ang||0), cos=Math.cos(b.ang||0);
-  const hot = b.heat||0;
-
+  const out=[];
   for(let py=0;py<res;py++){
     for(let px=0;px<res;px++){
       const k=(py*res+px)*4;
       if(D[k+3]<=8) continue;
       /* where this pixel actually sits on the body, spun with it */
       const ox=(px+0.5-res/2)*step, oy=(py+0.5-res/2)*step;
-      const wx=ox*cos-oy*sin, wy=ox*sin+oy*cos;
-      const q=spawnPart(b.x+wx, b.y+wy,
-                        b.vx, b.vy,
-                        b.gas?'gas':'rock',
-                        [D[k],D[k+1],D[k+2]],
-                        hot, 1e9, pm, 1);
-      /* how far apart these sat when they were still a world: the distance
-         they will hold each other at, and the distance beyond which they have
-         stopped touching and are no longer the same object */
-      if(q){ q.dens=dens; q.cell=step; q.blob=-1; }
+      out.push({x:b.x+ox*cos-oy*sin, y:b.y+ox*sin+oy*cos,
+                r:D[k], g:D[k+1], b:D[k+2]});
     }
+  }
+  return {px:out, step};
+}
+/* the body, as rubble, in place — one mote per sprite pixel */
+function crumble(b){
+  const dens = densityOf(b.spec);
+  /* enough motes to look solid, few enough that a heavy world is affordable.
+     Whatever the count works out to, the mass is divided between them, so what
+     the hole eventually eats is exactly what it was. */
+  const want = Math.max(90, Math.min(3600, Math.round(b.m/PART_MASS)));
+  const {px, step} = spritePixels(b, want);
+  const pm = b.m/Math.max(1,px.length);
+  const hot = b.heat||0;
+  for(const c of px){
+    const q=spawnPart(c.x, c.y, b.vx, b.vy,
+                      b.gas?'gas':'rock', [c.r,c.g,c.b], hot, 1e9, pm, 1);
+    /* how far apart these sat when they were still a world: the distance they
+       will hold each other at, and the distance beyond which they have stopped
+       touching and are no longer the same object */
+    if(q){ q.dens=dens; q.cell=step; q.blob=-1; }
   }
   b.dead=true;
   if(selected===b) selected=null;
@@ -951,11 +992,66 @@ function crumble(b){
   once('tide','Past the Roche limit. It cannot hold itself together any more.');
 }
 
+/* Material scraped off one body by another passing through it. The pixels that
+   actually overlapped are the ones that leave, which is as close to doing this
+   per-pixel as is worth being: what comes off depends on how deep the other
+   body cut and where. It leaves at the speed its own world was going, so
+   momentum takes care of itself, and it is ordinary debris afterwards — which
+   is why the other body picks a lot of it up on the way past. */
+function shave(victim, other, frac, pen){
+  const dens = densityOf(victim.spec);
+  const want = Math.max(60, Math.min(1400, Math.round(victim.m/PART_MASS)));
+  const {px, step} = spritePixels(victim, want);
+  if(!px.length) return 0;
+  const pm = victim.m/px.length;
+  const cap = Math.floor(px.length*frac);
+  const r2 = other.r*other.r;
+  /* What comes off is what would have been inside the other body at closest
+     approach, not what happens to be inside it on the frame they first touch —
+     at that instant the overlap is zero and nothing would ever be scraped. So
+     the pixels are tested against where the encounter was actually taking
+     them, and the ones that lose are removed from where they really are. */
+  const ux=other.x-victim.x, uy=other.y-victim.y;
+  const ul=Math.hypot(ux,uy)||1e-6;
+  const sx=ux/ul*(pen||0), sy=uy/ul*(pen||0);
+  const hits=[];
+  for(const c of px){
+    const dx=c.x+sx-other.x, dy=c.y+sy-other.y;
+    if(dx*dx+dy*dy < r2) hits.push(c);
+  }
+  if(!hits.length) return 0;
+  /* a graze takes a bite, it does not gut the thing */
+  if(hits.length>cap) hits.length=cap;
+  const heat = Math.min(1, 0.35+Math.random()*0.3);
+  for(const c of hits){
+    /* dragged along by what is ploughing through it */
+    const k=0.25+Math.random()*0.35;
+    const q = spawnPart(c.x, c.y,
+              victim.vx+(other.vx-victim.vx)*k,
+              victim.vy+(other.vy-victim.vy)*k,
+              victim.gas?'gas':'rock', [c.r,c.g,c.b], victim.gas?0:heat,
+              victim.gas?260+Math.random()*220:220+Math.random()*160,
+              pm, 1);
+    if(q){ q.cell=step; q.dens=dens; }
+  }
+  const lost = hits.length*pm;
+  victim.m = Math.max(pm, victim.m-lost);
+  victim.r = radiusFor(victim.m, dens);
+  victim.heat = Math.min(1, victim.heat + 0.18);
+  return lost;
+}
+
+
 /* ============================ collisions ============================ */
 /* A gentle touch merges. A real impact shatters: the smaller body is turned
    into molten ejecta thrown out along the impact, and the survivor keeps only
    what it actually swept up. Gas bodies throw gas instead of rock. */
 const SHATTER_SPEED = 5.5;
+/* How hard a graze bounces, and how much of the sideways motion it eats. Rock
+   hitting rock is close to perfectly inelastic; almost none of the energy comes
+   back, it goes into heat and into the material that gets thrown off. */
+const GRAZE_BOUNCE  = 0.12;
+const GRAZE_FRICTION= 0.10;
 function collide(){
   let changed = false;
   for(let i=0;i<bodies.length;i++){
@@ -963,11 +1059,39 @@ function collide(){
     for(let j=i+1;j<bodies.length;j++){
       const b=bodies[j]; if(b.dead) continue;
       const dx=b.x-a.x, dy=b.y-a.y, rr=a.r+b.r;
-      if(dx*dx+dy*dy > rr*rr) continue;
-      changed = true;
+      const d2=dx*dx+dy*dy;
+      if(d2 > rr*rr) continue;
       const heavy = a.m>=b.m ? a : b, light = heavy===a ? b : a;
       const rvx=b.vx-a.vx, rvy=b.vy-a.vy;
       const impact = Math.hypot(rvx,rvy);
+
+      /* A hole eats whatever touches it, and a pebble against a world is just
+         accretion. Everything else gets asked how square the hit was. */
+      if(!heavy.hole && light.m >= heavy.m*0.02){
+        const d=Math.sqrt(d2)||1e-6;
+        const nx=dx/d, ny=dy/d;
+        const vn = rvx*nx + rvy*ny;                    /* closing speed */
+        const tvx = rvx - vn*nx, tvy = rvy - vn*ny;    /* and sideways */
+        const vt = Math.hypot(tvx,tvy);
+        /* The impact parameter — how far the line one is travelling along
+           misses the other's centre by. sin of the impact angle is that over
+           the sum of the radii, and it is the number the whole outcome hangs
+           on. Measured off the approach rather than off the overlap, which is
+           nearly zero at the instant they first touch. */
+        const bpar = impact>1e-9 ? Math.abs(dx*rvy - dy*rvx)/impact : 0;
+        const sinT = Math.min(1, bpar/rr);
+        /* Past about thirty degrees they clip each other, trade some mantle
+           and some momentum, and both carry on. This is the hit-and-run
+           regime, and it is the commonest outcome of two worlds meeting — a
+           merge needs a much squarer hit than people expect. Fast enough and
+           even a graze is erosive rather than survivable. */
+        if(vn < 0 && sinT > 0.55 && impact < SHATTER_SPEED*3){
+          grazeOff(a,b,heavy,light,nx,ny,d,rr,bpar,vn,tvx,tvy,vt,impact);
+          changed = true;
+          continue;
+        }
+      }
+      changed = true;
       if(heavy.hole || impact < SHATTER_SPEED || light.m < heavy.m*0.02) mergeBodies(a,b);
       else shatter(heavy, light, impact);
     }
@@ -978,6 +1102,39 @@ function collide(){
     accelerate();
     for(const b of bodies){ b.ax=b.nax; b.ay=b.nay; }
   }
+}
+function grazeOff(a,b,heavy,light,nx,ny,d,rr,bpar,vn,tvx,tvy,vt,impact){
+  /* How deep the cut is decides how much comes off: how far inside the sum of
+     the radii the approach would have carried it. A clip at the edge takes a
+     sliver; nearly through the middle takes a good bite out of both. */
+  const cut = Math.min(1, (rr-bpar)/Math.max(1e-6, 2*light.r));
+  const bite = Math.min(0.35, cut*0.45*Math.min(1.6, impact/SHATTER_SPEED));
+  const pen = Math.max(0, rr-bpar);
+  shave(light, heavy, bite, pen);
+  /* the heavier one loses far less: it is the one doing the ploughing */
+  shave(heavy, light, bite*0.25*(light.m/heavy.m), pen);
+
+  const ma=a.m, mb=b.m, inv=1/ma+1/mb;
+  /* an inelastic bounce along the line of centres */
+  const jn = -(1+GRAZE_BOUNCE)*vn/inv;
+  a.vx -= jn*nx/ma; a.vy -= jn*ny/ma;
+  b.vx += jn*nx/mb; b.vy += jn*ny/mb;
+  /* and drag across it, which is what actually deflects them */
+  if(vt>1e-9){
+    const f=GRAZE_FRICTION;
+    a.vx += tvx*f*(mb/(ma+mb)); a.vy += tvy*f*(mb/(ma+mb));
+    b.vx -= tvx*f*(ma/(ma+mb)); b.vy -= tvy*f*(ma/(ma+mb));
+  }
+  /* push them apart to just touching, or they collide again next step */
+  const over = rr-d;
+  if(over>0){
+    const sa=over*(mb/(ma+mb)), sb=over*(ma/(ma+mb));
+    a.x -= nx*sa; a.y -= ny*sa;
+    b.x += nx*sb; b.y += ny*sb;
+  }
+  a.heat=Math.min(1,a.heat+0.12); b.heat=Math.min(1,b.heat+0.12);
+  a.flash=Math.max(a.flash,0.35); b.flash=Math.max(b.flash,0.35);
+  once('graze','A glancing hit. They scraped past each other and both survived.');
 }
 function mergeBodies(a,b){
   const heavy = a.m>=b.m ? a : b, light = heavy===a ? b : a;
@@ -1009,6 +1166,10 @@ function shatter(heavy, light, impact){
   const cmvx=(heavy.vx*heavy.m + light.vx*light.m)/(heavy.m+light.m);
   const cmvy=(heavy.vy*heavy.m + light.vy*light.m)/(heavy.m+light.m);
   const n = Math.min(isGas?1100:700, Math.round((isGas?110:62)*Math.cbrt(light.m)+90));
+  /* The survivor keeps 42% of it; the rest is what these motes are made of.
+     The count is chosen for how it looks, so the mass per mote has to follow
+     from it — picking both independently was quietly creating matter. */
+  const debrisPM = (light.m*0.58)/Math.max(1,n);
   /* Ejecta near the survivor's escape speed: some of it leaves, a lot of it
      falls back and strings itself into a ring, which is the good part. */
   const spread = Math.min(impact*0.30, 9);
@@ -1024,7 +1185,8 @@ function shatter(heavy, light, impact){
       isGas ? 'gas' : 'rock',
       isGas ? rampAt(pal, 0.45+Math.random()*0.4) : base,
       isGas ? 0 : 0.75+Math.random()*0.25,
-      isGas ? 70+Math.random()*90 : 26+Math.random()*40
+      isGas ? 70+Math.random()*90 : 26+Math.random()*40,
+      debrisPM
     );
   }
   /* the survivor absorbs a share and is left glowing */
@@ -1325,59 +1487,134 @@ function drawTrails(){
     }
   }
 }
+/* Gas is drawn as a density field rather than as a heap of translucent
+   squares. Every mote lays down a soft puff of optical depth, and what you see
+   is how much of it is stacked along the line of sight: alpha = 1-exp(-kd),
+   which is Beer-Lambert, the same law that decides how thick a real cloud
+   looks. Thin edges are wispy, deep cores go solid, and the shading between
+   them comes from where the gas actually is rather than from anything drawn.
+   The buffer is already only a few hundred pixels across, so it stays as
+   chunky as everything else. */
+let gField=null, gFW=0, gFH=0;
+let GAS_K = 22;          /* how opaque a unit of column density is */
+/* Depth is banded rather than smooth. A cloud rendered continuously comes out
+   as soft round blobs, which is the one thing this is not allowed to look
+   like; stepping the opacity gives the flat shaded bands that read as pixel
+   art, and it is the density doing the shading either way. */
+const GAS_BANDS = 6;
+function drawGas(z, ox, oy){
+  let any=false;
+  for(let i=0;i<parts.length;i++) if(parts[i].kind==='gas'){ any=true; break; }
+  if(!any) return false;
+  if(!gField || gFW!==W || gFH!==H){ gField=new Float32Array(W*H*4); gFW=W; gFH=H; }
+  const f=gField;
+  /* only the touched box is cleared and composited, so a wisp in one corner
+     does not cost a full-screen pass */
+  let bx0=W, by0=H, bx1=0, by1=0, hit=false;
+  for(let i=0;i<parts.length;i++){
+    const p=parts[i];
+    if(p.kind!=='gas') continue;
+    const x=p.x*z+ox, y=p.y*z+oy;
+    let rad=(p.puff+p.spread*p.age)*z;
+    if(rad<0.7) rad=0.7; else if(rad>22) rad=22;
+    const x0=Math.max(0,Math.floor(x-rad)), x1=Math.min(W-1,Math.ceil(x+rad));
+    const y0=Math.max(0,Math.floor(y-rad)), y1=Math.min(H-1,Math.ceil(y+rad));
+    if(x1<x0||y1<y0) continue;
+    if(!hit){ hit=true; }
+    if(x0<bx0)bx0=x0; if(y0<by0)by0=y0; if(x1>bx1)bx1=x1; if(y1>by1)by1=y1;
+    /* thinning with age, and spread thinner the wider the puff has grown */
+    const fade=1-p.age/p.life;
+    const amp=p.dep*(0.25+fade*0.75)/(rad*rad);
+    const inv=1/(rad*rad);
+    for(let yy=y0;yy<=y1;yy++){
+      const dy=yy+0.5-y;
+      let idx=(yy*W+x0)<<2;
+      for(let xx=x0;xx<=x1;xx++, idx+=4){
+        const dx=xx+0.5-x;
+        const q=1-(dx*dx+dy*dy)*inv;
+        if(q<=0) continue;
+        const w=amp*q*q;
+        f[idx]+=p.r*w; f[idx+1]+=p.g*w; f[idx+2]+=p.b*w; f[idx+3]+=w;
+      }
+    }
+  }
+  if(!hit) return false;
+  const img=partsLayer(true);
+  const d=pImg2.data;
+  for(let yy=by0;yy<=by1;yy++){
+    let idx=(yy*W+bx0)<<2;
+    for(let xx=bx0;xx<=bx1;xx++, idx+=4){
+      const dep=f[idx+3];
+      if(dep<=1e-4){ d[idx+3]=0; f[idx]=f[idx+1]=f[idx+2]=f[idx+3]=0; continue; }
+      const inv=1/dep;
+      d[idx]  = f[idx]*inv;
+      d[idx+1]= f[idx+1]*inv;
+      d[idx+2]= f[idx+2]*inv;
+      const al=1-Math.exp(-GAS_K*dep);
+      d[idx+3]= 255*Math.ceil(al*GAS_BANDS)/GAS_BANDS;
+      f[idx]=f[idx+1]=f[idx+2]=f[idx+3]=0;
+    }
+  }
+  gCtx.clearRect(bx0,by0,bx1-bx0+1,by1-by0+1);
+  gCtx.putImageData(pImg2, 0,0, bx0,by0, bx1-bx0+1, by1-by0+1);
+  ctx.drawImage(gLayer, bx0,by0, bx1-bx0+1,by1-by0+1, bx0,by0, bx1-bx0+1,by1-by0+1);
+  return true;
+}
+
 /* Debris is drawn by hand into a pixel buffer rather than with one fillRect per
    mote. At sixty thousand particles the canvas call overhead alone was costing
    more than the whole physics step, and a straight additive accumulate into a
    Uint8ClampedArray is both faster and exactly the blend we wanted anyway
    (the clamped array saturates at 255 for free). */
 let pLayer=null, pCtx=null, pImg=null, pData=null;
-function partsLayer(){
+let gLayer=null, gCtx=null, pImg2=null;
+function partsLayer(gas){
   if(!pLayer || pLayer.width!==W || pLayer.height!==H){
     pLayer=document.createElement('canvas');
     pLayer.width=W; pLayer.height=H;
     pCtx=pLayer.getContext('2d');
     pImg=pCtx.createImageData(W,H);
     pData=pImg.data;
+    gLayer=document.createElement('canvas');
+    gLayer.width=W; gLayer.height=H;
+    gCtx=gLayer.getContext('2d');
+    pImg2=gCtx.createImageData(W,H);
   }
-  return pData;
+  return gas ? pImg2 : pData;
 }
 function drawParts(){
   if(!parts.length) return;
-  const d = partsLayer();
-  d.fill(0);
   const z = cam.zoom, ox = W/2 - cam.x*z, oy = H/2 - cam.y*z;
-  const zk = Math.min(2, z*0.5);
+  /* clouds first: they sit behind the rock they were thrown out with */
+  drawGas(z, ox, oy);
+
+  const d = partsLayer(false);
+  d.fill(0);
   let touched = false;
   for(let i=0;i<parts.length;i++){
     const p=parts[i];
+    if(p.kind==='gas') continue;
     const x=(p.x*z+ox)|0, y=(p.y*z+oy)|0;
     if(x<-4||x>W+4||y<-4||y>H+4) continue;
     const fade=1-p.age/p.life;
-    let cr,cg,cb,a,s;
-    if(p.kind==='gas'){
-      cr=p.r; cg=p.g; cb=p.b;
-      a=0.10+fade*0.20;
-      s=(p.size*zk)|0; if(s<1) s=1;
-    } else {
-      /* the same white-hot -> orange -> own-colour ramp as heatColor, inlined
-         so a busy frame is not allocating three arrays per particle */
-      const h=p.heat;
-      cr=p.r; cg=p.g; cb=p.b;
-      if(h>0){
-        let hr,hg,hb,t;
-        if(h>0.66){ hr=255;hg=246;hb=214; t=(h-0.66)/0.34; }
-        else if(h>0.33){ hr=255;hg=168;hb=64; t=(h-0.33)/0.33; }
-        else { hr=196;hg=72;hb=28; t=h/0.33; }
-        let k=0.35+t*0.65; if(k>1) k=1; else if(k<0) k=0;
-        cr+=(hr-cr)*k; cg+=(hg-cg)*k; cb+=(hb-cb)*k;
-      }
-      /* settled rubble holds its brightness; loose debris fades as it ages */
-      a = p.settled ? 0.85 : 0.35+fade*0.6;
-      /* A mote of a crumbled world stands for a patch of it that big. Drawing
-         it one pixel wide turns a solid thing into a dot cloud the moment you
-         zoom in, so it is drawn at the size it actually occupies. */
-      s = p.cell>0 ? Math.max(1, Math.ceil(p.cell*z)) : p.size;
+    /* the same white-hot -> orange -> own-colour ramp as heatColor, inlined
+       so a busy frame is not allocating three arrays per particle */
+    const h=p.heat;
+    let cr=p.r, cg=p.g, cb=p.b;
+    if(h>0){
+      let hr,hg,hb,t;
+      if(h>0.66){ hr=255;hg=246;hb=214; t=(h-0.66)/0.34; }
+      else if(h>0.33){ hr=255;hg=168;hb=64; t=(h-0.33)/0.33; }
+      else { hr=196;hg=72;hb=28; t=h/0.33; }
+      let k=0.35+t*0.65; if(k>1) k=1; else if(k<0) k=0;
+      cr+=(hr-cr)*k; cg+=(hg-cg)*k; cb+=(hb-cb)*k;
     }
+    /* settled rubble holds its brightness; loose debris fades as it ages */
+    const a = p.settled ? 0.85 : 0.35+fade*0.6;
+    /* A mote of a crumbled world stands for a patch of it that big. Drawing
+       it one pixel wide turns a solid thing into a dot cloud the moment you
+       zoom in, so it is drawn at the size it actually occupies. */
+    const s = p.cell>0 ? Math.max(1, Math.ceil(p.cell*z)) : p.size;
     let x0=x<0?0:x, y0=y<0?0:y;
     const x1=x+s>W?W:x+s, y1=y+s>H?H:y+s;
     if(x1<=x0||y1<=y0) continue;
@@ -1393,7 +1630,7 @@ function drawParts(){
   }
   if(!touched) return;
   pCtx.putImageData(pImg,0,0);
-  /* additive so overlapping gas builds up into something that looks like depth */
+  /* additive: overlapping hot debris builds up into something with depth */
   ctx.globalCompositeOperation='lighter';
   ctx.drawImage(pLayer,0,0);
   ctx.globalCompositeOperation='source-over';
@@ -1955,7 +2192,8 @@ window.orbital={
             long:Math.sqrt(Math.max(0,l1)), short:Math.sqrt(Math.max(0,l2)),
             elong: l2>1e-9 ? Math.sqrt(l1/l2) : 999};
   }),
-  debris:()=>parts.map(p=>({x:p.x,y:p.y,vx:p.vx,vy:p.vy,kind:p.kind,ring:!!p.ring,settled:!!p.settled})),
+  debris:()=>parts.map(p=>({x:p.x,y:p.y,vx:p.vx,vy:p.vy,kind:p.kind,ring:!!p.ring,
+                           settled:!!p.settled,r:p.r,g:p.g,b:p.b,pm:p.pm,heat:p.heat})),
   settled:()=>parts.filter(p=>p.settled).length,
   add:(x,y,vx,vy,kindId,mass)=>{
     const b=place(kindId||'rocky',x,y,vx,vy,mass);
@@ -1975,8 +2213,20 @@ window.orbital={
     }
     return parts.length;
   },
+  /* gas straight into the sky, for a test that needs a known amount of it */
+  gas:(x,y,vx,vy,n,jitter,puff)=>{
+    for(let i=0;i<n;i++){
+      const ja=Math.random()*6.283, jr=(jitter||0)*Math.sqrt(Math.random());
+      const q=spawnPart(x+Math.cos(ja)*jr, y+Math.sin(ja)*jr, vx, vy,
+                        'gas',[210,170,255],0,999);
+      if(q && puff) q.puff=puff;
+    }
+    return parts.length;
+  },
   preset:n=>loadPreset(n),
   energy:totalEnergy,
+  /* everything the sim is holding, bodies and motes alike */
+  mass:()=>bodies.reduce((t,b)=>t+b.m,0)+parts.reduce((t,p)=>t+p.pm,0),
   momentum:()=>bodies.reduce((s,b)=>({x:s.x+b.m*b.vx,y:s.y+b.m*b.vy}),{x:0,y:0}),
   cam, aim, brush,
   step:dt=>step(dt),
@@ -1984,6 +2234,7 @@ window.orbital={
   select:id=>selectBody(bodies.find(b=>b.id===id)||null),
   sprite:(spec,res)=>makeSprite(spec,res),
   pix:()=>PIX,
+  gasK:v=>{ if(v!==undefined) GAS_K=v; return GAS_K; },
   maxParts:v=>{ if(v!==undefined){ MAX_PARTS=v; if(parts.length>v) parts.splice(0,parts.length-v); evictPtr=0; } return MAX_PARTS; },
   get running(){ return running; }
 };

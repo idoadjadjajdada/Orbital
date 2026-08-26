@@ -450,6 +450,145 @@ async function open(b, vp){
   ok('no exceptions', errs.length===0, errs.join(' | '));
   await ctx.close();
 
+  console.log('\n--- nothing is created or destroyed ---');
+  ({p,ctx,errs}=await open(b));
+  {
+    /* Every event that turns a body into motes or motes into a body has to
+       hand over exactly what it was given. Motes carry their own mass now, so
+       there is no excuse for a count chosen because it looks right to decide
+       how much matter exists — which is what shatter and the supernova shell
+       were both quietly doing. */
+    const cases = [
+      ['a head-on shatter', `o.add(-150,0,9,0,'rocky',60); o.add(150,0,-9,0,'moon',8);`],
+      ['a graze',           `o.add(-150,0,6,0,'rocky',60); o.add(150,14,-6,0,'moon',8);`],
+      ['a supernova',       `o.add(0,0,0,0,'star',4300);`],
+      ['a collapse',        `o.add(0,0,0,0,'star',13200);`],
+      ['a tidal crumble',   `o.add(0,0,0,0,'hole',60000); o.add(240,0,0,3.4,'rocky',40);`],
+    ];
+    for(const [name, setup] of cases){
+      const r = await p.evaluate(src=>{
+        const o=window.orbital; o.clear(); o.setSpeed(0);
+        eval(src);
+        const m0=o.mass();
+        for(let i=0;i<1400;i++) o.step(1/60);
+        return {m0, m1:o.mass()};
+      }, setup);
+      ok(`${name} conserves mass`, Math.abs(r.m1-r.m0) < r.m0*1e-6,
+         r.m0.toFixed(2)+' -> '+r.m1.toFixed(2));
+    }
+    ok('no exceptions', errs.length===0, errs.join(' | '));
+  }
+  await ctx.close();
+
+  console.log('\n--- a glancing hit is not a catastrophe ---');
+  ({p,ctx,errs}=await open(b));
+  {
+    /* Two worlds meeting mostly do not merge and mostly do not explode: past
+       about thirty degrees they clip each other, swap some mantle, and both
+       carry on. Sweeping the impact parameter is the way to see that the
+       outcome is decided by the geometry rather than by a special case. */
+    const sweep = [];
+    for(const off of [0, 8, 14, 18, 24]){
+      sweep.push(await p.evaluate(o=>{
+        const or=window.orbital;
+        or.clear(); or.setSpeed(0);
+        const A=or.add(-150,0, 6,0,'rocky',60);
+        const B=or.add( 150,o,-6,0,'moon',  8);
+        const before=or.list().find(x=>x.id===B).m;
+        for(let i=0;i<2000;i++) or.step(1/60);
+        const L=or.list();
+        const moon=L.find(x=>x.id===B), world=L.find(x=>x.id===A);
+        return {off:o, n:L.length,
+                moon: moon?+moon.m.toFixed(2):0,
+                world: world?+world.m.toFixed(2):0,
+                before:+before.toFixed(2)};
+      }, off));
+    }
+    const square = sweep.filter(r=>r.off<=8), glancing = sweep.filter(r=>r.off>=14&&r.off<24);
+    ok('a square hit leaves one body', square.every(r=>r.n===1),
+       square.map(r=>r.off+':'+r.n).join(' '));
+    ok('a glancing one leaves both', glancing.every(r=>r.n===2),
+       glancing.map(r=>r.off+':'+r.n).join(' '));
+    ok('and the small one is scraped, not destroyed',
+       glancing.every(r=>r.moon>0 && r.moon<r.before),
+       glancing.map(r=>r.before+'->'+r.moon).join(' '));
+    ok('while the big one picks that material up',
+       glancing.every(r=>r.world>60), glancing.map(r=>r.world).join(' '));
+    ok('a clean miss touches neither', sweep[4].n===2 && sweep[4].moon===sweep[4].before,
+       'at offset 24 the moon still weighs '+sweep[4].moon);
+    ok('no exceptions', errs.length===0, errs.join(' | '));
+  }
+  await ctx.close();
+
+  console.log('\n--- gas behaves like gas ---');
+  ({p,ctx,errs}=await open(b));
+  {
+    /* Opacity comes from column density through Beer-Lambert, so the only
+       thing that can make a patch of sky look thicker is more gas being in
+       front of it. Read straight off the canvas: the same gas piled deeper in
+       the same place has to move that pixel further from the empty sky. */
+    const dens = await p.evaluate(async()=>{
+      const o=window.orbital;
+      const c=document.getElementById('c');
+      const g=c.getContext('2d', {willReadFrequently:true});
+      const centre=()=>{
+        const d=g.getImageData(c.width>>1, c.height>>1, 1, 1).data;
+        return [d[0],d[1],d[2]];
+      };
+      const settle=async()=>{ for(let i=0;i<3;i++) await new Promise(r=>requestAnimationFrame(r)); };
+      /* stacked on the exact same spot, so the depth over that one pixel is
+         the only thing that differs between the two — spread them out at all
+         and the thin case simply misses it, which would make this a test of
+         "is there any gas" rather than "how much" */
+      const measure=async(count)=>{
+        o.clear(); o.setSpeed(0);
+        o.cam.x=0; o.cam.y=0; o.cam.zoom=1;
+        if(count) o.gas(0,0,0,0,count,0,7);
+        await settle();
+        return centre();
+      };
+      const sky   = await measure(0);
+      const thin  = await measure(1);
+      const thick = await measure(12);
+      const far=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2]);
+      return {thin: far(thin,sky), thick: far(thick,sky)};
+    });
+    ok('a single puff of gas is visible', dens.thin > 8, dens.thin.toFixed(0));
+    ok('and twelve of them in the same place are much more opaque',
+       dens.thick > dens.thin*1.5,
+       'distance from empty sky '+dens.thin.toFixed(0)+' -> '+dens.thick.toFixed(0));
+    ok('but one alone is still see-through', dens.thin < dens.thick*0.72,
+       dens.thin.toFixed(0)+' against '+dens.thick.toFixed(0));
+
+    const neb = await p.evaluate(()=>{
+      const o=window.orbital;
+      const run=()=>{
+        o.clear(); o.setSpeed(0);
+        o.add(0,0,0,0,'star',4300);
+        for(let i=0;i<10;i++) o.step(1/60);
+        const g=o.debris().filter(q=>q.kind==='gas');
+        let r=0,gg=0,bb=0;
+        for(const q of g){ r+=q.r; gg+=q.g; bb+=q.b; }
+        const n=Math.max(1,g.length);
+        return {n:g.length, col:[r/n, gg/n, bb/n]};
+      };
+      const a=run(), b=run(), c=run();
+      const far=(x,y)=>Math.hypot(x.col[0]-y.col[0], x.col[1]-y.col[1], x.col[2]-y.col[2]);
+      /* how long any of it is still there */
+      o.clear(); o.setSpeed(0); o.add(0,0,0,0,'star',4300);
+      for(let i=0;i<120*60;i++) o.step(1/60);
+      const alive=o.debris().filter(q=>q.kind==='gas').length;
+      return {n:a.n, spread:Math.max(far(a,b), far(b,c), far(a,c)), alive};
+    });
+    ok('a supernova throws a real cloud, not a spray', neb.n>1200, neb.n+' gas motes');
+    ok('and no two nebulae come out the same colour', neb.spread>12,
+       'colours differ by '+neb.spread.toFixed(0));
+    ok('the nebula is still there two minutes later', neb.alive>1000,
+       neb.alive+' motes at t=120s');
+    ok('no exceptions', errs.length===0, errs.join(' | '));
+  }
+  await ctx.close();
+
   console.log('\n--- the clock goes faster ---');
   ({p,ctx,errs}=await open(b));
   await p.locator('#speed').evaluate(el=>{ el.value=60; el.dispatchEvent(new Event('input')); });
