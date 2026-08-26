@@ -1,0 +1,13 @@
+{
+  "name": "orbital",
+  "version": "1.0.0",
+  "private": true,
+  "description": "An n-body gravity sandbox in one HTML file.",
+  "scripts": {
+    "test": "node tests/sim.js",
+    "setup": "playwright install chromium"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}
