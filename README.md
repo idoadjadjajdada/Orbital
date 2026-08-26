@@ -42,13 +42,18 @@ a neutron star left behind. Feed anything past about 13,000 and it collapses
 into a **black hole**. The Forge sliders reach far enough to build something
 that collapses the moment you place it.
 
-Get too close to a hole and you are **torn apart**: the pull across a body
-beats the grip it has on itself, and it starts losing material off both ends —
-continuously, through the two points on the line to the hole where the tide has
-already won. Each piece leaves at the speed the body was going and nothing
-more. From there it is an ordinary particle, and the stream draws itself out
-because the inside of it orbits faster than the outside, which is the actual
-reason real ones stretch. The body wastes away as it goes rather than popping.
+Get too close to a hole and you are **spaghettified**. Past the Roche limit a
+world stops being a body at all: it is replaced, once, by rubble sampled
+straight out of its own sprite — one mote per pixel, in place, at the speed it
+was going — so the instant it happens looks like nothing happened. From then
+on it is only motes, with their own gravity pulling them together, their own
+contacts holding them apart, and the hole pulling harder on the near side than
+the far one.
+
+Nothing about the shape it takes is drawn. Whether it ends up a teardrop, a
+bar that pinches in the middle, one lump trailing a tail, or a string of beads
+that each settle back into little worlds is not a case anybody handles — it is
+what those three forces do to a few thousand particles.
 
 Heavy impacts and collapses send out a **shockwave** that shoves whatever it
 overtakes, debris and worlds alike.
@@ -88,15 +93,21 @@ That debris then has to end up somewhere:
   remaining cost, and it is capped: below the top handful of bodies by mass,
   nothing measurably pulls on a mote, so a busy sky only ever evaluates six
   sources per particle.
-- **Tidal disruption** places nothing. The obvious way to draw it is to squash
-  the sprite into a longer and longer needle and then swap the whole thing for
-  particles, and it looks wrong because it is wrong: nothing about that shape
-  comes from gravity, and the breakup is a cut rather than a consequence. So
-  the body sheds itself instead, mass really leaves it, and the hole really
-  eats that mass later through the ordinary accretion path. The body itself
-  only goes ellipsoidal — draw it out any further and the sprite reaches past
-  the material leaving the surface, hiding the part that is genuinely being
-  pulled off underneath the part that is only pretending to.
+- **Rubble** holds itself together with the monopole term — every mote toward
+  its own cloud's centre of mass — which is what dominates for a roughly round
+  blob and costs one pass instead of the n² every pair would. The clouds are
+  re-split by spatial connectivity a few times a second, so when one pulls
+  into two, each half starts holding itself together separately. That is what
+  lets a stretched world pinch off a bead instead of smearing into one endless
+  string.
+- **Contacts**, because gravity alone is not enough: a cold self-gravitating
+  cloud falls straight in on itself. That is real physics and completely wrong
+  for a pile of rock, which is held up by its pieces touching. So overlapping
+  motes are pushed apart — by moving them rather than by applying a force. A
+  spring stiff enough to hold a world up would explode the first time the clock
+  ran at sixty times; a positional pass cannot, whatever dt is. It loses energy
+  doing it, which is also what a pile of gravel does. A body is always drawn
+  round, because anything being pulled out of shape is not a body any more.
 - **Ring damping** eases a fragment's whole velocity toward the circular one for
   its radius. Damping only the radial part looks right and is not: it just makes
   the current radius an apsis and leaves the speed mismatch that made the orbit

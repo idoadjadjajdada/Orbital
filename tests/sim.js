@@ -345,69 +345,94 @@ async function open(b, vp){
      (shock.outward*100).toFixed(0)+'% moving away');
   await ctx.close();
 
-  console.log('\n--- torn apart by a black hole ---');
+  console.log('\n--- spaghettified by a black hole ---');
   ({p,ctx,errs}=await open(b));
   const tide = await p.evaluate(()=>{
     const o=window.orbital;
     o.clear(); o.setSpeed(0);
     o.add(0,0,0,0,'hole',60000);
     const id=o.add(240,0,0,3.4,'rocky',40);
-    let maxStretch=0, gone=-1, firstDebris=-1, rose=false, lastM=1e9;
-    for(let i=0;i<900;i++){
+    const trace=[];
+    let crumbledAt=-1, m0=0;
+    for(let i=0;i<1080;i++){
       o.step(1/60);
-      const w=o.list().find(x=>x.id===id);
-      if(w){
-        maxStretch=Math.max(maxStretch,w.stretch);
-        /* it should waste away, never claw its own stream back */
-        if(w.m > lastM+0.4) rose=true;
-        lastM=w.m;
-      } else if(gone<0) gone=i;
-      if(firstDebris<0 && o.particles()>20) firstDebris=i;
+      if(crumbledAt<0 && !o.list().find(x=>x.id===id)){
+        crumbledAt=i; m0=o.clouds().reduce((s,c)=>s+c.m,0);
+      }
+      if(crumbledAt>=0 && i%60===0){
+        const c=o.clouds();
+        if(c.length) trace.push({t:i/60, e:+c[0].elong.toFixed(2), m:+c[0].m.toFixed(1), n:c[0].n});
+      }
     }
-    return {maxStretch, gone, firstDebris, parts:o.particles(), rose};
+    return {crumbledAt, m0, trace};
   });
-  ok('it goes ellipsoidal on the way in', tide.maxStretch>0.5,
-     'stretch '+tide.maxStretch.toFixed(2));
-  ok('it starts shedding long before it is gone',
-     tide.firstDebris>0 && tide.gone-tide.firstDebris>120,
-     'shedding from step '+tide.firstDebris+', gone at '+tide.gone);
-  ok('and never takes its own stream back', !tide.rose);
-  ok('all of its mass ends up in the stream',
-     Math.abs(tide.parts*0.055-40)<3, (tide.parts*0.055).toFixed(1)+' of 40');
+  ok('it stops being a body at the Roche limit', tide.crumbledAt>=0,
+     'crumbled at step '+tide.crumbledAt);
+  ok('and all of its mass is in the rubble', Math.abs(tide.m0-40)<0.001, tide.m0.toFixed(3));
+  ok('which starts out the shape the world was', tide.trace[0] && tide.trace[0].e<1.15,
+     'elongation '+(tide.trace[0]||{}).e);
+  {
+    /* the whole point: the shape is not set by us at any stage. It is what a
+       few hundred motes do with their own gravity, their own contacts, and a
+       hole pulling harder on the near side than the far one. */
+    const es=tide.trace.map(t=>t.e);
+    ok('then gravity alone pulls it out of shape',
+       es[es.length-1] > 2.5, es.join(' -> '));
+    let climbs=0;
+    for(let i=1;i<es.length;i++) if(es[i]>es[i-1]) climbs++;
+    ok('progressively, not in one step', climbs >= es.length-2,
+       climbs+' of '+(es.length-1)+' intervals stretch further');
+  }
 
-  /* The point of the rewrite: nothing places the stream along that line. It is
-     shed co-moving at the surface, and gravity alone draws it out — the inside
-     of it orbits faster than the outside. Measured on a grazing pass, where
-     the body survives, so no further shedding can be confused for stretching. */
-  const drawn = await p.evaluate(()=>{
+  /* a grazing pass, where it survives long enough to come apart properly */
+  const graze = await p.evaluate(()=>{
     const o=window.orbital;
     o.clear(); o.setSpeed(0);
     o.add(0,0,0,0,'hole',60000);
     o.add(600,0,0,Math.sqrt(60000/600)*0.5,'rocky',40);
-    const span=()=>{ let lo=1e9,hi=-1e9;
-      for(const q of o.debris()){ const r=Math.hypot(q.x,q.y); if(r<lo)lo=r; if(r>hi)hi=r; }
-      return hi>lo ? hi-lo : 0; };
-    /* run to just past the pass, when it has shed what it is going to shed */
-    for(let i=0;i<5300;i++) o.step(1/60);
-    const n0=o.particles(), s0=span();
-    let quiet=true;
-    const marks=[];
-    for(let k=0;k<5;k++){
-      for(let i=0;i<800;i++) o.step(1/60);
-      if(o.particles()>n0) quiet=false;     /* nothing new was shed */
-      marks.push(+span().toFixed(0));
+    let peakElong=0, peakClouds=0, bodiesAfter=0, wasOne=false;
+    for(let i=0;i<6200;i++){
+      o.step(1/60);
+      const c=o.clouds();
+      if(c.length===1 && c[0].n>500){ wasOne=true; peakElong=Math.max(peakElong,c[0].elong); }
+      peakClouds=Math.max(peakClouds,c.length);
+      bodiesAfter=o.count();
     }
-    return {n0, s0:+s0.toFixed(0), marks, quiet};
+    return {peakElong:+peakElong.toFixed(1), peakClouds, bodiesAfter};
   });
-  ok('the stream starts as a clump', drawn.s0<120, 'span '+drawn.s0);
-  ok('and gravity alone draws it out', drawn.marks[4] > drawn.s0*5,
-     'span '+drawn.s0+' -> '+drawn.marks.join(' -> '));
-  ok('with nothing further shed to do it', drawn.quiet, drawn.n0+' motes throughout');
-  /* measured from the first mark, not from s0: the stream genuinely compacts
-     as it rounds perihelion before it starts pulling apart, so s0 is not the
-     floor of the growth */
-  ok('it stretches the whole way, not in one jump',
-     drawn.marks.every((v,i)=> i===0 || v > drawn.marks[i-1]), drawn.marks.join(' -> '));
+  ok('a grazing world draws out into a long stream',
+     graze.peakElong>3, 'elongation '+graze.peakElong+' while still in one piece');
+  ok('and then tears into separate pieces', graze.peakClouds>2,
+     graze.peakClouds+' clouds at once');
+  ok('each of which holds itself together as a body again',
+     graze.bodiesAfter>2, graze.bodiesAfter+' bodies left');
+
+  /* rubble is held up by its pieces touching, not by nothing: a cold cloud
+     with only self-gravity collapses to a point, which is real physics and
+     completely wrong for rock. This is the assertion that catches that. */
+  const hold = await p.evaluate(()=>{
+    const o=window.orbital;
+    o.clear(); o.setSpeed(0);
+    o.add(0,0,0,0,'hole',60000);
+    o.add(250,0,0,0,'rocky',40);          /* crumbles at once, then falls */
+    for(let i=0;i<30;i++) o.step(1/60);
+    const a=o.clouds()[0];
+    const w0=a?a.short:0;
+    /* the thinnest it ever gets, not where it happens to end up: a cloud with
+       nothing holding it apart falls through itself and rebounds, so a
+       start-to-finish comparison can miss the collapse entirely */
+    let low=w0;
+    for(let i=0;i<420;i++){
+      o.step(1/60);
+      const c=o.clouds()[0];
+      if(c && c.n>200) low=Math.min(low,c.short);
+    }
+    const c=o.clouds()[0];
+    return {w0:+w0.toFixed(2), low:+low.toFixed(2), n:c?c.n:0};
+  });
+  ok('rubble holds itself up instead of collapsing inward',
+     hold.n>200 && hold.low > hold.w0*0.88,
+     'thinnest '+hold.low+' against '+hold.w0+' to start');
 
   const safe = await p.evaluate(()=>{
     const o=window.orbital;
@@ -417,11 +442,10 @@ async function open(b, vp){
     o.add(r,0,0,v,'rocky',40);        /* a wide, safe orbit */
     for(let i=0;i<2000;i++) o.step(1/60);
     const w=o.list().find(x=>!x.hole);
-    return {alive:!!w, stretch:w?w.stretch:-1, m:w?w.m:0, parts:o.particles()};
+    return {alive:!!w, m:w?w.m:0, parts:o.particles()};
   });
   ok('but a world at a safe distance is left alone',
-     safe.alive && safe.stretch<0.01 && safe.parts===0,
-     'stretch '+safe.stretch.toFixed(3)+', '+safe.parts+' debris');
+     safe.alive && safe.parts===0, safe.parts+' debris');
   ok('and keeps all of its mass', safe.alive && Math.abs(safe.m-40)<0.01, safe.m.toFixed(2));
   ok('no exceptions', errs.length===0, errs.join(' | '));
   await ctx.close();

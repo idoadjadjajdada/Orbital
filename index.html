@@ -418,7 +418,6 @@ function makeBody(x,y,vx,vy,spec,mass){
     /* heat is 0 for settled rock and 1 for freshly shocked magma; it drives both
        the glow and how long before the surface reads as rock again */
     heat: cl.hot ? 1 : 0,
-    stretch: 0, tideAng: 0, tideM0: 0, tidal: false,
     spin: (Math.random()-0.5)*0.25,
     ang: Math.random()*6.283,
     trail: [], flash: 0
@@ -431,26 +430,29 @@ function addBody(b){ if(bodies.length>=MAX_BODIES) return null; bodies.push(b); 
    bodies but do not pull on anything themselves, which is what keeps a few
    thousand of them affordable. */
 let evictPtr = 0;
-function spawnPart(x,y,vx,vy,kind,rgb,heat,life){
+function spawnPart(x,y,vx,vy,kind,rgb,heat,life,pm,size){
   const p={x,y,vx,vy,kind,r:rgb[0],g:rgb[1],b:rgb[2],heat,life,age:0,settled:0,ring:0,
-           size: kind==='gas' ? (1+Math.random()*1.6) : (Math.random()<0.25?2:1)};
+           /* Most debris is one indivisible unit of mass. A world crumbling
+              into rubble carries its mass in however many motes it can afford,
+              so those need to say how much each of them is worth. */
+           pm: pm||PART_MASS, blob:0, dens:0, cell:0,
+           size: size || (kind==='gas' ? (1+Math.random()*1.6) : (Math.random()<0.25?2:1))};
   if(parts.length>=MAX_PARTS){
     /* overwrite in rotation rather than shifting the whole array down one */
     parts[evictPtr++ % parts.length] = p;
   } else parts.push(p);
+  return p;
 }
-let sX=new Float64Array(0), sY, sM, sR2, sNo;
+let sX=new Float64Array(0), sY, sM, sR2;
 function stepParts(dt, sources){
   const ns = sources.length;
   if(sX.length < ns){
     sX=new Float64Array(ns); sY=new Float64Array(ns);
     sM=new Float64Array(ns); sR2=new Float64Array(ns);
-    sNo=new Uint8Array(ns);
   }
   for(let s=0;s<ns;s++){
     const b=sources[s];
     sX[s]=b.x; sY[s]=b.y; sM[s]=b.m; sR2[s]=b.r*b.r;
-    sNo[s]=b.tidal?1:0;
   }
   const soft2 = SOFT*SOFT;
   for(let i=parts.length-1;i>=0;i--){
@@ -465,9 +467,9 @@ function stepParts(dt, sources){
       const pull = sM[s]/d2;
       if(pull>hostPull){ hostPull=pull; hostIdx=s; }
       /* swallowed: the debris settles and its mass joins the body */
-      if(d2 < sR2[s] && !sNo[s]){
+      if(d2 < sR2[s]){
         const b=sources[s];
-        b.m += p.kind==='gas' ? PART_MASS*0.1 : PART_MASS;
+        b.m += p.kind==='gas' ? p.pm*0.1 : p.pm;
         b.r = radiusFor(b.m, densityOf(b.spec));
         sR2[s]=b.r*b.r; sM[s]=b.m;
         if(p.heat>0.4) b.heat = Math.min(1, b.heat + 0.02);
@@ -476,12 +478,28 @@ function stepParts(dt, sources){
     }
     const host = hostIdx>=0 ? sources[hostIdx] : null;
     if(p.dead){ parts.splice(i,1); continue; }
+    /* rubble pulls on itself. This is the whole reason a crumbling world holds
+       a shape at all instead of dissolving the moment it stops being a body. */
+    if(p.blob){
+      const bl = blobs[p.blob-1];
+      if(bl && bl.m>0){
+        const dx=bl.x-p.x, dy=bl.y-p.y;
+        const r=Math.sqrt(dx*dx+dy*dy)||1e-6;
+        /* a uniform sphere: linear inside, inverse-square outside. Smooth at
+           the centre, and the competition between this and the tide is exactly
+           the Roche condition — so where it tears is decided, not drawn. */
+        const a = r<bl.r ? G*bl.m*r/(bl.r*bl.r*bl.r) : G*bl.m/(r*r);
+        ax += a*dx/r; ay += a*dy/r;
+      } else p.blob=0;
+    }
     p.vx+=ax*dt; p.vy+=ay*dt;
     p.x+=p.vx*dt; p.y+=p.vy*dt;
     p.host = host;
     p.settled = 0; p.ring = 0;
 
-    if(host){
+    /* rubble is held by its own cloud, not by ring mechanics — circularizing it
+       around a host would fight the cohesion that is giving it its shape */
+    if(host && !p.blob){
       const dx=p.x-host.x, dy=p.y-host.y;
       const r=Math.hypot(dx,dy)||1e-6;
       const rvx=p.vx-host.vx, rvy=p.vy-host.vy;
@@ -539,7 +557,10 @@ function accrete(dt){
   const cells = new Map();
   for(let i=0;i<parts.length;i++){
     const p = parts[i];
-    if(p.kind==='gas' || !p.settled || p.ring) continue;
+    /* rubble is already a cloud that knows it is one; loose debris has to
+       have settled into orbit before it is allowed to notice */
+    if(p.kind==='gas' || p.ring) continue;
+    if(!p.settled && !p.blob) continue;
     const cx = Math.floor(p.x/CLUMP_CELL), cy = Math.floor(p.y/CLUMP_CELL);
     const key = cx+','+cy;
     let c = cells.get(key);
@@ -558,7 +579,7 @@ function accrete(dt){
     for(const i of group){ const p=parts[i]; spread+=Math.hypot(p.vx-mvx,p.vy-mvy); }
     if(spread/n > CLUMP_SPREAD) continue;
 
-    const mass = n*PART_MASS;
+    let mass=0; for(const i of group) mass+=parts[i].pm;
     /* what it grew up to be */
     const kindId = mass < 1.4 ? 'asteroid' : mass < 5 ? 'moon' : 'dwarfp';
     const k = kindById(kindId);
@@ -689,33 +710,179 @@ function collapseTo(b, kindId){
   b.r = radiusFor(b.m, densityOf(b.spec));
   b.flash = 1;
   b.trail.length = 0;
-  b.stretch = 0;
   once('collapse', kindId==='hole'
     ? 'It collapsed. Nothing that heavy holds itself up.'
     : 'Supernova. The shell it threw off is the nebula.');
 }
 
+/* ============================ rubble clouds ============================ */
+/* A cloud of motes that pull on each other, so it holds a shape. Cohesion is
+   the monopole term — every mote toward the cloud's own centre of mass — which
+   is what dominates for a roughly round blob and costs one pass instead of the
+   n^2 every pair would. Cheap enough that a world can be several thousand
+   motes and still run.
+
+   The clouds are re-split from scratch every so often by spatial connectivity,
+   so when one pulls into two, each half starts holding itself together
+   separately. That is what lets a stretched world pinch off a bead rather than
+   smearing into one endless string, and none of the shapes it makes are drawn
+   by us. */
+let blobs = [];
+let blobTimer = 0;
+const BLOB_SPLIT = 1.8;  /* multiples of the rest spacing before it is two clouds */
+const BLOB_MIN  = 10;    /* smaller than this is just dust, not a body */
+
+function stepBlobs(){
+  if(!blobs.length) return;
+  for(const b of blobs){ b.sx=0; b.sy=0; b.sm=0; b.n=0; }
+  for(let i=0;i<parts.length;i++){
+    const p=parts[i];
+    if(!p.blob) continue;
+    const b=blobs[p.blob-1];
+    if(!b){ p.blob=0; continue; }
+    b.sx+=p.x*p.pm; b.sy+=p.y*p.pm; b.sm+=p.pm; b.n++;
+  }
+  for(const b of blobs){
+    if(b.n && b.sm>0){
+      b.x=b.sx/b.sm; b.y=b.sy/b.sm; b.m=b.sm;
+      b.r=radiusFor(b.m, b.dens);
+    } else b.m=0;
+  }
+}
+/* re-cluster the rubble by who is still touching whom */
+function reblob(){
+  let cell=0;
+  for(let i=0;i<parts.length;i++) if(parts[i].blob && parts[i].cell>cell) cell=parts[i].cell;
+  cell = (cell||1)*BLOB_SPLIT;
+  const grid=new Map(), mine=[];
+  for(let i=0;i<parts.length;i++){
+    const p=parts[i];
+    if(!p.blob) continue;
+    mine.push(i);
+    const key=Math.floor(p.x/cell)+','+Math.floor(p.y/cell);
+    let c=grid.get(key);
+    if(!c){ c=[]; grid.set(key,c); }
+    c.push(i);
+  }
+  if(!mine.length){ blobs.length=0; return; }
+  const seen=new Uint8Array(parts.length);
+  const next=[];
+  for(const start of mine){
+    if(seen[start]) continue;
+    const group=[start]; seen[start]=1;
+    const stack=[start];
+    while(stack.length){
+      const j=stack.pop(), q=parts[j];
+      const cx=Math.floor(q.x/cell), cy=Math.floor(q.y/cell);
+      for(let ox=-1;ox<=1;ox++) for(let oy=-1;oy<=1;oy++){
+        const c=grid.get((cx+ox)+','+(cy+oy));
+        if(!c) continue;
+        for(const k of c) if(!seen[k]){ seen[k]=1; group.push(k); stack.push(k); }
+      }
+    }
+    if(group.length<BLOB_MIN){
+      /* too little left to hold itself together: it is loose debris now */
+      for(const j of group) parts[j].blob=0;
+      continue;
+    }
+    let sx=0,sy=0,sm=0,dens=0;
+    for(const j of group){ const q=parts[j]; sx+=q.x*q.pm; sy+=q.y*q.pm; sm+=q.pm; dens=q.dens||dens; }
+    const b={x:sx/sm, y:sy/sm, m:sm, dens:dens||100, n:group.length, sx:0, sy:0, sm:0};
+    b.r=radiusFor(b.m,b.dens);
+    next.push(b);
+    const id=next.length;
+    for(const j of group) parts[j].blob=id;
+  }
+  blobs=next;
+}
+
+/* Rubble does not collapse to a point, and the reason is not gravity — it is
+   that the pieces are touching. Without something holding them apart a cold
+   self-gravitating cloud falls straight in on itself, which is real physics
+   and completely wrong for a pile of rock.
+
+   So the pieces push apart when they overlap. This is done by moving them
+   rather than by applying a force: a spring stiff enough to hold a world up
+   would explode the first time the clock ran at sixty times, and a positional
+   pass cannot, whatever dt is. It loses energy doing it, which is also what a
+   pile of gravel does. */
+const RELAX = 0.5;
+const RELAX_PASSES = 2;   /* one pass does not fully resolve a packed interior */
+/* the grid is built once and both passes run over it: the motes move by a
+   fraction of a cell in a pass, so rebinning between them buys nothing */
+function rubbleContacts(){
+  if(!blobs.length) return;
+  let cell=0, count=0;
+  for(let i=0;i<parts.length;i++){
+    const p=parts[i];
+    if(!p.blob) continue;
+    count++;
+    if(p.cell>cell) cell=p.cell;
+  }
+  if(!count || cell<=0) return;
+  const inv=1/cell;
+  const grid=new Map();
+  const keys=[];
+  for(let i=0;i<parts.length;i++){
+    const p=parts[i];
+    if(!p.blob) continue;
+    /* one integer per cell rather than "x,y": no string to build or hash, and
+       at this call rate that alone was worth having */
+    const key=(Math.floor(p.x*inv)+32768)*65536 + (Math.floor(p.y*inv)+32768);
+    let c=grid.get(key);
+    if(!c){ c=[]; grid.set(key,c); keys.push(key); }
+    c.push(i);
+  }
+  /* self, +y, +x, +x+y, +x-y — half the neighbourhood. With their opposites
+     coming from the other cell's turn, every adjacent pair is visited once. */
+  const NEIGH=[0, 1, 65536, 65537, 65535];
+  for(let it=0; it<RELAX_PASSES; it++){
+    for(let k=0;k<keys.length;k++){
+      const key=keys[k], list=grid.get(key);
+      for(let nb=0;nb<5;nb++){
+        const other = nb===0 ? list : grid.get(key+NEIGH[nb]);
+        if(!other) continue;
+        const self = nb===0;
+        for(let a=0;a<list.length;a++){
+          const p=parts[list[a]];
+          for(let bi=self?a+1:0; bi<other.length; bi++){
+            const q=parts[other[bi]];
+            const dx=q.x-p.x, dy=q.y-p.y;
+            /* a shade over the spacing they were laid out at, so a world that
+               has only just crumbled is already resting on itself rather than
+               settling inward first */
+            const rest=(p.cell+q.cell)*0.54;
+            const d2=dx*dx+dy*dy;
+            if(d2>=rest*rest || d2<1e-12) continue;
+            const d=Math.sqrt(d2);
+            const push=(rest-d)*0.5*RELAX;
+            const nx=dx/d, ny=dy/d;
+            p.x-=nx*push; p.y-=ny*push;
+            q.x+=nx*push; q.y+=ny*push;
+          }
+        }
+      }
+    }
+  }
+}
+
 /* ============================ tidal disruption ============================ */
-/* Close enough to a black hole and the pull across a body beats the grip the
-   body has on itself, and it comes apart.
+/* Close enough to a hole and the pull across a body beats the grip the body
+   has on itself, and it stops being a rigid thing.
 
-   The obvious way to draw that is to squash the sprite into a longer and
-   longer needle and then swap the whole thing for particles. It looks wrong,
-   because it is wrong: nothing about that shape comes from gravity, and the
-   moment of breakup is a cut rather than a consequence.
-
-   So the body actually loses itself instead. Once the tide wins, material
-   leaves continuously through the two ends of the line to the hole — the
-   points where the tide has already beaten the body's own gravity — and each
-   mote leaves at the speed the body was going, nothing more. From there it is
-   an ordinary particle. The stream stretches because the inside of it orbits
-   faster than the outside, which is the actual reason real ones stretch. We
-   never place a single fragment along that line by hand. */
+   Nothing here draws that. The body is replaced, once, by rubble sampled
+   straight out of its own sprite — one mote per pixel, in place, at the speed
+   the body was going — so the instant it happens looks like nothing happened.
+   From then on it is only motes: their own gravity holding them together, the
+   hole's pulling harder on the near side than the far one. Whether that ends
+   in a teardrop, a bar that pinches in the middle, one lump shedding a tail,
+   or a string of beads is not a case we handle. It is what those two forces
+   do to a few thousand particles. */
 function tides(dt){
   for(let i=bodies.length-1;i>=0;i--){
     const b=bodies[i];
-    if(b.hole){ b.stretch=0; continue; }
-    let worst=0, host=null, hdx=0, hdy=0, hd=0;
+    if(b.hole) continue;
+    let worst=0, host=null;
     for(const h of bodies){
       if(h===b || !h.hole) continue;
       const dx=b.x-h.x, dy=b.y-h.y;
@@ -723,86 +890,56 @@ function tides(dt){
       /* Tidal pull across the body against the body's own grip on itself.
          TIDE_K is the fluid coefficient: something that can deform comes apart
          at roughly twice the distance a rigid body would, and 2^3 in here is
-         that factor. It also buys the room the stream needs — without it a
-         body starts shedding barely outside the hole and is eaten before
-         gravity has had time to draw anything out. */
+         that factor. Crossing it does not mean the world is destroyed — only
+         that it can no longer be rigid. What happens next is up to the motes. */
       const stress = TIDE_K*(h.m*b.r*b.r*b.r)/(d*d*d*Math.max(1e-6,b.m));
-      if(stress>worst){ worst=stress; host=h; hdx=dx; hdy=dy; hd=d; }
+      if(stress>worst){ worst=stress; host=h; }
     }
-    b.tideAng = host ? Math.atan2(hdy,hdx) : 0;
-    /* while the tide is beating its own gravity it cannot pick anything back
-       up — that is what the condition means. Without this it spends the whole
-       disruption re-swallowing the stream it just shed. */
-    b.tidal = worst>1 && !!host;
-    if(worst>1 && host){
-      if(!b.tideM0) b.tideM0 = b.m;
-      /* the body itself only goes ellipsoidal — a real tidally distorted body
-         does. The needle is the stream, and the stream draws itself. */
-      b.stretch = Math.min(0.85, b.stretch + dt*(worst-1)*1.4);
-      shedTide(b, host, hdx, hdy, hd, worst, dt);
-      /* what is left once most of it has already streamed away is too small to
-         hold together as anything; let the last of it go at once */
-      if(b.m < Math.max(PART_MASS*45, (b.tideM0||b.m)*0.12)) disperse(b, host, hdx, hdy, hd);
-    } else {
-      b.stretch = Math.max(0, b.stretch - dt*0.8);
-      b.tideM0 = 0;
-    }
+    if(worst>1 && host) crumble(b);
   }
 }
-/* material leaving through the two tidal points, carrying the body's velocity
-   and nothing else. Mass really leaves the body, and the hole really eats it
-   later through the ordinary accretion path, so none of it is bookkeeping. */
-function shedTide(b, host, dx, dy, d, stress, dt){
-  const ux=dx/d, uy=dy/d;
-  const pal=(PALETTES[b.spec.pal]||PALETTES.terran).ramp;
-  const isGas=!!b.gas;
-  /* How hard the tide is winning sets how fast it comes apart, but the rate
-     saturates. Scaling it straight off the stress goes as 1/d^3, which means a
-     body on a plunging orbit loses nothing until it is already at the horizon
-     and then loses everything at once — physically defensible, and it reads as
-     a pop. Saturating it starts the stream as soon as the tide wins, which is
-     also when there is still room for gravity to draw it out. */
-  let want = 460*(1 - 1/stress)*dt;
-  let n = want|0;
-  if(Math.random() < want-n) n++;
-  const most = Math.floor(b.m/PART_MASS);
-  if(n>most) n=most;
-  if(n<=0) return;
-  for(let j=0;j<n;j++){
-    const side = Math.random()<0.5 ? -1 : 1;
-    /* just clear of the surface: material leaving through the Lagrange point
-       is past it by definition, and anything spawned inside the radius gets
-       swallowed straight back up by the ordinary accretion pass */
-    const along = side*b.r*(1.45+Math.random()*0.45);
-    const across = (Math.random()*2-1)*b.r*0.3;
-    /* leaves at the body's own velocity. Everything after this is gravity. */
-    const jit = b.r*0.02;
-    spawnPart(b.x+ux*along-uy*across, b.y+uy*along+ux*across,
-              b.vx+(Math.random()*2-1)*jit, b.vy+(Math.random()*2-1)*jit,
-              isGas?'gas':'rock',
-              rampAt(pal,0.35+Math.random()*0.5),
-              isGas?0:0.25+Math.random()*0.45,
-              isGas?120+Math.random()*140:150+Math.random()*120);
-  }
-  b.m = Math.max(PART_MASS, b.m - n*PART_MASS);
-  b.r = radiusFor(b.m, densityOf(b.spec));
-  once('tide','Being pulled apart. The tide is winning.');
-}
-/* the last of a body that has already streamed most of itself away */
-function disperse(b, host, dx, dy, d){
-  const pal=(PALETTES[b.spec.pal]||PALETTES.terran).ramp;
-  const isGas=!!b.gas;
-  const n=Math.min(700, Math.max(24, Math.round(b.m/PART_MASS)));
-  for(let j=0;j<n;j++){
-    /* scattered through what is left of the body, at the body's velocity */
-    const a=Math.random()*6.283, rr=b.r*Math.sqrt(Math.random());
-    const jit=b.r*0.05;
-    spawnPart(b.x+Math.cos(a)*rr, b.y+Math.sin(a)*rr,
-              b.vx+(Math.random()*2-1)*jit, b.vy+(Math.random()*2-1)*jit,
-              isGas?'gas':'rock',
-              rampAt(pal,0.35+Math.random()*0.5),
-              isGas?0:0.3+Math.random()*0.5,
-              isGas?120+Math.random()*140:150+Math.random()*120);
+/* the body, as rubble, in place — one mote per sprite pixel */
+function crumble(b){
+  const dens = densityOf(b.spec);
+  /* enough motes to look solid, few enough that a heavy world is affordable.
+     Whatever the count works out to, the mass is divided between them, so what
+     the hole eventually eats is exactly what it was. */
+  const want = Math.max(90, Math.min(3600, Math.round(b.m/PART_MASS)));
+  let res = Math.max(7, Math.min(72, Math.round(Math.sqrt(want/0.785))));
+  const sp = makeSprite(b.spec, res);
+  const g = document.createElement('canvas');
+  g.width=g.height=res;
+  const gc=g.getContext('2d');
+  gc.imageSmoothingEnabled=false;
+  gc.drawImage(sp,0,0);
+  const D = gc.getImageData(0,0,res,res).data;
+
+  /* count first so every mote can carry an equal share of the real mass */
+  let n=0;
+  for(let k=3;k<D.length;k+=4) if(D[k]>8) n++;
+  if(!n) n=1;
+  const pm = b.m/n;
+  const step = (b.r*2)/res;
+  const sin=Math.sin(b.ang||0), cos=Math.cos(b.ang||0);
+  const hot = b.heat||0;
+
+  for(let py=0;py<res;py++){
+    for(let px=0;px<res;px++){
+      const k=(py*res+px)*4;
+      if(D[k+3]<=8) continue;
+      /* where this pixel actually sits on the body, spun with it */
+      const ox=(px+0.5-res/2)*step, oy=(py+0.5-res/2)*step;
+      const wx=ox*cos-oy*sin, wy=ox*sin+oy*cos;
+      const q=spawnPart(b.x+wx, b.y+wy,
+                        b.vx, b.vy,
+                        b.gas?'gas':'rock',
+                        [D[k],D[k+1],D[k+2]],
+                        hot, 1e9, pm, 1);
+      /* how far apart these sat when they were still a world: the distance
+         they will hold each other at, and the distance beyond which they have
+         stopped touching and are no longer the same object */
+      if(q){ q.dens=dens; q.cell=step; q.blob=-1; }
+    }
   }
   b.dead=true;
   if(selected===b) selected=null;
@@ -810,7 +947,8 @@ function disperse(b, host, dx, dy, d){
   bodies=bodies.filter(q=>!q.dead);
   accelerate();
   for(const q of bodies){ q.ax=q.nax; q.ay=q.nay; }
-  once('tidegone','Torn apart. Nothing left to hold it together.');
+  reblob();
+  once('tide','Past the Roche limit. It cannot hold itself together any more.');
 }
 
 /* ============================ collisions ============================ */
@@ -971,8 +1109,15 @@ function step(dt){
   const h=dt/sub;
   for(let s=0;s<sub;s++) integrate(h);
   const src = gravitySources();
+  stepBlobs();
   stepParts(dt, src);
+  rubbleContacts();
   stepWaves(dt);
+  /* re-split the rubble a few times a second: often enough that a piece
+     tearing off starts holding itself together while you watch, rarely enough
+     that the flood fill costs nothing */
+  blobTimer -= dt;
+  if(blobTimer<=0){ blobTimer=0.2; reblob(); }
   tides(dt);
   collapseCheck();
   accrete(dt);
@@ -1228,7 +1373,10 @@ function drawParts(){
       }
       /* settled rubble holds its brightness; loose debris fades as it ages */
       a = p.settled ? 0.85 : 0.35+fade*0.6;
-      s = p.size;
+      /* A mote of a crumbled world stands for a patch of it that big. Drawing
+         it one pixel wide turns a solid thing into a dot cloud the moment you
+         zoom in, so it is drawn at the size it actually occupies. */
+      s = p.cell>0 ? Math.max(1, Math.ceil(p.cell*z)) : p.size;
     }
     let x0=x<0?0:x, y0=y<0?0:y;
     const x1=x+s>W?W:x+s, y1=y+s>H?H:y+s;
@@ -1305,22 +1453,9 @@ function drawBody(b){
   const res=Math.max(4,Math.min(96,Math.ceil(want/6)*6));
   const sp=makeSprite(b.spec,res);
   const d=Math.max(1,Math.round(r*2));
-  if(b.stretch>0.02){
-    /* leaning along the line to whatever is pulling at it — a real tidally
-       distorted body goes ellipsoidal, and that is all this is */
-    ctx.save();
-    ctx.translate(x,y);
-    ctx.rotate(b.tideAng||0);
-    /* only a bulge. Draw the body out into a needle and it swallows its own
-       stream — the sprite reaches further along the axis than the material
-       leaving the surface does, so the part that is actually being pulled off
-       is hidden underneath the part that is only pretending to be. */
-    ctx.scale(1+b.stretch*0.42, 1/(1+b.stretch*0.28));
-    ctx.drawImage(sp, -d/2, -d/2, d, d);
-    ctx.restore();
-  } else {
-    ctx.drawImage(sp, Math.round(x-d/2), Math.round(y-d/2), d, d);
-  }
+  /* A body is always drawn round. Anything that is being pulled out of shape
+     is not a body any more — it is rubble, and rubble draws itself. */
+  ctx.drawImage(sp, Math.round(x-d/2), Math.round(y-d/2), d, d);
 
   /* molten skin over the top while it is still hot */
   if(!b.lum && b.heat>0.02 && d>2){
@@ -1704,7 +1839,7 @@ function syncForge(skipSliders){
 
 function togglePlay(){ running=!running; elPlay.textContent=running?'Pause':'Play'; }
 elPlay.addEventListener('click',togglePlay);
-function clearAll(){ bodies=[]; parts=[]; waves=[]; selected=null; following=null; selectBody(null); }
+function clearAll(){ bodies=[]; parts=[]; waves=[]; blobs=[]; selected=null; following=null; selectBody(null); }
 $('reset').addEventListener('click',clearAll);
 $('fit').addEventListener('click',()=>fitAll());
 function setTrails(v){ showTrails=v; $('trails').classList.toggle('on',v); if(!v) for(const b of bodies) b.trail.length=0; }
@@ -1799,11 +1934,27 @@ function totalEnergy(){
 window.orbital={
   list:()=>bodies.map(b=>({id:b.id,x:b.x,y:b.y,vx:b.vx,vy:b.vy,m:b.m,r:b.r,
                            cls:b.spec.cls,pal:b.spec.pal,heat:b.heat,name:b.name,
-                           hole:!!b.hole,stretch:b.stretch||0})),
+                           hole:!!b.hole})),
   count:()=>bodies.length,
   particles:()=>parts.length,
   waves:()=>waves.length,
   ringed:()=>parts.filter(p=>p.ring).length,
+  /* the rubble clouds: how many, how heavy, and how far from round */
+  clouds:()=>blobs.filter(b=>b.m>0).map(b=>{
+    const own=parts.filter(p=>blobs[p.blob-1]===b);
+    /* principal extents, so a test can say "this is not a circle" without
+       anybody having decided in advance what shape it should be */
+    let sxx=0, syy=0, sxy=0;
+    for(const p of own){ const dx=p.x-b.x, dy=p.y-b.y; sxx+=dx*dx; syy+=dy*dy; sxy+=dx*dy; }
+    const n=Math.max(1,own.length);
+    sxx/=n; syy/=n; sxy/=n;
+    const tr=sxx+syy, det=sxx*syy-sxy*sxy;
+    const disc=Math.max(0, tr*tr/4-det);
+    const l1=tr/2+Math.sqrt(disc), l2=tr/2-Math.sqrt(disc);
+    return {x:b.x, y:b.y, m:b.m, n:own.length,
+            long:Math.sqrt(Math.max(0,l1)), short:Math.sqrt(Math.max(0,l2)),
+            elong: l2>1e-9 ? Math.sqrt(l1/l2) : 999};
+  }),
   debris:()=>parts.map(p=>({x:p.x,y:p.y,vx:p.vx,vy:p.vy,kind:p.kind,ring:!!p.ring,settled:!!p.settled})),
   settled:()=>parts.filter(p=>p.settled).length,
   add:(x,y,vx,vy,kindId,mass)=>{
