@@ -14,6 +14,7 @@ Open `index.html`. That's the whole install.
 | Tap empty space | with **Auto-orbit** on, drops the body straight into a circular orbit |
 | Tap a body | select it — see its mass, speed, what it orbits and its period |
 | **Drag** on, then drag a body | pick it up and move it; let go and it carries the speed your hand had |
+| Tap nothing with something selected | put it down. It clears the selection instead of dropping a world |
 | Scroll / pinch | zoom |
 | Two-finger drag, middle-drag, or space+drag | pan |
 | `1`–`6` | pick a body class |
@@ -23,6 +24,12 @@ Built for desktop and iPad: one finger draws and flings, two fingers pinch and
 pan, and a mouse wheel zooms about the cursor.
 
 ## What it does
+
+Seventeen kinds of thing, from an asteroid up: rocky and icy and molten
+worlds, gas and ice giants, a brown dwarf that never quite lit, dwarf stars and
+stars, a red giant puffed to a hundred times its width at a thousandth of its
+density, a white dwarf carrying most of a star inside an Earth, neutron stars,
+pulsars and black holes.
 
 Worlds are pixel art, generated rather than drawn: every body gets a sprite
 baked from value noise, shaded against a sphere normal, coloured from a ramp.
@@ -37,7 +44,8 @@ thirty degrees off centre they **clip** each other: the pixels that overlapped
 are scraped off, both survive, both get deflected, and the bigger one picks up
 most of what it tore loose on the way past.
 
-Hit squarely and hard enough and neither one stays solid. Both **go liquid** —
+**Two worlds meeting is never resolved in one frame**, however gently they
+arrive. Both **go liquid** —
 every pixel of both worlds, molten, still carrying the speed it came in with —
 and from there it is only motes: the two of them drive through each other, mix,
 knock about, lose the motion to those collisions, and their own gravity gathers
@@ -55,6 +63,17 @@ Hit it off centre and the melt comes out spinning: it goes cold while it is
 still a two-to-one lozenge, and it is held there as particles until gravity has
 finished the job. Two gas giants do the same but skip the cooling — gas has no
 melting point, so a gas world re-forms as soon as gravity has gathered it.
+
+How much of it goes liquid is the impact energy against what binding the pair
+together is worth — but there is a floor under that, and the floor is not
+padding. Assembling one body out of two releases gravitational energy whether
+they were moving to begin with or not, and rock is a poor place to put it. So
+even a slow touch leaves a magma ocean rather than a seam, and whatever ends up
+moving faster than the pair can hold on to is simply gone.
+
+Only a stone is caught rather than mixed: below about a twenty-fifth of what it
+hits, an impactor is accretion, and at speed it breaks up against the surface
+instead. And a star swallows anything much smaller without ceasing to be one.
 
 Below that it just merges, and a small fast projectile against a big world
 still shatters and throws molten debris.
@@ -87,6 +106,29 @@ where a world would not, which is why there is rubble sitting inside limits
 that would shred a fluid body. And coming apart **takes time**: about the
 body's own free-fall time, so a world parked inside the limit comes apart while
 one that only passes through the same depth is gone before it can flow.
+
+A black hole is not a black circle. It has an **event horizon** — a real edge,
+past which the picture simply stops — and around it the sky is visibly wrong.
+Light that would have gone past is pulled around, so what you see beside one is
+the view from somewhere else, stretched: a world behind it appears about half
+again further out than it is, and the patch directly behind is smeared all the
+way round into a **photon ring**, which is the brightest thing in the frame.
+None of that is painted on. The pass reads the picture that has already been
+drawn and resamples it, so whatever is really behind the hole is what gets
+bent — a star field, a nebula, or a world in mid-collision.
+
+Feed one and it **lights up and answers back**. Material that finds a close
+orbit grinds into a disc, and a disc is the brightest thing in a galaxy for a
+reason: material at one radius goes round faster than material just outside it,
+and rubbing the two together is what takes the orbit apart. The heat is what it
+pays with, so the disc glows *and* drains inward, which is the only reason
+anything in one ever reaches the middle. And not all of what arrives goes in —
+a share of it is flung back out along the axis as a pair of narrow **jets**,
+taken out of what the hole just swallowed, so the books still balance.
+
+A star that collapses keeps its angular momentum, and the core it lands on is a
+fraction of the width the star was. Whatever slow turn it had comes out
+enormously faster: a **pulsar**, sweeping a beam from each pole.
 
 Get too close and you are **spaghettified**. Past the Roche limit a
 world stops being a body at all: it is replaced, once, by rubble sampled
@@ -153,11 +195,39 @@ That debris then has to end up somewhere:
   approach. They leave at the speed their own world was going, so momentum
   takes care of itself, and they are ordinary debris afterwards — which is why
   the other body sweeps up so much of it.
+- **Light bending** is done on the frame rather than to the objects in it. Each
+  hole resamples a disc of the already-drawn buffer, sampling from further in
+  than it writes, with a deflection going as 1/r — the real weak-field falloff.
+  Sampling the other way pulls images inward, which is the wrong sign and looks
+  like a drain rather than a lens. Nearest-neighbour, so the bend stays as
+  chunky as everything else.
+- **Nothing pops.** A world turning to rubble leaves its own sprite behind for a
+  third of a second, drifting with what it became; a cloud turning back into a
+  world keeps its motes, weightless and no longer part of anything, to fall the
+  last of the way in. Both are cross-fades over things that were never
+  instantaneous underneath.
+- **A body's class and colour are inherited, not guessed.** What a settled cloud
+  becomes is read off the roster's own masses, so a world that gains a moon is
+  not demoted a class for having grown. Its palette is scored by matching every
+  mote against each candidate ramp — in chromaticity, because shading drags half
+  of any world's pixels toward grey and matching raw colour made Barren a trap
+  that swallowed everything — weighted by mass, and fenced by composition, so a
+  dwarf planet can no longer come back wearing a star's colours.
 - **Mass is conserved exactly**, through every collision, collapse and
   crumble. Motes carry their own mass, so a mote count chosen for how it looks
   no longer decides how much matter exists — which is what the shatter and the
   supernova shell were both quietly doing, one creating 10% and the other
   losing most of a star.
+- **Momentum is conserved too**, which took finding four places it was not.
+  A body swallowing a mote took its mass and left its motion behind. A clump
+  formed from rubble took the mean velocity of its pieces rather than the
+  mass-weighted one, and pieces do not all weigh the same. A ring grinding
+  itself circular traded momentum with nobody. And cohesion is a field, so a
+  cloud that is not round pushes on itself — the net of it is measured each step
+  and handed back, which is the statement that nothing pulls on itself. A
+  collision no longer throws a blast front either: the pieces it throws *are*
+  the blast, and a wave shoving things as well counted it twice. Exact without
+  rubble in play; about a part in a thousand with a cloud sloshing.
 - **Contacts are inelastic**, and that is what makes a collision a merge. A
   positional pass that only separates overlapping motes stores no energy and
   loses none, so two clouds driven together slide straight through and out the
@@ -189,6 +259,10 @@ That debris then has to end up somewhere:
   scale a fling is: the clock does not run at hand speed, so a cursor's true
   world velocity is nonsense as an orbital one, and a lazy sweep across the
   screen would otherwise be a thousand units a second.
+- **Both forge sliders are logarithmic.** A linear density track spends nine
+  tenths of itself between rock and slightly denser rock and still cannot reach
+  a neutron star; on a log track every doubling costs the same distance, so one
+  sweep covers a snowball to degenerate matter.
 - **Melting** is decided by energy, not speed: the impact carries this much per
   unit mass, holding the pair together costs about this much. Two equal worlds
   meeting at the speed they would fall together at come in at a quarter of the

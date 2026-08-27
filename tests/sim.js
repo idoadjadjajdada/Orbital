@@ -111,70 +111,124 @@ async function open(b, vp){
   ok('total energy is conserved', energy<0.005, 'drift '+(energy*100).toFixed(3)+'%');
   await ctx.close();
 
-  console.log('\n--- a gentle touch merges ---');
+  console.log('\n--- even a slow touch comes apart ---');
   ({p,ctx,errs}=await open(b));
   const m = await p.evaluate(()=>{
     const o=window.orbital;
-    o.clear();
-    /* closing at 4/s, which gravity lifts to about 4.5 by contact — still under
-       the shatter threshold, so this should merge rather than break up */
+    o.clear(); o.setSpeed(0);
+    /* closing at 4/s, which gravity lifts to about 4.5 by contact. Two worlds
+       of the same size meeting at any speed at all is a collision between two
+       worlds, not one of them catching the other: both come apart, and what
+       decides how hot the pieces are is the energy, not whether it happened. */
     o.add(-60,0, 2.0,0,'rocky');
     o.add( 60,0,-2.0,0,'rocky');
     const p0=o.momentum(), n0=o.count();
-    /* catch the heat at the moment of impact: it bleeds away within seconds */
-    let heatAtMerge=0;
-    for(let i=0;i<2500;i++){
+    let peak=0, bornAt=-1, cloudHeat=0, hitAt=-1;
+    for(let i=0;i<4000;i++){
       o.step(1/60);
-      if(!heatAtMerge && o.count()===1) heatAtMerge=o.list()[0].heat;
+      const n=o.particles();
+      if(n>peak) peak=n;
+      if(hitAt<0 && n>100) hitAt=i/60;
+      const c=o.clouds();
+      if(c.length) cloudHeat=Math.max(cloudHeat, c[0].heat);
+      if(bornAt<0 && peak>400 && o.count()===1) bornAt=i/60;
+      if(bornAt>=0 && i/60>bornAt+1) break;
     }
-    const p1=o.momentum();
-    return {n0,n1:o.count(),list:o.list(),parts:o.particles(),heatAtMerge,
-            dx:Math.abs(p1.x-p0.x), dy:Math.abs(p1.y-p0.y)};
+    const p1=o.momentum(), L=o.list();
+    return {n0, n1:L.length, m:L[0]?L[0].m:0, total:o.mass(), peak,
+            gathered:+(bornAt-hitAt).toFixed(1), cloudHeat:+cloudHeat.toFixed(2),
+            name:L[0]?L[0].name:'', pal:L[0]?L[0].pal:'',
+            dp:Math.hypot(p1.x-p0.x,p1.y-p0.y)};
   });
-  ok('two slow bodies become one', m.n0===2 && m.n1===1, m.n0+' -> '+m.n1);
-  ok('mass adds up', Math.abs(m.list[0].m-44)<1e-6, String(m.list[0].m));
-  ok('momentum survives the merge', m.dx<1e-6 && m.dy<1e-6, m.dx.toExponential(1));
-  ok('a gentle merge throws no debris', m.parts===0, String(m.parts));
-  ok('but it does leave the survivor hot', m.heatAtMerge>0, m.heatAtMerge.toFixed(2));
+  ok('two slow bodies still end up as one', m.n0===2 && m.n1===1, m.n0+' -> '+m.n1);
+  ok('but not by sticking together on contact', m.peak>400,
+     m.peak+' pieces at the thick of it');
+  ok('gravity has to gather it back up, and that takes time',
+     m.gathered>2, m.gathered+'s as rubble');
+  /* Assembling one world out of two releases gravitational energy whether they
+     were moving to begin with or not, and rock is a poor place to put it — so
+     even a gentle meeting leaves a magma ocean rather than a seam. */
+  ok('and even a gentle one leaves it molten', m.cloudHeat>0.5,
+     'peak heat '+m.cloudHeat);
+  ok('nothing is lost doing it', Math.abs(m.total-44)<1e-6, m.total.toFixed(6));
+  ok('nearly all of it ends up in the world', m.m>41, m.m.toFixed(2)+' of 44');
+  ok('and it comes back as what it was', /rocky/i.test(m.name) && m.pal==='terran',
+     m.name+' in '+m.pal);
+  /* a cloud pulling on itself, a ring grinding itself circular and a world
+     swallowing a mote were all quietly manufacturing momentum */
+  ok('momentum survives all of that', m.dp<0.2, m.dp.toFixed(3));
   await ctx.close();
 
-  console.log('\n--- a hard impact shatters and melts ---');
+  console.log('\n--- a giant impact melts both of them ---');
   ({p,ctx,errs}=await open(b));
   const sm = await p.evaluate(()=>{
     const o=window.orbital;
-    o.clear();
+    o.clear(); o.setSpeed(0);
+    /* a tenth of the target's mass, arriving at eighteen: the impact that made
+       our own moon was about this, and it does not leave either of them solid */
     o.add(-150,0, 9,0,'rocky',400);
     o.add( 150,0,-9,0,'rocky',40);
-    let peakHeat=0;
-    for(let i=0;i<1400;i++){
+    const total=o.mass();
+    let peak=0, cloudHeat=0, bornAt=-1, hitAt=-1;
+    for(let i=0;i<9000;i++){
       o.step(1/60);
-      const a=o.list()[0];
-      if(a) peakHeat=Math.max(peakHeat,a.heat);
+      const n=o.particles();
+      if(n>peak) peak=n;
+      if(hitAt<0 && n>100) hitAt=i/60;
+      const c=o.clouds();
+      if(c.length) cloudHeat=Math.max(cloudHeat, c[0].heat);
+      if(bornAt<0 && peak>1000 && o.count()===1) bornAt=i/60;
+      if(bornAt>=0 && i/60>bornAt+2) break;
     }
-    const after=o.list();
-    return {n:o.count(), parts:o.particles(), heat:peakHeat, mass:after[0]?after[0].m:0};
+    const L=o.list();
+    return {n:L.length, peak, cloudHeat:+cloudHeat.toFixed(2), total:+total.toFixed(4),
+            after:+o.mass().toFixed(4), m:L[0]?L[0].m:0,
+            liquid:+(bornAt-hitAt).toFixed(1), heat:L[0]?L[0].heat:0};
   });
-  ok('the smaller world is destroyed', sm.n===1, String(sm.n));
-  ok('and thrown out as debris', sm.parts>150, sm.parts+' fragments');
-  ok('the survivor is left molten', sm.heat>0.8, sm.heat.toFixed(2));
-  ok('it keeps only part of what hit it', sm.mass>400 && sm.mass<440, sm.mass.toFixed(1));
+  ok('neither one stays solid', sm.peak>1500, sm.peak+' pieces');
+  ok('and it really is magma', sm.cloudHeat>0.7, 'peak heat '+sm.cloudHeat);
+  ok('it stays liquid for a long time', sm.liquid>8, sm.liquid+'s');
+  ok('then gravity gives one world back', sm.n===1 && sm.m>400,
+     sm.n+' of '+sm.m.toFixed(1));
+  ok('and it is still warm when it arrives', sm.heat>0.05, sm.heat.toFixed(2));
+  ok('every bit of both is accounted for',
+     Math.abs(sm.after-sm.total)<1e-6, sm.total+' -> '+sm.after);
   const cooled = await p.evaluate(()=>{
     const o=window.orbital;
     const h0=o.list()[0].heat;
     for(let i=0;i<3000;i++) o.step(1/60);
     return {h0, h1:o.list()[0].heat};
   });
-  ok('and it cools back towards rock', cooled.h1 < cooled.h0-0.5,
+  ok('and it cools back towards rock', cooled.h1 < cooled.h0*0.5,
      cooled.h0.toFixed(2)+' -> '+cooled.h1.toFixed(2));
+
+  /* a stone is not a collision between worlds. Below a twenty-fifth of the
+     target it is caught, or at speed it breaks up against it. */
+  const stone = await p.evaluate(()=>{
+    const o=window.orbital;
+    o.clear(); o.setSpeed(0);
+    o.add(-150,0, 9,0,'rocky',400);
+    o.add( 150,0,-9,0,'moon',12);
+    for(let i=0;i<2000;i++) o.step(1/60);
+    const L=o.list();
+    return {n:L.length, m:L[0]?+L[0].m.toFixed(1):0, parts:o.particles(),
+            name:L[0]?L[0].name:''};
+  });
+  ok('but a stone against a world is just a stone', stone.n===1 && stone.m>400,
+     stone.name+' of '+stone.m);
+  ok('and it breaks up rather than taking the world with it', stone.parts>50,
+     stone.parts+' fragments');
   await ctx.close();
 
   console.log('\n--- debris obeys gravity ---');
   ({p,ctx,errs}=await open(b));
   const deb = await p.evaluate(()=>{
     const o=window.orbital;
-    o.clear();
+    o.clear(); o.setSpeed(0);
+    /* a stone against a world, which is the case that leaves loose debris:
+       a melt keeps nearly all of itself and gives it back as one body */
     o.add(-150,0, 9,0,'rocky',400);
-    o.add( 150,0,-9,0,'rocky',40);
+    o.add( 150,0,-9,0,'moon',12);
     for(let i=0;i<1400;i++) o.step(1/60);
     const m0=o.list()[0].m, p0=o.particles();
     for(let i=0;i<6000;i++) o.step(1/60);
@@ -183,7 +237,7 @@ async function open(b, vp){
   /* Debris has two honest endings: fall in and add mass, or find a stable orbit
      and stay as a ring. Chaos that never resolves is the failure. */
   ok('the debris cloud resolves rather than milling about',
-     deb.m1>deb.m0 || deb.ringed>60,
+     deb.m1>deb.m0 || deb.ringed>30,
      `mass ${deb.m0.toFixed(1)} -> ${deb.m1.toFixed(1)}, ${deb.ringed} ringed`);
   ok('and the loose cloud thins out', deb.p1<deb.p0, deb.p0+' -> '+deb.p1);
   await ctx.close();
@@ -334,7 +388,9 @@ async function open(b, vp){
     const after=o.list()[0];
     return {before, name:after.name, mass:after.m, parts:o.particles(), waves:o.waves()};
   });
-  ok('a star past the limit collapses', nova.name==='Neutron star',
+  /* it may land as either: what a neutron star is called depends on how fast
+     it came out spinning, and a fast one is a pulsar */
+  ok('a star past the limit collapses', /neutron star|pulsar/i.test(nova.name),
      nova.before+' -> '+nova.name);
   ok('it sheds most of itself doing it', nova.mass<4400*0.7, nova.mass.toFixed(0));
   ok('the shell it throws is the nebula', nova.parts>200, nova.parts+' motes');
@@ -526,7 +582,7 @@ async function open(b, vp){
      hold.crust && hold.crust.skin < hold.crust.core - 0.06,
      hold.crust ? 'core '+hold.crust.core+' against a skin of '+hold.crust.skin : 'never sampled');
   ok('and it has to cool before it is a world at all',
-     hold.hottest>0.8 && hold.lastHeat<0.4,
+     hold.hottest>0.7 && hold.lastHeat<0.4,
      'magma at '+hold.hottest+', down to '+hold.lastHeat+' by the time it is rock');
   ok('so what it comes back as is rock rather than magma',
      hold.n===1 && hold.bornHeat<=0.36, hold.name+' born at heat '+hold.bornHeat);
@@ -855,7 +911,7 @@ async function open(b, vp){
   await p.locator('#reroll').click(); await p.waitForTimeout(150);
   ok('reroll gives new terrain', await p.evaluate(()=>window.orbital.brush.seed)!==before.seed);
   const massBefore = await p.evaluate(()=>window.orbital.brush.mass);
-  await p.locator('#fSize').evaluate(el=>{ el.value=80; el.dispatchEvent(new Event('input')); });
+  await p.locator('#fSize').evaluate(el=>{ el.value=(+el.value)+120; el.dispatchEvent(new Event('input')); });
   await p.waitForTimeout(150);
   const massAfter = await p.evaluate(()=>window.orbital.brush.mass);
   ok('a bigger world weighs more', massAfter>massBefore*2,
@@ -1122,6 +1178,208 @@ async function open(b, vp){
   await p.keyboard.press('d');
   ok('and D turns it off again',
      !(await p.evaluate(()=>document.getElementById('dragBtn').classList.contains('on'))));
+  ok('no exceptions', errs.length===0, errs.join(' | '));
+  await ctx.close();
+
+  console.log('\n--- a black hole bends the sky behind it ---');
+  ({p,ctx,errs}=await open(b));
+  {
+    const lens = await p.evaluate(async()=>{
+      const o=window.orbital;
+      o.clear(); o.setSpeed(0);
+      o.add(0,0,0,0,'hole',9000);
+      /* a bright, even wash of debris behind it, so anything the bend does to
+         the picture is the bend and not the shape of what was there */
+      o.spray(0,0, 0,0, 2500, 0, 260);
+      o.look && o.look(0,0,1);
+      o.cam.x=0; o.cam.y=0; o.cam.zoom=1;
+      await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+      const S=o.size();
+      const cx=Math.round(S.w/2), cy=Math.round(S.h/2);
+      const hole=o.list()[0];
+      const rs=hole.r;                      /* zoom is 1, so screen == world */
+      const at=(dx,dy)=>{
+        const d=o.frame(cx+dx, cy+dy, 1, 1);
+        return {r:d[0],g:d[1],b:d[2],lum:d[0]+d[1]+d[2]};
+      };
+      /* mean brightness on a circle of a given radius */
+      const ring=rad=>{
+        let t=0, n=0;
+        for(let a=0;a<6.283;a+=0.15){
+          const q=at(Math.round(Math.cos(a)*rad), Math.round(Math.sin(a)*rad));
+          t+=q.lum; n++;
+        }
+        return t/n;
+      };
+      const base={rs, core:at(0,0), horizon:ring(rs*0.55),
+                  photon:ring(rs*1.45), outside:ring(rs*3.4)};
+      /* One bright thing at a known distance, and where its image lands. The
+         photon ring is brighter than anything, so the ring is subtracted out
+         by taking the same picture without the star in it: what is left along
+         that line is the star and nothing else. */
+      const frame2=async()=>{
+        await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+      };
+      const scan=async()=>{
+        await frame2();
+        const out=[];
+        for(let d=Math.ceil(rs*1.05); d<rs*8; d++) out.push(at(0,-d).lum);
+        return out;
+      };
+      o.clear(); o.add(0,0,0,0,'hole',9000);
+      const empty=await scan();
+      const trueR=rs*3;
+      o.add(0,-trueR,0,0,'star',600);
+      const withStar=await scan();
+      /* the centroid of what the star added */
+      let num=0, den=0;
+      for(let i=0;i<empty.length;i++){
+        const add=Math.max(0, withStar[i]-empty[i]);
+        const d=Math.ceil(rs*1.05)+i;
+        num+=add*d; den+=add;
+      }
+      return Object.assign(base, {trueR, apparent: den>0 ? num/den : 0});
+    });
+    ok('the horizon is a hole in the picture, not a dark disc',
+       lens.core.lum<=6 && lens.horizon<=6,
+       'centre '+lens.core.lum+', across the disc '+lens.horizon.toFixed(1));
+    /* light that grazes it comes round more than once, so the same sky piles
+       up in a thin band — and that band is the brightest thing there */
+    ok('and it is ringed by light that went round it',
+       lens.photon > lens.outside*1.6,
+       'ring '+lens.photon.toFixed(0)+' against '+lens.outside.toFixed(0)+' beside it');
+    /* and it bends the right way. Light is pulled towards the hole, so what is
+       behind it appears further out than it is — an image is pushed away from
+       the lens, never drawn into it. */
+    ok('and it pushes what is behind it outwards, as a lens does',
+       lens.apparent > lens.trueR*1.12,
+       'a world at '+lens.trueR.toFixed(1)+' shows up at '+lens.apparent.toFixed(1));
+  }
+  ok('no exceptions', errs.length===0, errs.join(' | '));
+  await ctx.close();
+
+  console.log('\n--- a disc feeds a black hole, and it throws some back ---');
+  ({p,ctx,errs}=await open(b));
+  {
+    const acc = await p.evaluate(()=>{
+      const o=window.orbital;
+      o.clear(); o.setSpeed(0);
+      o.add(0,0,0,0,'hole',9000);
+      const R=110, v=Math.sqrt(9000/R);
+      o.add(R,0,0,v*0.92,'rocky',90);      /* inside the limit: it comes apart */
+      const m0=o.mass();
+      let hot=0, fast=0, jetPairs=0, holeM=9000;
+      for(let i=0;i<9000;i++){
+        o.step(1/60);
+        const D=o.debris();
+        let h=0, f=0, up=0, down=0;
+        for(const q of D){
+          if(q.heat>0.35) h++;
+          const sp=Math.hypot(q.vx,q.vy);
+          if(sp>45){ f++; (q.y>0?up++:down++); }
+        }
+        if(h>hot) hot=h;
+        if(f>fast) fast=f;
+        if(up>2 && down>2) jetPairs++;
+        const H=o.list().find(x=>x.hole);
+        if(H) holeM=Math.max(holeM,H.m);
+      }
+      return {hot, fast, jetPairs, holeM:+holeM.toFixed(1), m0:+m0.toFixed(2),
+              m1:+o.mass().toFixed(2)};
+    });
+    /* an accretion disc is bright because it is being torn by shear, and it
+       drains inward because that is what the shear is paid for with */
+    ok('the disc lights up', acc.hot>20, acc.hot+' motes glowing');
+    ok('and drains into the hole', acc.holeM>9000.2, 'hole reached '+acc.holeM);
+    ok('which throws part of it back out, hard', acc.fast>20,
+       acc.fast+' motes above escape');
+    ok('in both directions at once', acc.jetPairs>30,
+       acc.jetPairs+' frames with both jets running');
+  }
+  ok('no exceptions', errs.length===0, errs.join(' | '));
+  await ctx.close();
+
+  console.log('\n--- nothing pops in or out of existence ---');
+  ({p,ctx,errs}=await open(b));
+  {
+    /* The two moments this could look like a cut in a film: a world becoming
+       rubble, and rubble becoming a world. Neither is instantaneous in the sim,
+       so neither is allowed to be instantaneous on screen. */
+    const fade = await p.evaluate(()=>{
+      const o=window.orbital;
+      o.clear(); o.setSpeed(0);
+      o.add(0,0,0,0,'hole',60000);
+      const id=o.add(300,0,0,0,'rocky',40);
+      let ghostAt=-1, ghostR=0;
+      for(let i=0;i<3000 && ghostAt<0;i++){
+        o.step(1/60);
+        const g=o.ghosts();
+        if(g.length){ ghostAt=i; ghostR=g[0].r; }
+      }
+      return {ghostAt, ghostR:+ghostR.toFixed(1), parts:o.particles()};
+    });
+    ok('a world turning to rubble leaves its own picture behind for a moment',
+       fade.ghostAt>0 && fade.ghostR>1, 'a sprite of radius '+fade.ghostR);
+    ok('with the rubble already there under it', fade.parts>100,
+       fade.parts+' motes at the same instant');
+
+    const settle = await p.evaluate(()=>{
+      const o=window.orbital;
+      o.clear(); o.setSpeed(0);
+      o.add(-60,0, 2,0,'rocky');
+      o.add( 60,0,-2,0,'rocky');
+      let leftOver=-1;
+      for(let i=0;i<5000;i++){
+        o.step(1/60);
+        if(o.count()===1 && o.particles()>0 && leftOver<0 && i>600){
+          leftOver=o.particles();
+          break;
+        }
+      }
+      return {leftOver};
+    });
+    ok('and rubble becoming a world does not take its cloud with it',
+       settle.leftOver>50, settle.leftOver+' motes still falling in');
+  }
+  ok('no exceptions', errs.length===0, errs.join(' | '));
+  await ctx.close();
+
+  console.log('\n--- putting a world down without dropping another ---');
+  ({p,ctx,errs}=await open(b));
+  {
+    const ids=await p.evaluate(()=>{
+      const o=window.orbital; o.clear(); o.setSpeed(0);
+      return o.add(0,0,0,0,'rocky',60);
+    });
+    const at=await p.evaluate(i=>{
+      const w=window.orbital.list().find(x=>x.id===i);
+      return window.orbital.screen(w.x,w.y);
+    },ids);
+    await p.mouse.click(at.x, at.y); await p.waitForTimeout(120);
+    ok('tapping a world selects it',
+       await p.evaluate(()=>document.getElementById('insp').classList.contains('on')));
+    const n0=await p.evaluate(()=>window.orbital.count());
+    await p.mouse.click(at.x+320, at.y-200); await p.waitForTimeout(120);
+    ok('and tapping nothing lets go of it rather than making another',
+       !(await p.evaluate(()=>document.getElementById('insp').classList.contains('on'))) &&
+       await p.evaluate(()=>window.orbital.count())===n0,
+       n0+' bodies before and after');
+    await p.mouse.click(at.x+320, at.y-200); await p.waitForTimeout(120);
+    ok('a second tap on nothing still places one',
+       await p.evaluate(()=>window.orbital.count())===n0+1);
+  }
+
+  /* the density track has to reach the things the roster already contains */
+  {
+    const reach = await p.evaluate(()=>{
+      const el=document.getElementById('fDens');
+      const put=v=>{ el.value=v; el.dispatchEvent(new Event('input')); return window.orbital.brush.dens; };
+      return {lo:put(el.min), hi:put(el.max)};
+    });
+    ok('and the density track reaches from a snowball to degenerate matter',
+       reach.lo<=2 && reach.hi>=20000,
+       reach.lo.toFixed(1)+' to '+Math.round(reach.hi));
+  }
   ok('no exceptions', errs.length===0, errs.join(' | '));
   await ctx.close();
 

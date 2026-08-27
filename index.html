@@ -135,6 +135,7 @@
         <div class="t" id="fName">Rocky planet</div>
         <div class="kv" id="fMass">mass 20</div>
         <div class="kv" id="fRad">radius 3.1</div>
+        <div class="kv" id="fDensv">density 100</div>
       </div>
     </div>
     <div class="lbl">Composition</div>
@@ -142,9 +143,9 @@
     <div class="lbl">Palette</div>
     <div class="chips" id="fPal"></div>
     <div class="lbl">Size</div>
-    <div class="slider"><input type="range" id="fSize" min="4" max="600" value="20"></div>
+    <div class="slider"><input type="range" id="fSize" min="0" max="1000" value="330"></div>
     <div class="lbl">Density</div>
-    <div class="slider"><input type="range" id="fDens" min="5" max="3000" value="100"></div>
+    <div class="slider"><input type="range" id="fDens" min="0" max="1000" value="333"></div>
   </div>
 
   <div class="card insp" id="insp">
@@ -383,9 +384,18 @@ const KINDS = [
   {id:'molten',   name:'Molten world',cls:'lava',pal:'volcanic', mass:28},
   {id:'gas',      name:'Gas giant',  cls:'gas',  pal:'amber',    mass:150},
   {id:'icegiant', name:'Ice giant',  cls:'gas',  pal:'azure',    mass:100},
+  {id:'brownd',   name:'Brown dwarf',cls:'gas',  pal:'ember',    mass:340, dens:70},
   {id:'dwarfs',   name:'Dwarf star', cls:'star', pal:'ember',    mass:520},
   {id:'star',     name:'Star',       cls:'star', pal:'amber',    mass:1500},
+  /* puffed up to hundreds of times its old width and a thousandth of the
+     density: a red giant is mostly a vacuum with a star's mass in the middle */
+  {id:'redgiant', name:'Red giant',  cls:'star', pal:'ember',    mass:1400, dens:0.6},
+  /* a burnt-out core held up by degenerate matter — an Earth's width carrying
+     most of a star, which is why it is the densest thing here short of a
+     neutron star */
+  {id:'whited',   name:'White dwarf',cls:'star', pal:'ice',      mass:900,  dens:2600},
   {id:'neutron',  name:'Neutron star',cls:'exotic',pal:'azure',  mass:5200, dens:9000},
+  {id:'pulsar',   name:'Pulsar',     cls:'exotic',pal:'azure',   mass:5000, dens:9000, spin:5.2},
   {id:'hole',     name:'Black hole', cls:'exotic',pal:'violet',  mass:9000, dens:20000, hole:1}
 ];
 const kindById = id => KINDS.find(k=>k.id===id) || KINDS[4];
@@ -400,7 +410,7 @@ const massFor   = (r, dens) => dens*Math.pow(r/RSCALE,3);
 let seedCounter = 1;
 function specFromKind(k, seed){
   return {cls:k.cls, pal:k.pal, seed: seed===undefined ? (seedCounter++*2654435761)%100000 : seed,
-          dens:k.dens, comet:k.comet||0, hole:k.hole||0, name:k.name};
+          dens:k.dens, comet:k.comet||0, hole:k.hole||0, spin:k.spin||0, name:k.name};
 }
 
 /* ============================ state ============================ */
@@ -425,8 +435,16 @@ function makeBody(x,y,vx,vy,spec,mass){
     /* how far from round the tide it is sitting in has pulled it, and which
        way. Zero unless something is actually pulling. */
     stretch: 0, tideAng: 0, tideT: 0,
-    spin: (Math.random()-0.5)*0.25,
+    spin: spec.spin || (Math.random()-0.5)*0.25,
     ang: Math.random()*6.283,
+    /* Degenerate matter and worse. What makes these different is not the mass
+       but that all of it is inside a radius nothing else gets near, so material
+       falling in arrives moving fast enough to shine. */
+    compact: !!(spec.hole || cl.name==='Exotic' || densityOf(spec) > 1200),
+    /* which way the jets point. A jet leaves along the disc's axis, which in a
+       flat sim is straight out of the screen — so one is picked in the plane
+       instead and kept, rather than the jet wandering about. */
+    jetAng: Math.random()*6.283, fed: 0, jetT: 0,
     trail: [], flash: 0
   };
 }
@@ -446,6 +464,9 @@ function spawnPart(x,y,vx,vy,kind,rgb,heat,life,pm,size){
            /* how many other motes it is currently touching. A buried mote has
               five or six; one out on the skin has two or three. */
            nb:0,
+           /* weightless leftovers of a cloud that has already become a world:
+              they fall in and fade, and nothing counts them */
+           ghost:0,
            /* a gas mote is a puff with a width and an optical depth rather
               than a speck with a colour: how much of it is stacked up along a
               line of sight is the whole of how gas looks */
@@ -464,7 +485,45 @@ function spawnPart(x,y,vx,vy,kind,rgb,heat,life,pm,size){
   return p;
 }
 let sX=new Float64Array(0), sY, sM, sR2;
+/* Cohesion is a field, and a field applied to a cloud that is not round does
+   not sum to zero. The cloud ends up pushing on itself, which showed up as the
+   total momentum walking off by most of a percent every time two worlds melted
+   together. So the net of it is measured first and handed back to every mote:
+   the shape of the force is unchanged, and what it comes to across the whole
+   cloud is nothing, which is what a thing pulling on itself comes to. */
+function blobSelfForce(){
+  for(const bl of blobs){ bl.fx=0; bl.fy=0; bl.cx=0; bl.cy=0; bl.mx=0; bl.my=0; bl.mw=0; }
+  if(!blobs.length) return;
+  /* where the cloud is now, not where it was when it was last re-split. A
+     centre a fifth of a second behind the cloud it belongs to is a force
+     pointing slightly the wrong way, every step. */
+  for(let i=0;i<parts.length;i++){
+    const p=parts[i];
+    if(!(p.blob>0)) continue;
+    const bl=blobs[p.blob-1];
+    if(!bl) continue;
+    bl.mx += p.x*p.pm; bl.my += p.y*p.pm; bl.mw += p.pm;
+  }
+  for(const bl of blobs) if(bl.mw>0){ bl.x=bl.mx/bl.mw; bl.y=bl.my/bl.mw; }
+  for(let i=0;i<parts.length;i++){
+    const p=parts[i];
+    if(!(p.blob>0)) continue;
+    const bl=blobs[p.blob-1];
+    if(!bl||!(bl.m>0)) continue;
+    const dx=bl.x-p.x, dy=bl.y-p.y;
+    const r=Math.sqrt(dx*dx+dy*dy)||1e-6;
+    const a = r<bl.r ? G*bl.m*r/(bl.r*bl.r*bl.r) : G*bl.m/(r*r);
+    bl.fx += a*dx/r*p.pm; bl.fy += a*dy/r*p.pm;
+  }
+  /* divided by what is actually in the cloud right now, not by what was in it
+     when it was last re-split — membership drifts between those, and dividing
+     by the stale figure leaves a slice of the net force in place */
+  for(const bl of blobs){
+    if(bl.mw>0){ bl.cx=bl.fx/bl.mw; bl.cy=bl.fy/bl.mw; }
+  }
+}
 function stepParts(dt, sources){
+  blobSelfForce();
   const ns = sources.length;
   if(sX.length < ns){
     sX=new Float64Array(ns); sY=new Float64Array(ns);
@@ -487,9 +546,17 @@ function stepParts(dt, sources){
       const pull = sM[s]/d2;
       if(pull>hostPull){ hostPull=pull; hostIdx=s; }
       /* swallowed: the debris settles and its mass joins the body */
-      if(d2 < sR2[s]){
+      if(d2 < sR2[s] && !p.ghost){
         const b=sources[s];
-        b.m += p.pm;
+        /* it arrives with a speed and a direction, and both of those are now
+           the body's. Taking the mass and leaving the motion behind was a
+           momentum leak that showed up as the total drifting every time a
+           cloud was swept up. */
+        const nm = b.m + p.pm;
+        b.vx = (b.vx*b.m + p.vx*p.pm)/nm;
+        b.vy = (b.vy*b.m + p.vy*p.pm)/nm;
+        b.m = nm;
+        if(b.compact) b.fed += p.pm;      /* how hard it is feeding just now */
         b.r = radiusFor(b.m, densityOf(b.spec));
         sR2[s]=b.r*b.r; sM[s]=b.m;
         if(p.heat>0.4) b.heat = Math.min(1, b.heat + 0.02);
@@ -509,7 +576,10 @@ function stepParts(dt, sources){
            the centre, and the competition between this and the tide is exactly
            the Roche condition — so where it tears is decided, not drawn. */
         const a = r<bl.r ? G*bl.m*r/(bl.r*bl.r*bl.r) : G*bl.m/(r*r);
-        ax += a*dx/r; ay += a*dy/r;
+        /* less whatever it comes to across the cloud as a whole: nothing pulls
+           on itself, and without taking that back out a lopsided cloud rows
+           itself across the sky */
+        ax += a*dx/r - bl.cx; ay += a*dy/r - bl.cy;
       } else p.blob=0;
     }
     p.vx+=ax*dt; p.vy+=ay*dt;
@@ -540,9 +610,34 @@ function stepParts(dt, sources){
           const vc = Math.sqrt(G*host.m/r);
           const tx = host.vx + (-dy/r)*vc*spin;
           const ty = host.vy + ( dx/r)*vc*spin;
+          /* Material at one radius of a disc goes round faster than material
+             just outside it, and rubbing the two together is what takes the
+             orbit apart. What friction takes out has to come out somewhere,
+             and around something compact enough for the inner edge to be
+             moving at a fair fraction of nothing-can-escape, it comes out as
+             light. That is the whole reason an accretion disc is the brightest
+             thing in a galaxy while the hole in the middle of it is not. */
+          if(host.compact){
+            const rub = Math.min(4, host.r*7/r);
+            p.heat = Math.min(1, p.heat + dt*rub);
+            /* and what the friction takes out of the orbit is the orbit. A disc
+               that shines has to be paying for it, and what it pays with is
+               angular momentum — so it drains inwards while it glows, which is
+               the only reason anything in a disc ever reaches the middle. */
+            const drag = Math.min(0.4, dt*rub*0.35);
+            const ddx = -(p.vx-host.vx)*drag, ddy = -(p.vy-host.vy)*drag;
+            p.vx += ddx; p.vy += ddy;
+            host.vx -= ddx*p.pm/host.m; host.vy -= ddy*p.pm/host.m;
+          }
           const k = Math.min(1, dt*0.6);
-          p.vx += (tx - p.vx)*k;
-          p.vy += (ty - p.vy)*k;
+          const dvx=(tx - p.vx)*k, dvy=(ty - p.vy)*k;
+          p.vx += dvx; p.vy += dvy;
+          /* and the host feels it. Grinding a ring circular is the ring
+             trading momentum with something, and if that something is nobody
+             then the sim is quietly manufacturing it — which is what a ring
+             around a re-forming world was doing to the total. */
+          host.vx -= dvx*p.pm/host.m;
+          host.vy -= dvy*p.pm/host.m;
         } else p.ring = 0;
       }
     }
@@ -592,7 +687,7 @@ function accrete(dt){
        becomes a body when its own motion has died down — grabbing a seven-unit
        cell out of the middle of one and calling that a planet just shreds a
        melt into gravel. */
-    if(p.kind==='gas' || p.ring || p.blob || !p.settled) continue;
+    if(p.kind==='gas' || p.ring || p.blob || p.ghost || !p.settled) continue;
     const cx = Math.floor(p.x/CLUMP_CELL), cy = Math.floor(p.y/CLUMP_CELL);
     const key = cx+','+cy;
     let c = cells.get(key);
@@ -602,18 +697,25 @@ function accrete(dt){
   const doomed = new Set();
   for(const group of cells.values()){
     if(group.length < CLUMP_MIN) continue;
-    let mx=0,my=0,mvx=0,mvy=0;
-    for(const i of group){ const p=parts[i]; mx+=p.x; my+=p.y; mvx+=p.vx; mvy+=p.vy; }
+    let mx=0,my=0,mvx=0,mvy=0,mm=0;
+    for(const i of group){
+      const p=parts[i];
+      mx+=p.x*p.pm; my+=p.y*p.pm; mvx+=p.vx*p.pm; mvy+=p.vy*p.pm; mm+=p.pm;
+    }
     const n=group.length;
-    mx/=n; my/=n; mvx/=n; mvy/=n;
+    if(mm<=0) continue;
+    /* by mass. Motes do not all weigh the same — a world crumbles into as many
+       pieces as it can afford, whatever it weighs — so the mean of the pieces
+       is not the velocity of the thing they make. */
+    mx/=mm; my/=mm; mvx/=mm; mvy/=mm;
     /* only if they are genuinely travelling together */
     let spread=0;
     for(const i of group){ const p=parts[i]; spread+=Math.hypot(p.vx-mvx,p.vy-mvy); }
     if(spread/n > CLUMP_SPREAD) continue;
 
-    let mass=0; for(const i of group) mass+=parts[i].pm;
+    const mass=mm;
     /* what it grew up to be */
-    const kindId = mass < 1.4 ? 'asteroid' : mass < 5 ? 'moon' : 'dwarfp';
+    const kindId = kindForMass(mass, 0);
     const k = kindById(kindId);
     const spec = specFromKind(k);
     /* Nothing forms where the tide would take it apart again. This is the same
@@ -621,10 +723,7 @@ function accrete(dt){
        stream falling into a hole would otherwise keep condensing into little
        worlds and merging back into the one being shredded. */
     if(tornIfBornAt(mx, my, mass, radiusFor(mass, densityOf(spec)))) continue;
-    /* wear the colour of the rubble it came from */
-    let rr=0,gg=0,bb=0;
-    for(const i of group){ const p=parts[i]; rr+=p.r; gg+=p.g; bb+=p.b; }
-    spec.pal = nearestPalette(rr/n, gg/n, bb/n);
+    spec.pal = paletteForMotes(group, spec.cls);  /* the colour of the rubble it came from */
     const nb = addBody(makeBody(mx,my,mvx,mvy,spec,mass));
     if(!nb) break;
     nb.name = k.name;
@@ -639,6 +738,64 @@ function accrete(dt){
     accelerate();
     for(const b of bodies){ b.ax=b.nax; b.ay=b.nay; }
   }
+}
+/* Which palette could have produced this set of pixels. Matching a mean colour
+   against one entry per palette does not work, and was the reason every world
+   that re-formed came back Terran whatever went into it: the mean of any varied
+   sprite is a muddy mid-tone, and one mid-tone snaps to the same answer every
+   time. Scoring each mote against the whole ramp asks the right question, and
+   an even mix of two worlds can land on a third palette that covers both. */
+/* Which palettes a thing of this composition could plausibly be wearing. A
+   rocky world has no business coming back in a star's colours however warm its
+   pixels happen to be, and without this fence that is exactly what happened —
+   a dwarf planet re-formed in Amber and looked like a small sun. */
+const CLASS_PALS = {
+  rock:  ['terran','desert','volcanic','barren','jade'],
+  ice:   ['ice','azure','barren','jade'],
+  lava:  ['volcanic','ember','desert'],
+  gas:   ['amber','azure','jade','violet','desert'],
+  star:  ['amber','ember','azure','violet'],
+  exotic:['violet','azure','ember']
+};
+/* Compared as chromaticity rather than as colour. Every sprite is shaded
+   against a sphere, so half of any world's pixels are dark versions of its own
+   palette — and in plain rgb a dark green sits nearer mid grey than it does to
+   green, which made Barren a trap that swallowed everything. Dividing the
+   brightness out asks what colour it is rather than how lit it is. */
+function chroma(r,g,b){ const t=r+g+b+1; return [r/t, g/t, b/t]; }
+function paletteForMotes(idx, cls){
+  const keys = CLASS_PALS[cls] || PAL_KEYS;
+  /* a few hundred motes settle this as well as ten thousand do */
+  const stride = Math.max(1, Math.ceil(idx.length/500));
+  let best=keys[0], bestD=Infinity;
+  for(const key of keys){
+    const ramp=PALETTES[key].ramp.map(c=>chroma(c[0],c[1],c[2]));
+    let sum=0;
+    for(let i=0;i<idx.length;i+=stride){
+      const q=parts[idx[i]];
+      const qc=chroma(q.r,q.g,q.b);
+      let d=Infinity;
+      for(let e=0;e<ramp.length;e++){
+        const c=ramp[e];
+        const dd=(c[0]-qc[0])*(c[0]-qc[0])+(c[1]-qc[1])*(c[1]-qc[1])+(c[2]-qc[2])*(c[2]-qc[2]);
+        if(dd<d) d=dd;
+      }
+      /* by mass, not by mote. A world crumbles into about as many pieces
+         whatever it weighs, so counting pieces lets a moon out-vote the world
+         it ran into. */
+      sum += d*q.pm;
+    }
+    if(sum<bestD){ bestD=sum; best=key; }
+  }
+  return best;
+}
+/* geometric midpoints between the roster's masses: an asteroid is 0.5, a moon
+   2.6, a dwarf planet 7, a rocky world 22 */
+function kindForMass(m, heat){
+  if(m < 1.14) return 'asteroid';
+  if(m < 4.27) return 'moon';
+  if(m < 12.4) return 'dwarfp';
+  return heat>0.5 ? 'molten' : 'rocky';
 }
 function nearestPalette(r,g,b){
   let best='barren', bestD=Infinity;
@@ -667,6 +824,42 @@ function heatColor(base, heat){
 let waves = [];
 function addWave(x,y,maxR,strength,rgb,vx,vy){
   waves.push({x,y,r:0,maxR,strength,rgb,vx:vx||0,vy:vy||0,dead:false});
+}
+/* Not everything that falls towards a black hole falls in. The last of it is
+   going fast enough, and is wound up tightly enough, that a part of the flow is
+   flung back out along the axis instead — at a good fraction of the speed of
+   light, for further than the galaxy is wide. It is thrown from the disc rather
+   than from inside the horizon, which is why there is anything to see at all.
+   Here it is taken back out of what the hole just swallowed, so the books still
+   balance: the mass in the jet is mass that did not end up inside. */
+const JET_FRAC = 0.09;      /* how much of a meal leaves again */
+function jets(dt){
+  for(const b of bodies){
+    if(!b.hole || !(b.fed>1e-9)) continue;
+    const vesc = Math.sqrt(2*G*b.m/Math.max(0.55,b.r));
+    b.jetT += dt;
+    const every = 0.03;
+    while(b.jetT >= every){
+      b.jetT -= every;
+      const pm = Math.min(b.fed*JET_FRAC*0.5, b.m*0.002);
+      if(pm <= 1e-9) break;
+      b.fed -= pm*2/JET_FRAC;
+      if(b.fed<0) b.fed=0;
+      b.m -= pm*2;
+      /* thrown in pairs, so the hole is not shoved about by its own jet */
+      for(const sgn of [1,-1]){
+        const a = b.jetAng + (Math.random()-0.5)*0.10;   /* jets are narrow */
+        const sp = vesc*(1.6+Math.random()*1.1);
+        const px = b.x + Math.cos(a)*sgn*b.r*1.6;
+        const py = b.y + Math.sin(a)*sgn*b.r*1.6;
+        const q = spawnPart(px, py,
+                            b.vx + Math.cos(a)*sgn*sp, b.vy + Math.sin(a)*sgn*sp,
+                            'gas', [190,205,255], 1, 40, pm, 2);
+        if(q){ q.puff=2.6; q.dep=0.5; q.spread=0.55; }
+      }
+    }
+    b.fed = Math.max(0, b.fed - dt*0.35);
+  }
 }
 function stepWaves(dt){
   for(let i=waves.length-1;i>=0;i--){
@@ -771,7 +964,22 @@ function collapseTo(b, kindId){
   b.hole = k.hole||0;
   b.lum = 0; b.gas = 0; b.comet = 0;
   b.heat = b.hole ? 0 : 1;
+  const r0 = b.r;
   b.r = radiusFor(b.m, densityOf(b.spec));
+  /* Angular momentum is conserved through the fall, and the core it lands on is
+     a fraction of the width the star was — so whatever slow turn it had comes
+     out enormously faster. A star turning once a month becomes something
+     turning a few times a second, which is the whole reason a pulsar pulses.
+     Bounded, because a spin that outruns the surface would shed it. */
+  if(!b.hole && r0>0){
+    const spun = b.spin*(r0*r0)/(b.r*b.r);
+    const cap  = 0.55*Math.sqrt(2*G*b.m/Math.max(0.55,b.r))/Math.max(0.55,b.r);
+    b.spin = Math.max(-cap, Math.min(cap, spun));
+    if(Math.abs(b.spin)>1) b.name = 'Pulsar';
+  }
+  b.compact = !!(b.hole || b.spec.cls==='exotic' || densityOf(b.spec)>1200);
+  b.jetAng = b.jetAng===undefined ? Math.random()*6.283 : b.jetAng;
+  b.fed = b.fed||0; b.jetT = b.jetT||0;
   b.flash = 1;
   b.trail.length = 0;
   once('collapse', kindId==='hole'
@@ -793,6 +1001,45 @@ function collapseTo(b, kindId){
    smearing into one endless string, and none of the shapes it makes are drawn
    by us. */
 let blobs = [];
+/* The instant a world turns into rubble and the instant rubble turns back into
+   a world are the two places this could look like a cut in a film. Nothing
+   about either is instantaneous in the sim — the mass, the velocity and the
+   material all carry straight through — so nothing about either should look
+   it. A body on its way out leaves its sprite behind for a third of a second,
+   drifting with what it became and fading into it; a cloud on its way in keeps
+   its motes, weightless, for about as long, falling into the new world. */
+let ghosts = [];
+const GHOST_LIFE = 0.35;
+function addGhost(b){
+  ghosts.push({spec:b.spec, x:b.x, y:b.y, vx:b.vx, vy:b.vy, r:b.r,
+               ang:b.ang||0, heat:b.heat||0, hole:!!b.hole, lum:!!b.lum, t:0});
+}
+function stepGhosts(dt){
+  for(let i=ghosts.length-1;i>=0;i--){
+    const g=ghosts[i];
+    g.t += dt;
+    g.x += g.vx*dt; g.y += g.vy*dt;
+    if(g.t>=GHOST_LIFE) ghosts.splice(i,1);
+  }
+}
+function drawGhosts(){
+  for(const g of ghosts){
+    const x=toScreenX(g.x), y=toScreenY(g.y), r=g.r*cam.zoom;
+    if(x<-r-90||x>W+r+90||y<-r-90||y>H+r+90) continue;
+    const a=1-g.t/GHOST_LIFE;
+    const d=Math.max(2,Math.round(r*2));
+    ctx.globalAlpha=a*a;                       /* gone well before it is due */
+    if(g.hole){ ctx.fillStyle='#05030c'; fillDisc(x,y,Math.max(1,r)); }
+    else {
+      const want=Math.max(3,Math.min(96,Math.round(r*2)));
+      const sp=makeSprite(g.spec, Math.max(4,Math.ceil(want/6)*6));
+      ctx.save(); ctx.translate(x,y); ctx.rotate(g.ang);
+      ctx.drawImage(sp,-d/2,-d/2,d,d);
+      ctx.restore();
+    }
+    ctx.globalAlpha=1;
+  }
+}
 let blobTimer = 0;
 const BLOB_SPLIT = 1.8;  /* multiples of the rest spacing before it is two clouds */
 const BLOB_MIN  = 10;    /* smaller than this is just dust, not a body */
@@ -1011,7 +1258,7 @@ function settleToBody(group, b){
   }
   const w = I>1e-9 ? L/I : 0;
 
-  let s2=0, hot=0, gas=0, rock=0, rr=0, gg=0, bb=0;
+  let s2=0, hot=0, gas=0, rock=0;
   for(const j of group){
     const q=parts[j];
     const dx=q.x-b.x, dy=q.y-b.y;
@@ -1022,7 +1269,6 @@ function settleToBody(group, b){
        stiff before it can be a planet, so a gas world re-forms as soon as
        gravity has gathered it. */
     if(q.kind==='gas') gas += q.pm; else { rock += q.pm; hot += q.heat*q.pm; }
-    rr+=q.r; gg+=q.g; bb+=q.b;
   }
   const sigma = Math.sqrt(s2/b.m);
   const heat  = rock>1e-9 ? hot/rock : 0;
@@ -1046,15 +1292,15 @@ function settleToBody(group, b){
   if(tornIfBornAt(b.x, b.y, b.m, b.r)){ b.why='tide'; return false; }
 
   const gassy = gas > b.m*0.5;
-  const kindId = gassy ? (b.m>220?'gas':'icegiant')
-               : b.m<1.4 ? 'asteroid' : b.m<5 ? 'moon' : b.m<26 ? 'dwarfp'
-               : heat>0.5 ? 'molten' : 'rocky';
+  /* The boundaries sit between the roster's own masses rather than at round
+     numbers, so a world that gains a moon comes back as what it was instead of
+     being demoted a class for having grown. */
+  const kindId = gassy ? (b.m>220?'gas':'icegiant') : kindForMass(b.m, heat);
   const k = kindById(kindId);
   const spec = specFromKind(k);
-  const n = group.length;
   /* it wears the colour of everything that went into it, which after two
      worlds have mixed is neither of the colours they started as */
-  spec.pal = nearestPalette(rr/n, gg/n, bb/n);
+  spec.pal = paletteForMotes(group, spec.cls);
   spec.dens = b.dens;
   const nb = addBody(makeBody(b.x, b.y, b.vx, b.vy, spec, b.m));
   if(!nb) return false;
@@ -1065,7 +1311,15 @@ function settleToBody(group, b){
   lastSettle={round:+axisRatio(Sxx,Syy,Sxy).toFixed(3), heat:+heat.toFixed(3),
               spin:w, sigma:+(sigma/vesc).toFixed(3), n:group.length, m:b.m,
               tide:+tideAt(b.x,b.y,b.m,b.r).toFixed(3)};
-  for(const j of group) parts[j].dead = true;
+  /* The motes are not deleted here. Their mass is already in the new world, so
+     what is left of them weighs nothing and is not part of anything — they
+     simply fall the last of the way in and fade, which is what the last of a
+     cloud does. */
+  for(const j of group){
+    const q=parts[j];
+    q.pm=0; q.blob=0; q.ghost=1; q.cell=0;
+    q.life=q.age+GHOST_LIFE+Math.random()*0.25;
+  }
   return true;
 }
 
@@ -1172,7 +1426,7 @@ function crumble(b, hot, cap){
        melt reading as one flat glowing shape */
     /* spread across the orange band rather than piled at white-hot, or the
        whole thing reads as one pale glare instead of molten rock */
-    const h = heat>0 ? Math.min(1, heat*(0.35+Math.random()*0.55)) : heat;
+    const h = heat>0 ? Math.min(1, heat*(0.62+Math.random()*0.38)) : heat;
     const q=spawnPart(c.x, c.y, b.vx, b.vy,
                       b.gas?'gas':'rock', [c.r,c.g,c.b], h, 1e9, pm, 1);
     /* how far apart these sat when they were still a world: the distance they
@@ -1185,6 +1439,7 @@ function crumble(b, hot, cap){
       if(q.kind==='gas'){ q.puff=step*1.5; q.dep=1.1; q.spread=0.05; }
     }
   }
+  addGhost(b);
   b.dead=true;
   if(selected===b) selected=null;
   if(following===b) following=null;
@@ -1264,6 +1519,9 @@ const GRAZE_BOUNCE  = 0.12;
    would fall together at come in at a quarter of this, so a touch merges; it
    takes something like two and a half times that speed to liquefy them. */
 const MELT_Q = 1.4;
+/* how large the smaller one has to be, against the bigger, for a hit to be a
+   collision between two worlds rather than one world catching a stone */
+const MIX_RATIO = 0.04;
 const GRAZE_FRICTION= 0.10;
 function collide(){
   let changed = false;
@@ -1305,7 +1563,11 @@ function collide(){
         }
       }
       changed = true;
-      if(heavy.hole || light.m < heavy.m*0.02){ mergeBodies(a,b); continue; }
+      /* A star is fluid and lit from inside; something much smaller arriving is
+         swallowed rather than taking the star apart with it. */
+      if(heavy.hole || heavy.lum && light.m < heavy.m*0.5 || light.m < heavy.m*0.02){
+        mergeBodies(a,b); continue;
+      }
 
       /* Whether a square hit melts the pair comes from energy, not speed. The
          impact carries this much kinetic energy per unit of the mass involved;
@@ -1316,8 +1578,27 @@ function collide(){
       const mu = heavy.m*light.m/(heavy.m+light.m);
       const Q  = 0.5*mu*impact*impact/(heavy.m+light.m);
       const Qbind = G*(heavy.m+light.m)/Math.max(0.55, heavy.r+light.r);
-      if(light.m > heavy.m*0.1 && Q > MELT_Q*Qbind){ meltPair(a,b,impact); continue; }
 
+      /* Two comparable bodies never resolve in a frame, however gently they
+         meet. Both go to rubble and gravity settles it from there — the impact
+         energy only decides how hot that rubble is, so a fast square hit is
+         magma and a slow touch is a cold pile that still has to be gathered
+         up, still mixes the two of them, and still loses whatever ends up
+         moving faster than the pair can hold on to. */
+      if(light.m > heavy.m*MIX_RATIO){
+        /* How much of it goes liquid is the impact energy measured against what
+           holding the pair together is worth: arrive carrying as much as binds
+           them and there is nothing solid left.
+           The floor is not padding. Assembling one body out of two releases
+           gravitational energy whether they were moving to begin with or not,
+           and it has nowhere to go but into the rock — which is why even a
+           gentle meeting of two worlds leaves a magma ocean rather than a pile
+           of gravel with a seam down the middle. */
+        meltPair(a, b, impact, Math.min(1, 0.4 + Q/Qbind));
+        continue;
+      }
+
+      /* below that it really is just accretion — a pebble arriving */
       if(impact < SHATTER_SPEED) mergeBodies(a,b);
       else shatter(heavy, light, impact);
     }
@@ -1337,16 +1618,21 @@ function collide(){
    round thing wearing a colour that is neither of the two that went in, and it
    is still glowing for a good while afterwards. None of that is animated; the
    time it takes is however long the sloshing takes to die down. */
-function meltPair(a,b,impact){
+/* No blast front is added for a collision. The pieces thrown off carry the
+   blast — they are the blast — and a wave shoving things as well counts the
+   same momentum twice, which showed up as the total drifting by a percent
+   every time two worlds met. Collapses still throw one, because there the wave
+   and the shell it drives are the same event. */
+function meltPair(a,b,impact,heat){
   /* a heavy pair could be two full clouds at once, so each gets a smaller
      share of the budget than a lone world being torn apart would */
   const cap = 1800;
-  crumble(a, 1, cap);
-  crumble(b, 1, cap);
-  addWave((a.x+b.x)/2, (a.y+b.y)/2, Math.max(140, (a.r+b.r)*7+impact*9),
-          Math.min(1.2, impact*0.05), [255,208,150],
-          (a.vx*a.m+b.vx*b.m)/(a.m+b.m), (a.vy*a.m+b.vy*b.m)/(a.m+b.m));
-  once('melt','Both of them went liquid. Give it a moment to pull back together.');
+  const h = Math.max(0, Math.min(1, heat===undefined ? 1 : heat));
+  crumble(a, h, cap);
+  crumble(b, h, cap);
+  once(h>0.5?'melt':'mix',
+       h>0.5 ? 'Both of them went liquid. Give it a moment to pull back together.'
+             : 'They came apart on contact. Gravity has to gather that up again.');
 }
 function grazeOff(a,b,heavy,light,nx,ny,d,rr,bpar,vn,tvx,tvy,vt,impact){
   /* How deep the cut is decides how much comes off: how far inside the sum of
@@ -1393,9 +1679,6 @@ function mergeBodies(a,b){
   /* the energy of the impact goes into the surface, and it takes time to leave */
   if(!heavy.lum) heavy.heat = Math.min(1, heavy.heat + impact/14 + light.m/M*0.5);
   heavy.trail.length=0;
-  if(impact>3 && light.m>2)
-    addWave(heavy.x,heavy.y, heavy.r*8+impact*10, Math.min(3.5,impact*0.16),
-            [255,214,160], heavy.vx, heavy.vy);
   light.dead=true;
   if(selected===light) selected=heavy;
   if(following===light) following=heavy;
@@ -1525,6 +1808,8 @@ function step(dt){
   stepParts(dt, src);
   rubbleContacts();
   stepWaves(dt);
+  jets(dt);
+  stepGhosts(dt);
   /* re-split the rubble a few times a second: often enough that a piece
      tearing off starts holding itself together while you watch, rarely enough
      that the flood fill costs nothing */
@@ -1970,15 +2255,17 @@ function drawBody(b){
   if(x<-r-90||x>W+r+90||y<-r-90||y>H+r+90) return;
   const pal=(PALETTES[b.spec.pal]||PALETTES.terran).ramp;
 
-  if(b.hole){
-    glowRect(x,y,Math.max(6,Math.min(r*4.5,80)),[150,110,255],0.5);
-    ctx.fillStyle='#05030c';
-    fillDisc(x,y,Math.max(1,r));
-    ctx.strokeStyle='rgba(198,170,255,.9)';
-    ctx.lineWidth=1;
-    ctx.beginPath(); ctx.arc(x,y,Math.max(1.5,r),0,6.283); ctx.stroke();
-    return;
-  }
+  /* a hole is drawn by the lensing pass, which needs the sky behind it to
+     already be there */
+  if(b.hole) return;
+  /* A neutron star's magnetic axis is not its spin axis, so the beam it throws
+     from each pole sweeps the sky like a lighthouse — and you only see it on
+     the turns that point at you. Nothing about the beam is physics: it is
+     light, and drawing light is what drawing is for. The spin under it is real,
+     and is what a star's own rotation becomes when its core falls to fifteen
+     miles across. */
+  if(b.spec.cls==='exotic' && !b.hole && Math.abs(b.spin)>1) drawBeams(b,x,y,r,pal);
+
   /* a comet grows a tail pointing away from whatever is lighting it */
   if(b.comet) drawTail(b,x,y,r,pal);
 
@@ -1996,10 +2283,12 @@ function drawBody(b){
        whatever is raising the tide. Bounded by the same number that decides
        disruption, so it can never draw a needle — past 1 it is not a body to
        draw at all, it is rubble, and rubble draws itself. */
-    /* Past 1 it is on its way apart but has not finished flowing yet, and it
-       goes on visibly drawing out while that happens — so the figure is not
-       clamped at the limit, only at something a body could still be. */
-    const k=Math.min(2.2,b.stretch);
+    /* Kept small on purpose. A hydrostatic figure is real physics, but only
+       while the body is still in equilibrium — a fifth out of round is about
+       as far as that goes, and anything more dramatic than this is a drawing
+       rather than a simulation. The dramatic part is rubble's job, and rubble
+       draws itself. */
+    const k=Math.min(0.6,b.stretch);
     ctx.save();
     ctx.translate(x,y);
     ctx.rotate(b.tideAng);
@@ -2056,12 +2345,118 @@ function drawSelection(b){
   ctx.setLineDash([]);
 }
 
+/* ============================ light bending ============================ */
+/* A black hole is not a black circle with a glow behind it. It is a place where
+   the sky itself is wrong: light that would have gone past is pulled around,
+   so what you see beside one is the view from somewhere else, stretched into a
+   ring. Nothing here is painted on — the pass reads the frame that has already
+   been drawn and resamples it, so whatever is actually behind the hole is what
+   gets bent, be that a star field, a nebula or a world in mid-collision.
+   Deflection goes as 1/r, which is the real weak-field falloff, and the
+   photon ring is where it climbs steeply enough that the sky piles up. */
+const LENS_REACH = 9;      /* how many horizon radii the bend is worth drawing */
+function drawLensing(){
+  let any=false;
+  for(const h of bodies) if(h.hole){ any=true; break; }
+  if(!any) return;
+  for(const h of bodies){
+    if(!h.hole) continue;
+    const cx=toScreenX(h.x), cy=toScreenY(h.y);
+    const rs=Math.max(1.2, h.r*cam.zoom);           /* the horizon, on screen */
+    const R =Math.min(300, rs*LENS_REACH);          /* where the bend fades out */
+    if(cx<-R||cx>W+R||cy<-R||cy>H+R) continue;
+    /* light is gathered from further out than it lands, so the patch read has
+       to be wider than the patch written */
+    const G0=Math.max(0,Math.floor(cx-R*1.9)), G1=Math.min(W,Math.ceil(cx+R*1.9));
+    const H0=Math.max(0,Math.floor(cy-R*1.9)), H1=Math.min(H,Math.ceil(cy+R*1.9));
+    const X0=Math.max(0,Math.floor(cx-R)),     X1=Math.min(W,Math.ceil(cx+R));
+    const Y0=Math.max(0,Math.floor(cy-R)),     Y1=Math.min(H,Math.ceil(cy+R));
+    if(X1<=X0||Y1<=Y0||G1<=G0||H1<=H0) continue;
+
+    const gw=G1-G0, gh=H1-H0;
+    const src=ctx.getImageData(G0,H0,gw,gh).data;
+    const ow=X1-X0, oh=Y1-Y0;
+    const out=ctx.createImageData(ow,oh);
+    const d=out.data;
+    const r2=rs*rs;
+    for(let y=Y0;y<Y1;y++){
+      const fy=y+0.5-cy;
+      for(let x=X0;x<X1;x++){
+        const fx=x+0.5-cx;
+        const di=((y-Y0)*ow+(x-X0))*4;
+        const r=Math.sqrt(fx*fx+fy*fy);
+        if(r>=R){                                   /* outside: leave it alone */
+          const si=((y-H0)*gw+(x-G0))*4;
+          d[di]=src[si]; d[di+1]=src[si+1]; d[di+2]=src[si+2]; d[di+3]=src[si+3];
+          continue;
+        }
+        if(r<=rs){                                  /* inside: nothing comes back */
+          d[di]=0; d[di+1]=0; d[di+2]=2; d[di+3]=255;
+          continue;
+        }
+        /* Where on the undisturbed sky this pixel is really looking. Light is
+           bent towards the hole, so a source appears further out than it is —
+           which means the pixel out here is showing sky from further in, and
+           the patch directly behind the hole gets smeared all the way round
+           into a ring. Sampling the other way pulls images inward, which is
+           the wrong sign and looks like a drain rather than a lens. */
+        const fade=1-(r-rs)/(R-rs);
+        const pull=r2*3.4/r*fade;
+        const rr=Math.max(0.5, r-pull);
+        let sx=Math.round(cx+fx/r*rr)-G0, sy=Math.round(cy+fy/r*rr)-H0;
+        if(sx<0) sx=0; else if(sx>=gw) sx=gw-1;
+        if(sy<0) sy=0; else if(sy>=gh) sy=gh-1;
+        const si=(sy*gw+sx)*4;
+        const cr=src[si], cg=src[si+1], cb=src[si+2];
+        /* Light grazing the hole goes round more than once, so the same sky
+           arrives several times over in a thin band. That band is the photon
+           ring, and it is the brightest thing in the picture. */
+        const rw=Math.max(0.9, rs*0.16);
+        const ring=Math.exp(-((r-rs*1.45)*(r-rs*1.45))/(rw*rw));
+        /* sky pulled around the hole is spread over more of the view than it
+           covered, so it thins — but only just outside the ring, where the
+           stretching is severe. Further out it is only bent, not thinned. */
+        const dim=1-0.30*fade*fade*fade;
+        d[di]  =Math.min(255, cr*dim + ring*205);
+        d[di+1]=Math.min(255, cg*dim + ring*165);
+        d[di+2]=Math.min(255, cb*dim + ring*235);
+        d[di+3]=255;
+      }
+    }
+    ctx.putImageData(out,X0,Y0);
+  }
+}
+
+function drawBeams(b,x,y,r,pal){
+  const len=Math.max(30, r*22);
+  const c=pal[pal.length-1];
+  for(const sgn of [1,-1]){
+    const a=b.ang*1.0 + (sgn<0?Math.PI:0);
+    /* face-on it is a flood, edge-on a sliver: what you get is how much of the
+       cone is pointed at you */
+    const face=Math.abs(Math.cos(b.ang));
+    const g=ctx.createLinearGradient(x,y,x+Math.cos(a)*len,y+Math.sin(a)*len);
+    g.addColorStop(0,`rgba(${c[0]},${c[1]},${c[2]},${0.45*(0.25+0.75*face)})`);
+    g.addColorStop(1,`rgba(${c[0]},${c[1]},${c[2]},0)`);
+    ctx.fillStyle=g;
+    const spread=0.13;
+    ctx.beginPath();
+    ctx.moveTo(x,y);
+    ctx.lineTo(x+Math.cos(a-spread)*len, y+Math.sin(a-spread)*len);
+    ctx.lineTo(x+Math.cos(a+spread)*len, y+Math.sin(a+spread)*len);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
 function render(t){
   drawSky(t);
   if(showTrails) drawTrails();
   drawParts();
+  drawGhosts();
   drawWaves();
   for(const b of bodies) drawBody(b);
+  drawLensing();
   if(aim.active) drawAim();
   if(selected) drawSelection(selected);
   /* blow the buffer up to the screen with hard pixel edges */
@@ -2080,7 +2475,7 @@ function brushSpec(){
 function brushRadius(){ return radiusFor(brush.mass, brush.dens || densityOf(brushSpec())); }
 
 /* ============================ aiming ============================ */
-const aim={active:false,x:0,y:0,dx:0,dy:0,path:[],hit:null};
+const aim={active:false,x:0,y:0,dx:0,dy:0,path:[],hit:null,hadSel:false};
 const VEL_SCALE=0.055;
 /* A massless probe through the frozen field, so you can see where the throw
    actually goes instead of guessing. */
@@ -2252,6 +2647,11 @@ view.addEventListener('pointerdown',e=>{
     if(dragMode) grabHold(hit, toWorldX(p.x), toWorldY(p.y));
     return;
   }
+  /* Losing a selection should not also cost you a world. If something was
+     selected, this press is read as putting it down: it clears the selection
+     and the release drops nothing. A drag still throws, and a second tap on
+     nothing still places one. */
+  aim.hadSel = !!selected;
   selectBody(null);
   aim.active=true; aim.x=toWorldX(p.x); aim.y=toWorldY(p.y);
   aim.dx=0; aim.dy=0; aim.path=[]; aim.hit=null;
@@ -2287,6 +2687,7 @@ function endPointer(e){
   if(!aim.active) return;
   aim.active=false;
   const drag=Math.hypot(aim.dx,aim.dy)*cam.zoom;
+  if(drag<6 && aim.hadSel){ aim.hadSel=false; return; }
   let vx,vy;
   if(drag<6&&orbitAssist){
     const host=dominant(aim.x,aim.y,null);
@@ -2381,7 +2782,7 @@ const PRESETS={
   }
 };
 function loadPreset(n){
-  held=null;
+  held=null; ghosts=[];
   bodies=[]; parts=[]; waves=[]; selected=null; following=null;
   (PRESETS[n]||PRESETS.solar)();
   accelerate();
@@ -2444,10 +2845,19 @@ $('fSize').addEventListener('input',syncForgeFromSliders);
 $('fDens').addEventListener('input',syncForgeFromSliders);
 /* The slider is a radius in quarter-units; mass falls out of it and density,
    because mass is the only thing gravity actually reads. */
+/* Both sliders are logarithmic. A linear density track spends nine tenths of
+   itself between rock and slightly denser rock and then cannot reach a neutron
+   star at all; on a log track every doubling costs the same distance, so the
+   whole range from a snowball to degenerate matter is one sweep of the thumb. */
+const DENS_LO=1, DENS_HI=400000;
+const RAD_LO=0.4, RAD_HI=900;
+const logMap=(v,lo,hi)=>lo*Math.pow(hi/lo, Math.min(1,Math.max(0,v/1000)));
+const logUnmap=(x,lo,hi)=>Math.round(1000*Math.log(Math.min(hi,Math.max(lo,x))/lo)/Math.log(hi/lo));
 function syncForgeFromSliders(){
-  const size=+$('fSize').value, dens=+$('fDens').value;
+  const rad  = logMap(+$('fSize').value, RAD_LO, RAD_HI);
+  const dens = logMap(+$('fDens').value, DENS_LO, DENS_HI);
   brush.dens=dens;
-  brush.mass=Math.max(0.02, massFor(size/4, dens));
+  brush.mass=Math.max(0.02, massFor(rad, dens));
   syncForge(true);
 }
 function syncForge(skipSliders){
@@ -2461,16 +2871,17 @@ function syncForge(skipSliders){
   $('fRad').textContent='radius '+brushRadius().toFixed(2);
   for(const el of $('fClass').children) el.classList.toggle('on',el.dataset.cls===brush.cls);
   for(const el of $('fPal').children) el.classList.toggle('on',el.dataset.pal===brush.pal);
+  const d=brush.dens||densityOf(spec);
+  $('fDensv').textContent='density '+fmt(d, d<10?2:0);
   if(!skipSliders){
-    const dens=brush.dens||densityOf(spec);
-    $('fDens').value=Math.max(5,Math.min(3000,dens));
-    $('fSize').value=Math.max(4,Math.min(600,Math.round(radiusFor(brush.mass,dens)*4)));
+    $('fDens').value=logUnmap(d, DENS_LO, DENS_HI);
+    $('fSize').value=logUnmap(radiusFor(brush.mass,d), RAD_LO, RAD_HI);
   }
 }
 
 function togglePlay(){ running=!running; elPlay.textContent=running?'Pause':'Play'; }
 elPlay.addEventListener('click',togglePlay);
-function clearAll(){ held=null; lastSettle=null; bodies=[]; parts=[]; waves=[]; blobs=[]; selected=null; following=null; selectBody(null); }
+function clearAll(){ held=null; lastSettle=null; ghosts=[]; bodies=[]; parts=[]; waves=[]; blobs=[]; selected=null; following=null; selectBody(null); }
 $('reset').addEventListener('click',clearAll);
 $('fit').addEventListener('click',()=>fitAll());
 function setTrails(v){ showTrails=v; $('trails').classList.toggle('on',v); if(!v) for(const b of bodies) b.trail.length=0; }
@@ -2617,6 +3028,11 @@ window.orbital={
   /* the shape and the temperature of the last cloud that became a world, at
      the moment it did */
   lastSettle:()=>lastSettle && Object.assign({},lastSettle),
+  /* the sprites left behind by worlds that have just become rubble */
+  ghosts:()=>ghosts.map(g=>({x:g.x,y:g.y,r:g.r,t:g.t})),
+  /* the rendered buffer, so a test can ask what a black hole did to the sky */
+  frame:(x,y,w,h)=>Array.from(ctx.getImageData(x,y,w,h).data),
+  size:()=>({w:W,h:H}),
   add:(x,y,vx,vy,kindId,mass)=>{
     const b=place(kindId||'rocky',x,y,vx,vy,mass);
     if(b){ accelerate(); for(const q of bodies){ q.ax=q.nax; q.ay=q.nay; } }
@@ -2659,7 +3075,14 @@ window.orbital={
   energy:totalEnergy,
   /* everything the sim is holding, bodies and motes alike */
   mass:()=>bodies.reduce((t,b)=>t+b.m,0)+parts.reduce((t,p)=>t+p.pm,0),
-  momentum:()=>bodies.reduce((s,b)=>({x:s.x+b.m*b.vx,y:s.y+b.m*b.vy}),{x:0,y:0}),
+  /* everything the sim is carrying, rubble included — bodies alone stopped
+     being the whole of it the moment a collision could leave a cloud behind */
+  momentum:()=>{
+    let x=0,y=0;
+    for(const b of bodies){ x+=b.m*b.vx; y+=b.m*b.vy; }
+    for(const p of parts){ x+=p.pm*p.vx; y+=p.pm*p.vy; }
+    return {x,y};
+  },
   cam, aim, brush,
   step:dt=>step(dt),
   setSpeed:v=>{ timeScale=v; },
