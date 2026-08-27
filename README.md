@@ -118,6 +118,13 @@ tighter and a tighter orbit loses it faster.
 Mercury does it by 43 arcseconds a century and it took general relativity to
 say why. With the orbit outlines on you can watch it happen.
 
+**Zones** shows the rest of the invisible scaffolding: the habitable band round
+every star, the five Lagrange points of whatever is selected, its Hill sphere —
+how far out something can sit and still belong to it rather than to whatever it
+is going round — and the barycentre it and its host actually turn about. That
+last one is usually inside the larger body, which is why it looks like the
+small one is doing all the moving.
+
 **Five places hold station** with any pair. Three sit on the line through both
 and none of those are stable. The other two sit sixty degrees ahead and behind,
 making an equilateral triangle with the pair, and those genuinely hold: nudge
@@ -126,7 +133,42 @@ Jupiter has kept two crowds of asteroids parked in its for the age of the solar
 system, and it keeps them here too — they are put in the right place with the
 right speed and nothing pins them there afterwards.
 
-Three systems ship with it, and two of them are about resonance.
+**A star pushes as well as pulling.** Light carries momentum, and both the
+push and the pull fall off as 1/r^2 — so the ratio between them does not depend
+on distance at all. It depends only on how much surface a grain has for its
+weight, which is why it matters enormously for dust and not at all for worlds.
+Fine gas here feels about half the star's gravity back as a shove; rock
+fragments barely notice.
+
+That is what makes a comet's tail a tail. Nothing draws it. A comet near a star
+boils, the gas leaves, and the light that freed it then pushes it — so the tail
+points away from the star rather than backwards along the path the comet is
+travelling, which is the thing about comets that looks wrong until you know
+why. Sit one on a long orbit and it loses a little every pass, and eventually
+it does not come back.
+
+**And starlight takes atmospheres off.** Whether a world keeps its air is a
+race between two speeds that have nothing to do with each other: how fast
+starlight has the top of the atmosphere moving, and how fast it would have to
+move to leave. That is why the outcome is so lopsided — a small world close in
+loses everything and a big one further out loses nothing.
+
+Park a **hot Jupiter** close to a bright star and watch it go. It is a runaway:
+losing the envelope shrinks the planet, a smaller planet holds on less well, so
+it goes faster. What is left at the end is not a smaller giant. It is the core
+it was built around, bare and still hot — which is a different object, and one
+already in the roster under its own name. Nothing routes that transition by
+hand; a giant that has lost three quarters of itself simply is a stripped core.
+
+**A black hole's disc has an inner edge**, and it is not the horizon. Inside
+about three times it the effective potential stops having a minimum, so there
+is no stable circular orbit left to sit in — matter there stops going round and
+starts falling. Nothing is pulled harder; what is taken away is the sideways
+part of the motion, which was the part holding it up. It is the reason a real
+disc is a ring with a hole in the middle rather than a smear running all the
+way in, and putting it in roughly sextupled how fast a hole here feeds.
+
+Four systems ship with it, and two of them are about resonance.
 
 **TRAPPIST-1** is seven Earth-sized worlds round an M8 red dwarf, the whole
 system packed inside a fifth of Mercury's orbit — so it cannot be drawn at our
@@ -142,6 +184,14 @@ Europa and Ganymede come out locked 1:2:4, and Callisto pointedly does not.
 That resonance is also why Io is molten and is drawn that way — it can never
 settle into a circular orbit, because the other two keep pulling it back out of
 one, so Jupiter flexes it twice an orbit and the friction has to go somewhere.
+
+**Kirkwood gaps** is the belt on its own with Jupiter and nothing else. Nothing
+is carved: the belt is laid down smooth, and gaps open at the radii where an
+asteroid goes round three times for Jupiter's once — and twice, and five times
+for two — because at those radii Jupiter keeps arriving at the same point in
+the orbit and the nudges add up instead of cancelling. It wants a long run at a
+high clock, and then they are simply there. The other planets are left out
+because they carve their own and it stops being clear which gap belongs to what.
 
 **Solar system** loads ours. Distances are to scale — every orbit is the real
 semi-major axis, started at its own perihelion with the perihelion speed, so
@@ -320,6 +370,16 @@ That debris then has to end up somewhere:
   whole point of it: it is what separates Io, which never cools, from Europa a
   hundred units further out, which does. A shallower law heats both the same
   and says nothing about either.
+- **Escaping has to mean escaping.** Gas released below a world's own escape
+  speed falls straight back and is swallowed again, so the world loses nothing
+  at all however long it is left. That is exactly what this did until it was
+  measured against a number rather than eyeballed — a hot Jupiter sat at 86% of
+  its mass forever. It now leaves above escape speed and from the lit side,
+  which is the side the energy arrived on.
+- **Radiation pressure is a property of the grain, not the place.** Push and
+  pull share the same 1/r^2, so what decides the ratio is surface against
+  weight. Rubble bound into a clump or ground into a ring is not dust any more
+  and is not treated as any.
 - **The Roche lobe uses Eggleton's fit** — within a percent over every mass
   ratio that ever comes up, and one line instead of a root-find.
 - **The white dwarf limit sits just under the collapse limit**, and the two are

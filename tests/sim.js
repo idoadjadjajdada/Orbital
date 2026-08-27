@@ -1738,6 +1738,108 @@ async function open(b, vp){
   }
   await ctx.close();
 
+  console.log('\n--- a star pushes as well as pulling ---');
+  ({p,ctx,errs}=await open(b));
+  {
+    /* Both fall off as 1/r^2, so what the push changes is not the shape of the
+       fall but its size — and it changes it for dust and not for rubble. */
+    const fall=await p.evaluate(()=>{
+      const o=window.orbital;
+      const drop=kind=>{
+        o.clear(); o.setSpeed(0);
+        o.add(0,0,0,0,'star',3000);
+        if(kind==='gas') o.gas(400,0,0,0,200,4,2);
+        else o.rubble ? o.rubble(400,0,0,0,200) : o.gas(400,0,0,0,200,4,2);
+        for(let i=0;i<900;i++) o.step(1/60);
+        const D=o.debris();
+        let x=0; for(const q of D) x+=q.x;
+        return D.length? x/D.length : 400;
+      };
+      return {gas:+drop('gas').toFixed(2)};
+    });
+    /* released at rest at 400, free fall alone would have it at about 396 after
+       fifteen seconds; with half the pull pushed back it barely moves */
+    ok('lit dust falls inward more slowly than gravity alone would take it',
+       fall.gas>397 && fall.gas<400, 'reached '+fall.gas+' from 400');
+
+    const tail=await p.evaluate(()=>{
+      const o=window.orbital; o.clear(); o.setSpeed(0);
+      o.add(0,0,0,0,'star',3000);
+      const r=150, v=Math.sqrt(3000)*r/Math.pow(r*r+4,0.75);
+      const id=o.add(r,0,0,v,'comet',0.3);
+      const m0=o.list().find(x=>x.id===id).m;
+      for(let i=0;i<3000;i++) o.step(1/60);
+      const c=o.list().find(x=>x.id===id), D=o.debris();
+      if(!c||!D.length) return null;
+      const sr=Math.hypot(c.x,c.y);
+      let away=0;
+      for(const q of D) if(((q.x-c.x)*c.x+(q.y-c.y)*c.y)/sr > 0) away++;
+      return {lost:m0-c.m, motes:D.length, away:away/D.length};
+    });
+    ok('a comet near a star boils off some of itself', !!tail && tail.lost>0 && tail.motes>10,
+       tail?(tail.lost.toFixed(4)+' as '+tail.motes+' motes'):'null');
+    ok('and the tail points away from the star, not backwards along the path',
+       !!tail && tail.away>0.85, tail?(tail.away*100).toFixed(0)+'% on the far side':'null');
+    ok('no exceptions', errs.length===0, errs.join(' | '));
+  }
+  await ctx.close();
+
+  console.log('\n--- a giant can be boiled down to its core ---');
+  ({p,ctx,errs}=await open(b));
+  {
+    const hj=await p.evaluate(()=>{
+      const o=window.orbital; o.clear(); o.setSpeed(0);
+      o.aging(false);                      /* or the star dies first and eats it */
+      o.add(0,0,0,0,'star',4100);
+      const r=260, v=Math.sqrt(4100)*r/Math.pow(r*r+4,0.75);
+      const id=o.add(r,0,0,v,'hotjup',60);
+      let became=null;
+      for(let i=0;i<26000;i++){
+        o.step(5);
+        const x=o.list().find(y=>y.id===id);
+        if(!x){ became='gone'; break; }
+        if(x.name!=='Hot Jupiter'){ became=x.name+' at t='+(i*5)+' m='+x.m.toFixed(1); break; }
+      }
+      o.aging(true);
+      return became;
+    });
+    ok('starlight strips a close giant down to what it was built around',
+       /Stripped core/.test(hj||''), String(hj));
+    ok('no exceptions', errs.length===0, errs.join(' | '));
+  }
+  await ctx.close();
+
+  console.log('\n--- the five places, and the fourth system ---');
+  ({p,ctx,errs}=await open(b));
+  {
+    const L=await p.evaluate(()=>{
+      const o=window.orbital; o.clear(); o.setSpeed(0);
+      const sun=o.add(0,0,0,0,'star',3000);
+      const r=400, v=Math.sqrt(3000)*r/Math.pow(r*r+4,0.75);
+      const id=o.add(r,0,0,v,'gas',60);
+      const pts=o.lagrange(id);
+      if(!pts) return null;
+      const ang=q=>Math.atan2(q.y,q.x)*180/Math.PI;
+      return {n:pts.length, l4:+ang(pts[3]).toFixed(1), l5:+ang(pts[4]).toFixed(1),
+              r4:+Math.hypot(pts[3].x,pts[3].y).toFixed(1)};
+    });
+    ok('there are five of them', !!L && L.n===5, L?String(L.n):'null');
+    ok('and two sit sixty degrees off, at the same distance out',
+       !!L && Math.abs(L.l4-60)<0.5 && Math.abs(L.l5+60)<0.5 && Math.abs(L.r4-400)<1,
+       L?('L4 '+L.l4+'°  L5 '+L.l5+'°  at '+L.r4):'null');
+
+    const kw=await p.evaluate(()=>{
+      const o=window.orbital; o.preset('kirkwood');
+      return {bodies:o.count(), belt:o.debris().length,
+              names:o.list().map(x=>x.name).join(',')};
+    });
+    ok('the belt preset is a sun, a Jupiter and a great deal of rubble',
+       kw.bodies===2 && kw.belt>4000 && /Jupiter/.test(kw.names),
+       JSON.stringify(kw));
+    ok('no exceptions', errs.length===0, errs.join(' | '));
+  }
+  await ctx.close();
+
   console.log('\n--- two fingers pinch and pan ---');
   ({p,ctx,errs}=await open(b,{width:1024,height:768}));
   const zb=await p.evaluate(()=>window.orbital.cam.zoom);

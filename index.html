@@ -78,12 +78,18 @@
      anything counting the roster still finds all of it */
   .bd[hidden]{display:none;}
 
-  .sysList{display:flex;flex-direction:column;gap:5px;}
+  /* Capped, and it scrolls past the cap. The sky is the thing worth looking at
+     and a list that grows a row taller with every system added eats into it —
+     this one has already done that once. */
+  .sysList{display:flex;flex-direction:column;gap:4px;max-height:154px;
+    overflow-y:auto;scrollbar-width:thin;}
   .sys{display:block;width:100%;text-align:left;background:var(--panel);box-shadow:var(--lip);
-    border-radius:9px;padding:6px 9px;transition:background .12s,transform .08s;}
+    border-radius:9px;padding:5px 9px;transition:background .12s,transform .08s;}
   .sys:active{transform:translateY(1px);}
   .sys .sn{display:block;font-size:12px;font-weight:650;}
-  .sys .sb{display:block;font-size:10.5px;color:var(--dim);line-height:1.25;margin-top:1px;}
+  /* one line, clipped — the whole of it is on the button's tooltip */
+  .sys .sb{display:block;font-size:10.5px;color:var(--dim);line-height:1.2;margin-top:1px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .sys.on{background:var(--ink);} .sys.on .sn{color:#150a26;} .sys.on .sb{color:#4a3768;}
   @media (hover:hover){ .sys:hover{background:var(--panel2);} .sys.on:hover{background:#fff;} }
 
@@ -280,6 +286,20 @@ const TIDE_K = 8;      /* fluid Roche coefficient, 2^3 — see tides() */
    eccentric orbit is flexed. The last is tuned so Io at its real eccentricity
    stays molten rather than cooling to rock, which is the thing it is for. */
 const TIDE_LOCK = 0.5, TIDE_HEAT = 0.05, TIDE_FLEX = 1.2e6;
+/* Light carries momentum, so a star pushes as well as pulls. Both fall off as
+   1/r^2, so the ratio between them does not depend on distance at all — it
+   depends only on how much surface a grain has for its weight. That is the
+   whole reason it matters for dust and not for worlds, and why the two numbers
+   below are a property of the grain rather than of where it is. Gas and fine
+   dust feel about half the star's gravity back as a push; rock fragments are
+   big enough that they barely notice. */
+const RAD_K = 1500, RAD_ROCK = 0.08;
+/* Inside three times the horizon there is no stable circular orbit left. It is
+   not that gravity gets stronger — it is that the effective potential stops
+   having a minimum, so anything there stops circling and starts falling. */
+const ISCO_MULT = 3, ISCO_DRAG = 2.2;
+/* How fast starlight strips an envelope off something too small to hold it. */
+const ESC_K = 1.5e-5;
 /* a year is divided up for the clock readout, nothing else */
 const MONTH = 1/12, DAY = 1/365.25;
 const NEUTRON_MASS = 4200;
@@ -584,6 +604,9 @@ function makeBody(x,y,vx,vy,spec,mass){
        throws off roughly what it has swallowed, so the second number is what
        decides when it next does. */
     age: 0, stage: '', wd: spec.wd||0, accreted: 0,
+    /* the most it has ever been, so losing an envelope can be measured
+       against something rather than guessed at */
+    m0: m,
     trail: [], flash: 0
   };
 }
@@ -623,7 +646,7 @@ function spawnPart(x,y,vx,vy,kind,rgb,heat,life,pm,size){
   } else parts.push(p);
   return p;
 }
-let sX=new Float64Array(0), sY, sM, sR2;
+let sX=new Float64Array(0), sY, sM, sR2, sVX, sVY, sL, sHole;
 /* Cohesion is a field, and a field applied to a cloud that is not round does
    not sum to zero. The cloud ends up pushing on itself, which showed up as the
    total momentum walking off by most of a percent every time two worlds melted
@@ -667,21 +690,49 @@ function stepParts(dt, sources){
   if(sX.length < ns){
     sX=new Float64Array(ns); sY=new Float64Array(ns);
     sM=new Float64Array(ns); sR2=new Float64Array(ns);
+    sVX=new Float64Array(ns); sVY=new Float64Array(ns);
+    sL=new Float64Array(ns); sHole=new Float64Array(ns);
   }
   for(let s=0;s<ns;s++){
     const b=sources[s];
     sX[s]=b.x; sY[s]=b.y; sM[s]=b.m; sR2[s]=b.r*b.r;
+    sVX[s]=b.vx; sVY[s]=b.vy;
+    sL[s]=luminosity(b); sHole[s]=b.hole?b.r:0;
   }
   const soft2 = SOFT*SOFT;
   for(let i=parts.length-1;i>=0;i--){
     const p = parts[i];
     let ax=0, ay=0, hostIdx=-1, hostPull=0;
+    /* How much of a push this particular mote gets for its weight. Rubble held
+       together in a clump, or ground into a ring, is not dust any more and is
+       not treated as any. */
+    const beta = (p.blob||p.ring||p.ghost) ? 0 : (p.kind==='gas' ? 1 : RAD_ROCK);
     for(let s=0;s<ns;s++){
       const dx=sX[s]-p.x, dy=sY[s]-p.y;
       const d2 = dx*dx+dy*dy+soft2;
       const inv = 1/Math.sqrt(d2);
       const f = G*sM[s]*inv*inv*inv;
       ax+=f*dx; ay+=f*dy;
+      /* and the same 1/r^2 back the other way, if it is lit */
+      if(beta>0 && sL[s]>0){
+        const rf = RAD_K*sL[s]*beta*inv*inv*inv;
+        ax-=rf*dx; ay-=rf*dy;
+      }
+      /* Inside the last stable orbit it cannot go round any more. Nothing is
+         added inward — what is taken away is the sideways part of its motion,
+         which is the part that was keeping it up. */
+      if(sHole[s]>0 && !p.ghost){
+        const isco=ISCO_MULT*sHole[s];
+        const dh2=dx*dx+dy*dy;
+        if(dh2 < isco*isco){
+          const dh=Math.sqrt(dh2)||1e-6;
+          const nx=-dx/dh, ny=-dy/dh;
+          const rvx=p.vx-sVX[s], rvy=p.vy-sVY[s];
+          const rad=rvx*nx+rvy*ny;
+          const k=Math.min(0.5, ISCO_DRAG*(1-dh/isco)*dt);
+          p.vx-=(rvx-rad*nx)*k; p.vy-=(rvy-rad*ny)*k;
+        }
+      }
       const pull = sM[s]/d2;
       if(pull>hostPull){ hostPull=pull; hostIdx=s; }
       /* swallowed: the debris settles and its mass joins the body */
@@ -2028,6 +2079,7 @@ function step(dt){
   if(blobTimer<=0){ blobTimer=0.2; reblob(); }
   tides(dt);
   stellarClock(dt);
+  atmosphere(dt);
   rocheOverflow(dt);
   gravWaves(dt);
   dwarfCheck();
@@ -2248,6 +2300,74 @@ function rocheOverflow(dt){
   }
 }
 
+/* ===================== envelopes come off =====================
+   Whether a world keeps its air is a race between two speeds. Starlight sets
+   how fast the top of the atmosphere is moving; the world's own gravity sets
+   how fast it would have to move to leave. Neither has anything to do with the
+   other, which is why the outcome is so lopsided: a small world close in loses
+   everything it has and a big one further out loses nothing at all.
+
+   What comes off does not simply vanish. It is gas, and the same light that
+   freed it then pushes it — which is why a comet's tail points away from the
+   star rather than backwards along the path it is travelling. The tail is not
+   drawn anywhere. It is where the gas went. */
+function atmosphere(dt){
+  for(let i=bodies.length-1;i>=0;i--){
+    const b=bodies[i];
+    if(b.dead||b.hole||b.lum||b.compact) continue;
+    /* Dirty ice is nearly all volatile, an envelope is loosely held, ice
+       sublimates, and rock has nothing to give up. */
+    const vol = b.comet ? 1.4 : b.gas ? 1 : (b.spec.cls==='ice' ? 0.35 : 0);
+    if(vol<=0) continue;
+    const f=fluxAt(b.x,b.y);
+    if(f<=1e-4) continue;
+    if(!(b.m0>0) || b.m>b.m0) b.m0=b.m;
+    const vesc2=2*G*b.m/Math.max(0.55,b.r);
+    const take=Math.min(b.m*ESC_K*vol*f/Math.max(1e-6,vesc2)*dt, b.m*0.02);
+    if(take<=1e-12) continue;
+    b.m-=take; b.r=radiusFor(b.m, densityOf(b.spec));
+
+    /* let it collect before releasing any, or a slow leak costs a mote a frame
+       and buys nothing to look at */
+    b.outgas=(b.outgas||0)+take;
+    const quota=Math.max(PART_MASS*0.004, b.m0*5e-5);
+    /* Leaving has to mean leaving. Launched below the world's own escape speed
+       the gas simply falls back and is swallowed again, and the world loses
+       nothing at all however long it is left — which is what this did until it
+       was measured. And it goes from the lit side, because that is the side the
+       energy arrived on. */
+    const star=brightestAt(b.x,b.y);
+    const away = star ? Math.atan2(b.y-star.y, b.x-star.x) : Math.random()*6.283;
+    while(b.outgas>=quota && parts.length<MAX_PARTS){
+      b.outgas-=quota;
+      const a=away+(Math.random()-0.5)*2.4;
+      const sp=Math.sqrt(vesc2)*(1.05+Math.random()*0.5);
+      const q=spawnPart(b.x+Math.cos(a)*b.r*1.1, b.y+Math.sin(a)*b.r*1.1,
+                        b.vx+Math.cos(a)*sp, b.vy+Math.sin(a)*sp,
+                        'gas', b.comet?[196,226,246]:[214,198,236], 0,
+                        420+Math.random()*380, quota);
+      if(q){ q.puff=1.6+Math.random()*1.4; q.dep=0.7; q.spread=1.1; }
+    }
+
+    /* A giant that loses its envelope is not a smaller giant. It is the core
+       it was built around, bare and still hot — which is a different kind of
+       object, and one the roster already had a name for. */
+    if(b.gas && b.m0>0 && b.m < b.m0*0.25){
+      const k=kindById('chthonian');
+      b.spec=specFromKind(k, b.spec.seed);
+      b.gas=0; b.comet=0; b.name=k.name; b.heat=1;
+      b.r=radiusFor(b.m, densityOf(b.spec)); b.m0=b.m;
+      once('chthonian','A giant has had its envelope boiled off it. What is left is the core it was built around.');
+    }
+    /* and a comet does not last forever either */
+    if(b.m<=1e-4){
+      b.dead=true; bodies.splice(i,1);
+      if(selected===b) selectBody(null);
+      if(following===b) following=null;
+    }
+  }
+}
+
 /* ===================== orbits that leak =====================
    Two things going round each other radiate gravitational waves, and the orbit
    is what pays for them. It is a hopeless effect for anything ordinary - the
@@ -2358,6 +2478,19 @@ function lagrange(b){
    over distance squared, summed over every star in the sky — so a world round
    one of a pair is lit by both, and a world whose star has just swollen into a
    giant is abruptly getting a great deal more than it was. */
+/* Which star is doing the lighting here. Escape is a one-sided business — the
+   energy arrives on one face and the wind leaves from that face — so it is not
+   enough to know how much light there is, you have to know where it is from. */
+function brightestAt(x,y){
+  let best=null, bf=0;
+  for(const s of bodies){
+    if(!s.lum||s.dead) continue;
+    const dx=x-s.x, dy=y-s.y;
+    const f=luminosity(s)/Math.max(1e-6,dx*dx+dy*dy);
+    if(f>bf){ bf=f; best=s; }
+  }
+  return best;
+}
 function fluxAt(x,y){
   let f=0;
   for(const s of bodies){
@@ -2392,6 +2525,43 @@ function drawZones(){
     ctx.setLineDash([2,4]);
     ctx.beginPath(); ctx.arc(x,y,a,0,6.2832); ctx.stroke();
     ctx.beginPath(); ctx.arc(x,y,b2,0,6.2832); ctx.stroke();
+    ctx.restore();
+  }
+}
+/* The Hill sphere: how far out something can sit and still belong to this
+   body rather than to whatever this body is going round. Every moon in the
+   solar system is inside its planet's, and it is the reason the placement code
+   for the moons here has to know about it in the first place — it is already
+   computed to put them somewhere sensible, and has simply never been shown.
+
+   The barycentre is the other thing worth seeing: two bodies do not orbit each
+   other, they both orbit a point between them. For a planet and a moon that
+   point is usually inside the planet, which is why it looks like the moon is
+   doing all the moving — but Pluto and Charon put theirs in open space. */
+function drawHill(){
+  if(!selected) return;
+  const o=orbitPath(selected);
+  if(!o) return;
+  const h=o.host;
+  const rh=o.a*(1-o.e)*Math.cbrt(selected.m/Math.max(1e-9,3*h.m));
+  const rr=rh*cam.zoom;
+  if(rr>3 && rr<9000){
+    ctx.save();
+    ctx.strokeStyle='rgba(198,155,255,0.20)';
+    ctx.lineWidth=1; ctx.setLineDash([1,4]);
+    ctx.beginPath();
+    ctx.arc(toScreenX(selected.x), toScreenY(selected.y), rr, 0, 6.2832);
+    ctx.stroke();
+    ctx.restore();
+  }
+  /* where the pair actually turns about */
+  const M=selected.m+h.m;
+  const bx=(selected.x*selected.m+h.x*h.m)/M, by=(selected.y*selected.m+h.y*h.m)/M;
+  const x=toScreenX(bx), y=toScreenY(by);
+  if(x>-10&&y>-10&&x<W+10&&y<H+10){
+    ctx.save();
+    ctx.fillStyle='rgba(255,205,120,0.85)';
+    ctx.fillRect(x-2,y,5,1); ctx.fillRect(x,y-2,1,5);
     ctx.restore();
   }
 }
@@ -3045,7 +3215,7 @@ function render(t){
   /* under the bodies and over the trails: it is scaffolding, not scenery */
   if(showZones) drawZones();
   drawOrbits();
-  if(showZones) drawLagrange();
+  if(showZones){ drawLagrange(); drawHill(); }
   drawParts();
   drawGhosts();
   drawWaves();
@@ -3626,6 +3796,32 @@ const PRESETS={
     const rOut = T1_RB*(TRAPPIST[6][1]/aB);
     return {x:0, y:0, zoom:Math.min(30, Math.min(W,H)*0.42/rOut),
             yearUnit:yearFrom(T1_STAR, T1_RB, 1.5109)};
+  }},
+
+  kirkwood:{
+  name:'Kirkwood gaps', blurb:'Jupiter carves the belt, given time',
+  build(){
+    /* Nothing is carved here. A belt is laid down smooth, and the gaps at the
+       places where an asteroid would go round three times for every once
+       Jupiter does — and twice, and five times for two — appear on their own,
+       because at those radii Jupiter arrives at the same point in the orbit
+       over and over and the nudges add up instead of cancelling. It takes a
+       long run at a high clock, and then they are simply there.
+
+       Only Jupiter is here. The other planets would carve their own and make
+       it harder to see which gap belongs to what. */
+    const sun=addBody(makeBody(0,0,0,0,
+      {cls:'star', pal:'amber', seed:4242, dens:SUNM/Math.pow(70/RSCALE,3), name:'Sun'}, SUNM));
+    const A=5.203*AU, e=0.0484;
+    const rp=A*(1-e);
+    const vp=Math.sqrt(G*SUNM*(1+e))*rp/Math.pow(rp*rp+SOFT*SOFT,0.75);
+    const th=Math.random()*6.283;
+    const j=placeAt(Math.cos(th)*rp, Math.sin(th)*rp,
+                    -Math.sin(th)*vp, Math.cos(th)*vp,
+                    'gas','amber', 317.8*EM, 11.209*ER, 'Jupiter');
+    beltOf(sun, 9000, 1.9*AU, 3.6*AU, [150,140,128], PART_MASS*0.02, 1, 0.05);
+    return {x:0, y:0, zoom:Math.min(22, Math.min(W,H)*0.44/(3.6*AU)),
+            yearUnit:SOLAR_YEAR};
   }},
 
   galilean:{
