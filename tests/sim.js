@@ -1466,6 +1466,34 @@ async function open(b, vp){
     ok('grabbing a world does not touch what is selected',
        grabbed && before && await sel(), 'held it and left the panel alone');
     await p.locator('#dragBtn').click();
+
+    /* and the picker itself can hold nothing, which is the press every tool
+       needs to be able to make */
+    const lit=()=>p.evaluate(()=>[...document.querySelectorAll('.bd')]
+                                  .filter(e=>e.classList.contains('on')).length);
+    const cnt2=()=>p.evaluate(()=>window.orbital.count());
+    /* nothing selected, or the first press on empty sky goes on putting that
+       down rather than placing anything */
+    await p.keyboard.press('Escape'); await p.waitForTimeout(80);
+    /* light one that is not already lit, whatever the picker was left on */
+    await p.locator('.bd[data-k="moon"]').click(); await p.waitForTimeout(80);
+    ok('one world in the picker is lit', await lit()===1);
+    const n2=await cnt2();
+    await p.mouse.click(at.x+300, at.y+140); await p.waitForTimeout(140);
+    ok('and pressing empty sky puts one there', await cnt2()===n2+1,
+       n2+' -> '+(await cnt2()));
+    await p.locator('.bd[data-k="moon"]').click(); await p.waitForTimeout(80);
+    ok('tapping the lit one puts it out', await lit()===0);
+    const n3=await cnt2();
+    await p.mouse.click(at.x+300, at.y-160); await p.waitForTimeout(140);
+    await p.mouse.move(at.x-300, at.y+120); await p.mouse.down();
+    await p.mouse.move(at.x-190, at.y+120); await p.waitForTimeout(80);
+    await p.mouse.up(); await p.waitForTimeout(140);
+    ok('and then nothing lands on the sky, tap or drag',
+       await cnt2()===n3, n3+' -> '+(await cnt2()));
+    await p.locator('.bd[data-k="moon"]').click(); await p.waitForTimeout(80);
+    ok('lighting it again gets the brush back',
+       await lit()===1 && await p.evaluate(()=>window.orbital.brush.name)==='Moon');
   }
 
   /* the density track has to reach the things the roster already contains */

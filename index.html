@@ -186,7 +186,7 @@
   </div>
 </div>
 
-<div class="hint" id="hint">Drag to fling a world. Smash two together and watch them melt. Hit Drag to pick one up.</div>
+<div class="hint" id="hint">Drag to fling a world. Smash two together and watch them melt. Tap the lit world below to put it down, and nothing will land on the sky.</div>
 
 <script>
 (function(){
@@ -2675,6 +2675,8 @@ view.addEventListener('pointerdown',e=>{
      nothing still places one. */
   aim.hadSel = !!selected;
   selectBody(null);
+  /* nothing on the cursor: the press was for something else */
+  if(!armed()) return;
   aim.active=true; aim.x=toWorldX(p.x); aim.y=toWorldY(p.y);
   aim.dx=0; aim.dy=0; aim.path=[]; aim.hit=null;
   updateAim();
@@ -2909,17 +2911,30 @@ function loadPreset(n){
 /* ============================ ui ============================ */
 const $=id=>document.getElementById(id);
 const elStat=$('stat'), elPlay=$('play'), elHint=$('hint');
-let currentKindId='rocky';
+/* which world the picker has lit, or null for none — and the last one it had,
+   so putting it out and lighting it again gets you back what you had */
+let currentKindId=null, lastKindId='rocky';
 
+/* Nothing is armed. The picker always had one of its worlds lit, which meant
+   every press on empty sky put a world there whether you wanted one or not —
+   and with a tool in hand, that is precisely the press you were trying to make.
+   So the lit one can be put out, and with nothing lit an empty press does
+   nothing at all. */
 function pickKind(id){
-  const k=kindById(id);
-  currentKindId=id;
-  brush.cls=k.cls; brush.pal=k.pal; brush.mass=k.mass; brush.dens=k.dens||0;
-  brush.comet=k.comet||0; brush.hole=k.hole||0; brush.name=k.name;
-  brush.seed=(seedCounter++*2654435761)%100000;
-  for(const el of $('bodies').children) el.classList.toggle('on',el.dataset.k===id);
+  if(id===null || id===currentKindId){ currentKindId=null; }
+  else {
+    const k=kindById(id);
+    currentKindId=id; lastKindId=id;
+    brush.cls=k.cls; brush.pal=k.pal; brush.mass=k.mass; brush.dens=k.dens||0;
+    brush.comet=k.comet||0; brush.hole=k.hole||0; brush.name=k.name;
+    brush.seed=(seedCounter++*2654435761)%100000;
+  }
+  for(const el of $('bodies').children)
+    el.classList.toggle('on', currentKindId!==null && el.dataset.k===currentKindId);
   syncForge();
 }
+/* is there a world on the end of the cursor at all */
+function armed(){ return currentKindId!==null; }
 /* the palette buttons carry a tiny live sprite rather than a flat swatch */
 function thumb(spec,size){
   const c=document.createElement('canvas');
@@ -2939,7 +2954,13 @@ for(const k of KINDS){
 
 /* ---- world forge ---- */
 let forgeOpen=false;
-function toggleForge(){ forgeOpen=!forgeOpen; $('forge').classList.toggle('on',forgeOpen); $('forgeBtn').classList.toggle('on',forgeOpen); if(forgeOpen) syncForge(); }
+function toggleForge(){
+  forgeOpen=!forgeOpen;
+  $('forge').classList.toggle('on',forgeOpen);
+  $('forgeBtn').classList.toggle('on',forgeOpen);
+  /* opening the forge is asking to build something, so it arms the picker */
+  if(forgeOpen){ if(!armed()) pickKind(lastKindId); syncForge(); }
+}
 $('forgeBtn').addEventListener('click',toggleForge);
 $('reroll').addEventListener('click',()=>{ brush.seed=(Math.random()*99999)|0; syncForge(); });
 
