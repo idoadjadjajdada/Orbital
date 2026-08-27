@@ -14,7 +14,8 @@ Open `index.html`. That's the whole install.
 | Tap empty space | with **Auto-orbit** on, drops the body straight into a circular orbit |
 | Tap a body | select it — see its mass, speed, what it orbits and its period |
 | **Drag** on, then drag a body | pick it up and move it; let go and it carries the speed your hand had |
-| Tap nothing with something selected | put it down. It clears the selection instead of dropping a world |
+| Tap a body again, `Esc`, or the panel's ✕ | put it down — three ways out of a selection |
+| Tap nothing with something selected | also puts it down, instead of dropping a world |
 | Scroll / pinch | zoom |
 | Two-finger drag, middle-drag, or space+drag | pan |
 | `1`–`6` | pick a body class |
@@ -283,6 +284,12 @@ That debris then has to end up somewhere:
   scale a fling is: the clock does not run at hand speed, so a cursor's true
   world velocity is nonsense as an orbital one, and a lazy sweep across the
   screen would otherwise be a thousand units a second.
+- **A tool press is not a selection.** With Drag on, pressing a world picks it
+  up and leaves the inspector exactly as it was: selecting is its own thing, and
+  a tool reaching for a world does not also get to decide what you are looking
+  at. Anything added later gets the same deal — and nothing selected is ever a
+  state you are stuck in, since a second tap, `Esc`, the ✕, or a tap on empty
+  sky all put it down.
 - **Nothing is drawn smaller than two buffer pixels.** A planet is a very small
   thing a very long way from the next one: pull back far enough to see two
   orbits at once and every world in the sky is a hundredth of a pixel, which is

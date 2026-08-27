@@ -149,7 +149,9 @@
   </div>
 
   <div class="card insp" id="insp">
-    <h4><canvas id="ispIcon" width="16" height="16"></canvas><span id="ispName">Body</span></h4>
+    <h4><canvas id="ispIcon" width="16" height="16"></canvas><span id="ispName">Body</span>
+      <span class="grow"></span>
+      <button class="btn sm" id="ispClose" title="Deselect — Esc or tap it again">&#10005;</button></h4>
     <div class="kv"><span>Mass</span><b id="ispMass">—</b></div>
     <div class="kv"><span>Speed</span><b id="ispVel">—</b></div>
     <div class="kv"><span>Orbiting</span><b id="ispHost">—</b></div>
@@ -2656,8 +2658,15 @@ view.addEventListener('pointerdown',e=>{
   }
   const hit=bodyAt(p.x,p.y);
   if(hit){
-    selectBody(hit);
-    if(dragMode) grabHold(hit, toWorldX(p.x), toWorldY(p.y));
+    /* A tool press is not a selection. With Drag on, pressing a world picks it
+       up and leaves the inspector exactly as it was — selecting is its own
+       thing, and a tool reaching for a world should not also decide what you
+       are looking at. Any tool added later gets the same deal. */
+    if(dragMode){ grabHold(hit, toWorldX(p.x), toWorldY(p.y)); return; }
+    /* Otherwise tapping a world picks it up in the inspector, and tapping the
+       same one again puts it back down. Nothing selected should ever be a
+       state you are stuck in. */
+    selectBody(hit===selected ? null : hit);
     return;
   }
   /* Losing a selection should not also cost you a world. If something was
@@ -3046,6 +3055,7 @@ function deleteSelected(){
   selectBody(null);
 }
 $('ispDel').addEventListener('click',deleteSelected);
+$('ispClose').addEventListener('click',()=>selectBody(null));
 function updateInspector(){
   if(!selected) return;
   $('ispMass').textContent=fmt(selected.m);

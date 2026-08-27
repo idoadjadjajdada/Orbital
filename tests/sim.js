@@ -1438,6 +1438,34 @@ async function open(b, vp){
     await p.mouse.click(at.x+320, at.y-200); await p.waitForTimeout(120);
     ok('a second tap on nothing still places one',
        await p.evaluate(()=>window.orbital.count())===n0+1);
+
+    /* three ways out of a selection, because being stuck in one is in the way
+       of every tool that is not the inspector */
+    const sel=()=>p.evaluate(()=>document.getElementById('insp').classList.contains('on'));
+    const cnt=()=>p.evaluate(()=>window.orbital.count());
+    const n1=await cnt();
+    await p.mouse.click(at.x, at.y); await p.waitForTimeout(100);
+    await p.mouse.click(at.x, at.y); await p.waitForTimeout(100);
+    ok('tapping the same world again puts it down',
+       !(await sel()) && await cnt()===n1, 'and makes nothing');
+    await p.mouse.click(at.x, at.y); await p.waitForTimeout(100);
+    await p.locator('#ispClose').click(); await p.waitForTimeout(100);
+    ok('so does the close button', !(await sel()) && await cnt()===n1);
+    await p.mouse.click(at.x, at.y); await p.waitForTimeout(100);
+    await p.keyboard.press('Escape'); await p.waitForTimeout(100);
+    ok('and so does Escape', !(await sel()) && await cnt()===n1);
+
+    /* and a tool is not a selection */
+    await p.mouse.click(at.x, at.y); await p.waitForTimeout(100);
+    const before=await sel();
+    await p.locator('#dragBtn').click();
+    await p.mouse.move(at.x, at.y); await p.mouse.down(); await p.waitForTimeout(80);
+    const grabbed=await p.evaluate(()=>window.orbital.holding())!==null;
+    await p.mouse.move(at.x+90, at.y); await p.waitForTimeout(60);
+    await p.mouse.up(); await p.waitForTimeout(80);
+    ok('grabbing a world does not touch what is selected',
+       grabbed && before && await sel(), 'held it and left the panel alone');
+    await p.locator('#dragBtn').click();
   }
 
   /* the density track has to reach the things the roster already contains */
