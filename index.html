@@ -24,6 +24,9 @@
     color:var(--ink);
     font:500 14px/1.4 ui-rounded,-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
     -webkit-user-select:none;user-select:none;touch-action:none;overscroll-behavior:none;
+    background:
+      radial-gradient(ellipse at 50% -20%, rgba(110,72,190,.18), transparent 58%),
+      linear-gradient(180deg,#0c071b 0%,var(--bg) 55%,#080510 100%);
   }
   button{font:inherit;font-weight:600;border:0;background:none;color:inherit;cursor:pointer;}
   :focus-visible{outline:2px solid var(--acc);outline-offset:2px;border-radius:8px;}
@@ -40,6 +43,8 @@
   /* Spacers cover the middle of the screen, which is the sky. Never take a pointer. */
   .ui > .grow, .ui .grow{pointer-events:none;}
   .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .ui > .row:first-child{padding:7px 9px;border-radius:14px;background:rgba(11,6,25,.34);
+    box-shadow:0 8px 28px rgba(0,0,0,.12);}
   .grow{flex:1;}
 
   .brand{font-weight:700;font-size:18px;letter-spacing:-.015em;text-shadow:0 2px 14px rgba(0,0,0,.9);}
@@ -107,7 +112,7 @@
   .bd.on .nm{color:#150a26;font-weight:700;}
   @media (hover:hover){ .bd:hover{background:var(--panel2);} .bd.on:hover{background:#fff;} }
 
-  .slider{display:flex;align-items:center;gap:9px;padding:5px 12px;min-width:170px;}
+  .slider{display:flex;align-items:center;gap:9px;padding:5px 12px;min-width:190px;}
   .slider label{font-size:12px;color:var(--dim);white-space:nowrap;}
   input[type=range]{flex:1;min-width:60px;accent-color:var(--acc);background:none;height:22px;}
 
@@ -158,6 +163,11 @@
     .sysList{flex-direction:row;}
     .sys{flex:1;} .sys .sb{display:none;}
     .tab{font-size:10px;padding:5px 2px;}
+    .ui{padding-left:8px;padding-right:8px;}
+    .ui > .row:first-child{gap:6px;padding:6px 7px;}
+    .ui > .row:last-child{gap:6px;}
+    .ui > .row:last-child .slider{flex:1;min-width:145px;}
+    .ui > .row:last-child .btn{padding:7px 9px;font-size:12px;}
   }
 </style>
 </head>
@@ -230,7 +240,7 @@
   <div class="row">
     <div class="card slider">
       <label for="speed">Speed</label>
-      <input type="range" id="speed" min="0" max="60" value="19">
+      <input type="range" id="speed" min="0" max="75" value="19">
       <span class="readout" id="speedv">1.0&times;</span>
     </div>
     <button class="btn" id="dragBtn" title="Grab a world and move it, and let go to throw it — D">Drag</button>
@@ -241,7 +251,7 @@
     <button class="btn" id="agingBtn" title="Let stars burn through their fuel, swell, and die — A">Aging</button>
     <div class="card slider" title="How much debris the sky will hold at once">
       <label for="debris">Debris</label>
-      <input type="range" id="debris" min="0" max="8" value="6">
+      <input type="range" id="debris" min="0" max="8" value="7">
       <span class="readout" id="debrisv">60k</span>
     </div>
     <div class="grow"></div>
@@ -259,7 +269,7 @@
 const G = 1;
 const SOFT = 2.0;
 const MAX_BODIES = 260;
-let   MAX_PARTS  = 60000;   /* how much debris the sky will hold; see the slider */
+let   MAX_PARTS  = 100000;  /* how much debris the sky will hold; see the slider */
 const SUBSTEPS = 4;
 const GRAV_SOURCES = 24;     /* particles only feel the heaviest few; the rest are noise */
 /* With tens of thousands of motes in the air, even the heaviest few is too many.
@@ -1926,7 +1936,9 @@ function shatter(heavy, light, impact){
   /* the debris carries the pair's momentum, plus a spray along the impact */
   const cmvx=(heavy.vx*heavy.m + light.vx*light.m)/(heavy.m+light.m);
   const cmvy=(heavy.vy*heavy.m + light.vy*light.m)/(heavy.m+light.m);
-  const n = Math.min(isGas?1100:700, Math.round((isGas?110:62)*Math.cbrt(light.m)+90));
+  /* A fuller spray makes impacts readable at the wider zoom levels too. The
+     cap still keeps a single collision from monopolising the particle budget. */
+  const n = Math.min(isGas?1600:1100, Math.round((isGas?150:105)*Math.cbrt(light.m)+120));
   /* The survivor keeps 42% of it; the rest is what these motes are made of.
      The count is chosen for how it looks, so the mass per mote has to follow
      from it — picking both independently was quietly creating matter. */
@@ -1946,7 +1958,7 @@ function shatter(heavy, light, impact){
       isGas ? 'gas' : 'rock',
       isGas ? rampAt(pal, 0.45+Math.random()*0.4) : base,
       isGas ? 0 : 0.75+Math.random()*0.25,
-      isGas ? 70+Math.random()*90 : 26+Math.random()*40,
+      isGas ? 90+Math.random()*120 : 38+Math.random()*58,
       debrisPM
     );
   }
@@ -2060,8 +2072,10 @@ function step(dt){
      many substeps run — so the cost is n^2 over a few dozen things, not over
      the sky. It is still a budget rather than a blank cheque: a scene holding
      hundreds of bodies gets proportionally fewer, so the frame cost of the
-     integrator stays bounded whatever is in it. */
-  const cap = Math.max(36, Math.min(900, (40000/Math.max(1,bodies.length))|0));
+     integrator stays bounded whatever is in it. The ceiling scales with the
+     extra headroom on the speed track — ten times the old 900, matching the
+     new 10000x top. */
+  const cap = Math.max(36, Math.min(9000, (400000/Math.max(1,bodies.length))|0));
   const sub = Math.max(SUBSTEPS, Math.min(cap, Math.ceil(dt*90)));
   const h=dt/sub;
   for(let s=0;s<sub;s++) integrate(h);
@@ -2644,7 +2658,7 @@ const cssToBuf = v => v/PIX;
 
 function zoomAt(sx,sy,factor){
   const wx=toWorldX(sx), wy=toWorldY(sy);
-  cam.zoom=Math.max(0.01,Math.min(22,cam.zoom*factor));
+  cam.zoom=Math.max(0.0005,Math.min(22,cam.zoom*factor));
   cam.x=wx-(sx-W/2)/cam.zoom;
   cam.y=wy-(sy-H/2)/cam.zoom;
 }
@@ -2657,19 +2671,27 @@ function fitAll(pad){
   }
   const w=Math.max(30,x1-x0), h=Math.max(30,y1-y0);
   cam.x=(x0+x1)/2; cam.y=(y0+y1)/2;
-  cam.zoom=Math.max(0.01,Math.min(22,Math.min(W/w,H/h)*(pad||0.8)));
+  cam.zoom=Math.max(0.0005,Math.min(22,Math.min(W/w,H/h)*(pad||0.8)));
   following=null;
 }
 
 /* ============================ deep sky ============================ */
 /* Background only: nebula wash, a couple of galaxies and a few hundred stars.
    None of it is in the simulation — it exists to make the dark feel deep. */
-let stars=[], sky=null;
+let stars=[], sky=null, skySeed=(Math.random()*0x7fffffff)|0;
+const blackHoleSprites=[];
+function loadBlackHoleSprites(){
+  for(const src of ['assets/black-hole-user.png']){
+    const img=new Image();
+    img.onload=()=>{ blackHoleSprites.push(img); if(W&&sky) seedSky(); };
+    img.src=src;
+  }
+}
 function seedSky(){
-  let s=20240;
+  let s=skySeed;
   const rnd=()=>{ s=(s*1103515245+12345)&0x7fffffff; return s/0x7fffffff; };
   stars=[];
-  const n=Math.round(W*H/900);
+  const n=Math.round(W*H/1400);
   for(let i=0;i<n;i++){
     const layer=i%3;
     stars.push({
@@ -2679,13 +2701,15 @@ function seedSky(){
       b:[0.13,0.24,0.42][layer]*(0.35+rnd()*0.9),
       tw: rnd()<0.18 ? 0.6+rnd()*2.2 : 0,
       ph: rnd()*6.283,
-      c: rnd()
+      c: rnd(),
+      spike: rnd()<0.025
     });
   }
   /* the nebula and galaxies are painted once and blitted with parallax */
   sky=document.createElement('canvas');
   sky.width=Math.round(W*1.5); sky.height=Math.round(H*1.5);
   const g=sky.getContext('2d');
+  g.imageSmoothingEnabled=false;
   g.fillStyle='rgba(0,0,0,0)'; g.fillRect(0,0,sky.width,sky.height);
   const clouds=[
     [0.24,0.28,0.55,'rgba(124,54,190,0.30)'],
@@ -2700,39 +2724,188 @@ function seedSky(){
     grad.addColorStop(0,col); grad.addColorStop(1,'rgba(0,0,0,0)');
     g.fillStyle=grad; g.fillRect(0,0,sky.width,sky.height);
   }
-  drawGalaxy(g, sky.width*0.30, sky.height*0.30, sky.width*0.11, -0.5, rnd);
-  drawGalaxy(g, sky.width*0.78, sky.height*0.70, sky.width*0.075, 1.1, rnd);
+  /* Procedural deep-sky landmarks: every resize gets a stable but varied field
+     of galaxies and black holes instead of two repeated stock shapes. */
+  for(let i=0;i<7;i++){
+    const cx=sky.width*(0.08+rnd()*0.84), cy=sky.height*(0.08+rnd()*0.84);
+    const R=sky.width*(0.012+rnd()*0.038);
+    drawGalaxy(g,cx,cy,R,(rnd()-0.5)*6.283,rnd,1+rnd()*3.5,0.52+rnd()*0.38,(rnd()*6)|0);
+  }
+  for(let i=0;i<3;i++) drawNebula(g,sky.width*(.12+rnd()*.76),sky.height*(.10+rnd()*.80),sky.width*(.10+rnd()*.14),rnd);
+  for(let i=0;i<1;i++){
+    const x=sky.width*(0.12+rnd()*0.76), y=sky.height*(0.12+rnd()*0.76);
+    drawBlackHoleSprite(g,x,y,sky.width*(0.006+rnd()*0.002),rnd);
+  }
+}
+function drawBlackHoleSprite(g,cx,cy,R,rnd){
+  /* Wait for the supplied asset rather than briefly drawing the old procedural
+     fallback, which can read as an extra misaligned black disk. */
+  if(!blackHoleSprites.length) return;
+  const img=blackHoleSprites[(rnd()*blackHoleSprites.length)|0];
+  const w=R*6.2*(.92+rnd()*.16), h=w*(img.height/img.width);
+  g.save(); g.translate(cx,cy); g.rotate((rnd()-.5)*.18); g.globalAlpha=.12;
+  g.drawImage(img,-w/2,-h/2,w,h); g.restore();
+}
+function rerollSky(){
+  skySeed=(Math.random()*0x7fffffff)|0;
+  seedSky();
 }
 /* A spiral rendered as scattered dots — cheap, and at pixel scale it reads far
    better than a smooth gradient would. */
-function drawGalaxy(g,cx,cy,R,rot,rnd){
-  g.save(); g.translate(cx,cy); g.rotate(rot); g.scale(1,0.42);
+function drawNebula(g,cx,cy,R,rnd){
+  g.save(); g.translate(cx,cy); g.rotate((rnd()-.5)*2.4);
+  const hues=['108,64,196','48,95,190','176,52,148'];
+  const col=hues[(rnd()*3)|0], seed=rnd()*100;
+  const cell=Math.max(1,Math.round(R*.022));
+  const cols=Math.ceil(R*3.3/cell), rows=Math.ceil(R*1.9/cell);
+  const noise=(x,y)=>.5+.22*Math.sin(x*6.7+seed)+.16*Math.sin(y*9.3-seed*.7)+.10*Math.sin((x+y)*17.1+seed*1.3);
+  /* Multi-lobed filaments with warped contours produce a connected gas cloud,
+     while each surviving sample remains a crisp square pixel. */
+  for(let y=0;y<rows;y++) for(let x=0;x<cols;x++){
+    const px=(x-cols/2)*cell, py=(y-rows/2)*cell;
+    const nx=px/(R*1.45), ny=py/(R*.78);
+    const warpX=nx+.16*Math.sin(ny*5.3+seed), warpY=ny+.12*Math.sin(nx*4.1-seed);
+    const l1=Math.exp(-((warpX+.48)**2*2.1+(warpY+.12)**2*4.5));
+    const l2=.92*Math.exp(-((warpX-.28)**2*2.8+(warpY-.10)**2*3.2));
+    const filament=.62*Math.exp(-Math.abs(warpY-.20*Math.sin(warpX*4.6+seed))/.18);
+    const field=Math.max(l1,l2,filament)*(.63+noise(warpX,warpY)*.58)-Math.max(0,Math.abs(warpX)-1.12)*.34;
+    if(field<.56) continue;
+    const a=Math.min(.20,.025+(field-.56)*.16);
+    g.fillStyle=`rgba(${col},${a})`;
+    g.fillRect(px,py,cell,cell);
+    if(field>.86){ g.fillStyle=`rgba(220,210,255,${a*.7})`; g.fillRect(px,py,Math.max(1,cell>>1),Math.max(1,cell>>1)); }
+  }
+  g.restore();
+}
+function drawGalaxy(g,cx,cy,R,rot,rnd,arms,flat,shape){
+  g.save(); g.translate(cx,cy); g.rotate(rot); g.scale(1,Math.max(.52,flat));
+  const themes=[
+    ['255,226,188','240,150,180','255,210,160'],
+    ['210,220,255','150,180,255','190,210,255'],
+    ['255,192,224','220,130,255','255,170,210'],
+    ['180,238,220','100,190,190','170,255,235'],
+    ['255,238,165','220,170,90','255,220,130']
+  ][(rnd()*5)|0];
   const core=g.createRadialGradient(0,0,0,0,0,R*0.55);
-  core.addColorStop(0,'rgba(255,238,210,0.75)');
-  core.addColorStop(0.35,'rgba(232,178,255,0.30)');
+  core.addColorStop(0,`rgba(${themes[0]},0.62)`);
+  core.addColorStop(0.35,`rgba(${themes[1]},0.24)`);
   core.addColorStop(1,'rgba(0,0,0,0)');
-  g.fillStyle=core; g.beginPath(); g.arc(0,0,R*0.55,0,6.283); g.fill();
-  for(let arm=0;arm<2;arm++){
-    for(let i=0;i<520;i++){
-      const t=i/520;
-      const a=arm*Math.PI + t*3.0 + (rnd()-0.5)*0.30;
+  if(shape!==5){ g.fillStyle=core; g.beginPath(); g.arc(0,0,R*0.55,0,6.283); g.fill(); }
+  /* Break the perfect ellipse with sparse, uneven edge wisps and knots. */
+  for(let i=0;i<110;i++){
+    const a=rnd()*6.283, band=.72+rnd()*.48, rr=R*band;
+    const x=Math.cos(a)*rr, y=Math.sin(a)*rr;
+    const al=.035+rnd()*.16;
+    g.fillStyle=`rgba(${themes[rnd()<.7?0:1]},${al})`;
+    g.fillRect(x,y,1+(rnd()<.16?1:0),1+(rnd()<.10?1:0));
+  }
+  if(shape===1){
+    const n=180;
+    for(let i=0;i<n;i++){
+      const a=rnd()*6.283, rad=Math.sqrt(rnd())*R*1.1;
+      g.fillStyle=`rgba(${themes[0]},${.08+rnd()*.22})`;
+      g.fillRect(Math.cos(a)*rad,Math.sin(a)*rad,1,1);
+    }
+    g.restore(); return;
+  }
+  if(shape===3){
+    /* Ring galaxy: broken star-forming knots around a hollow centre. */
+    for(let i=0;i<220;i++){
+      const a=rnd()*6.283, rad=R*(.62+(rnd()-.5)*.18), x=Math.cos(a)*rad, y=Math.sin(a)*rad;
+      const al=.08+rnd()*.24;
+      g.fillStyle=rnd()<.55?`rgba(${themes[0]},${al})`:`rgba(${themes[1]},${al*.8})`;
+      g.fillRect(x,y,1+rnd()*1.2,1+rnd()*1.2);
+    }
+    g.restore(); return;
+  }
+  if(shape===4){
+    /* Irregular galaxy: offset clumps with no shared circular outline. */
+    for(let i=0;i<7;i++){
+      const x=(rnd()-.5)*R*1.7, y=(rnd()-.5)*R*.9, n=18+(rnd()*28|0);
+      for(let k=0;k<n;k++){
+        const a=rnd()*6.283, d=Math.sqrt(rnd()), rr=R*(.08+rnd()*.18);
+        g.fillStyle=rnd()<.65?`rgba(${themes[0]},${.07+rnd()*.22})`:`rgba(${themes[1]},${.06+rnd()*.18})`;
+        g.fillRect(x+Math.cos(a)*rr*d,y+Math.sin(a)*rr*d,1,1);
+      }
+    }
+    g.restore(); return;
+  }
+  if(shape===5){
+    /* Clumpy edge-on galaxy: disconnected star-forming knots on a loose path,
+       with no filled strip or geometric rectangle connecting them. */
+    for(let i=0;i<8;i++){
+      const x=-R*1.25+i*R*2.5/7, y=(rnd()-.5)*R*.30, rr=R*(.10+rnd()*.16);
+      for(let k=0;k<28+(rnd()*24|0);k++){
+        const a=rnd()*6.283, d=Math.sqrt(rnd());
+        g.fillStyle=`rgba(${themes[rnd()<.65?0:1]},${.06+rnd()*.24})`;
+        g.fillRect(x+Math.cos(a)*rr*d,y+Math.sin(a)*rr*d,1+(rnd()<.10?1:0),1+(rnd()<.08?1:0));
+      }
+    }
+    g.restore(); return;
+  }
+  if(shape===2){
+    /* Flocculent variant: fewer, broken arms with more turbulent gaps. */
+    arms=Math.max(1,Math.round(arms*.55));
+  }
+  for(let arm=0;arm<arms;arm++){
+    for(let i=0;i<260;i++){
+      const t=i/260;
+      const a=arm*(6.283/arms) + t*(2.2+rnd()*1.8) + (rnd()-0.5)*0.30;
       const rad=R*(0.12+t*0.95) + (rnd()-0.5)*R*0.13;
       const x=Math.cos(a)*rad, y=Math.sin(a)*rad;
       const al=(1-t)*0.5*(0.35+rnd()*0.75);
-      g.fillStyle = rnd()<0.28 ? `rgba(190,208,255,${al})` : `rgba(255,226,236,${al})`;
+      g.fillStyle = rnd()<0.5 ? `rgba(${themes[0]},${al})` : `rgba(${themes[1]},${al})`;
       g.fillRect(x,y,1,1);
     }
   }
   g.restore();
 }
+function drawBlackHole(g,cx,cy,R,rnd){
+  /* Build a high-resolution sprite first. The sky itself is intentionally
+     coarse, but this landmark needs enough samples for a smooth horizon and
+     broad disk to survive its final downsample. */
+  const scale=8, sw=Math.ceil(R*13)*scale, sh=Math.ceil(R*7)*scale;
+  const sprite=document.createElement('canvas'); sprite.width=sw; sprite.height=sh;
+  const q=sprite.getContext('2d'); q.imageSmoothingEnabled=true;
+  q.translate(sw/2,sh/2); q.scale(scale,scale);
+  const hot=198+(rnd()*32|0);
+  q.globalAlpha=.52; q.filter='blur(.45px)';
+  const glow=q.createRadialGradient(0,0,R*.55,0,0,R*5.8);
+  glow.addColorStop(0,`rgba(${hot},${hot+12},255,.22)`); glow.addColorStop(.48,'rgba(173,110,145,.10)'); glow.addColorStop(1,'rgba(0,0,0,0)');
+  q.fillStyle=glow; q.beginPath(); q.ellipse(0,0,R*5.8,R*2.25,0,0,6.283); q.fill(); q.filter='none';
+  /* Continuous edge-on accretion disk, with the approaching side slightly
+     brighter so it does not look like a symmetric UI icon. */
+  q.globalAlpha=.58;
+  for(let i=0;i<9;i++){
+    const y=(i-4)*R*.055, jitter=(rnd()-.5)*R*.06;
+    const grad=q.createLinearGradient(-R*5.5,0,R*5.5,0);
+    grad.addColorStop(0,'rgba(86,92,155,0)'); grad.addColorStop(.24,'rgba(155,116,172,.16)');
+    grad.addColorStop(.52,`rgba(${hot},${hot+18},255,.34)`); grad.addColorStop(.72,'rgba(255,190,138,.42)'); grad.addColorStop(1,'rgba(88,74,136,0)');
+    q.strokeStyle=grad; q.lineWidth=R*(.10-i*.006);
+    q.beginPath(); q.moveTo(-R*5.4,y); q.bezierCurveTo(-R*2.2,y+jitter,-R*.7,y-R*.08,0,y); q.bezierCurveTo(R*.9,y+R*.04,R*2.5,y+jitter,R*5.4,y); q.stroke();
+  }
+  /* Lensed upper and lower disk images, each a solid band with a soft inner
+     edge. They are close to the horizon and share the disk's palette. */
+  const arcBand=(upper)=>{
+    const s=upper?-1:1, outer=upper?2.65:1.95, inner=upper?2.18:1.52, apex=upper?1.62:1.48, ia=upper?1.23:1.12;
+    q.globalAlpha=upper?.46:.34; q.fillStyle=upper?'rgba(244,218,188,.34)':'rgba(194,182,208,.26)'; q.beginPath();
+    q.moveTo(-R*outer,0); q.bezierCurveTo(-R*1.75,s*R*.02,-R*.85,s*R*apex,0,s*R*apex); q.bezierCurveTo(R*.85,s*R*apex,R*1.75,s*R*.02,R*outer,0);
+    q.bezierCurveTo(R*1.55,s*R*.02,R*.68,s*R*ia,0,s*R*ia); q.bezierCurveTo(-R*.68,s*R*ia,-R*1.55,s*R*.02,-R*outer,0); q.fill();
+  };
+  arcBand(true); arcBand(false);
+  /* The event horizon and photon ring are the final occluders. */
+  q.globalAlpha=1; q.fillStyle='rgba(0,0,3,.98)'; q.beginPath(); q.arc(0,0,R,0,6.283); q.fill();
+  q.strokeStyle='rgba(224,230,255,.62)'; q.lineWidth=Math.max(.7,R*.075); q.beginPath(); q.arc(0,0,R*1.055,0,6.283); q.stroke();
+  q.setTransform(1,0,0,1,0,0); g.globalAlpha=.78;
+  g.drawImage(sprite,cx-sw/scale/2,cy-sh/scale/2,sw/scale,sh/scale); g.globalAlpha=1;
+}
 function drawSky(t){
   ctx.fillStyle='#0a0616';
   ctx.fillRect(0,0,W,H);
-  /* nebula and galaxies drift a fraction of the camera: the parallax is what
-     makes the backdrop feel far away */
-  const px=-cam.x*0.02*cam.zoom, py=-cam.y*0.02*cam.zoom;
-  const ox=((px % sky.width)+sky.width)%sky.width - (sky.width-W)/2;
-  const oy=((py % sky.height)+sky.height)%sky.height - (sky.height-H)/2;
+  /* Keep the procedural sky anchored to the viewport. Camera changes from
+     presets, Clear, or following a body must not look like a seed reroll. */
+  const ox=-(sky.width-W)/2;
+  const oy=-(sky.height-H)/2;
   ctx.globalAlpha=0.85;
   for(let gx=-1;gx<=1;gx++) for(let gy=-1;gy<=1;gy++)
     ctx.drawImage(sky, ox+gx*sky.width, oy+gy*sky.height);
@@ -2749,6 +2922,11 @@ function drawSky(t){
                   : st.c<0.9  ? `rgba(255,226,206,${b})`
                               : `rgba(198,214,255,${b})`;
     ctx.fillRect(sx|0, sy|0, 1, 1);
+    if(st.spike && b>0.22){
+      ctx.globalAlpha=Math.min(0.6,b*1.4);
+      ctx.fillRect((sx|0)-1,sy|0,3,1); ctx.fillRect(sx|0,(sy|0)-1,1,3);
+      ctx.globalAlpha=1;
+    }
   }
 }
 
@@ -3484,7 +3662,13 @@ view.addEventListener('wheel',e=>{
 addEventListener('keydown',e=>{
   if(e.target&&e.target.tagName==='INPUT') return;
   const k=e.key;
-  if(k===' '){ e.preventDefault(); spaceHeld=true; togglePlay(); }
+  if(k===' '){
+    e.preventDefault();
+    /* Browsers emit repeated keydown events while Space is held. A shortcut
+       should toggle once per press, matching a click on the Play button. */
+    if(!spaceHeld) togglePlay();
+    spaceHeld=true;
+  }
   else if(k==='c'||k==='C') clearAll();
   else if(k==='t'||k==='T') setTrails(!showTrails);
   else if(k==='o'||k==='O') setOrbits(!showOrbits);
@@ -3853,6 +4037,7 @@ const PRESETS={
   }}
 };
 function loadPreset(n){
+  rerollSky();
   held=null; ghosts=[]; blobs=[];
   bodies=[]; parts=[]; waves=[]; selected=null; following=null;
   /* a preset may say where it wants to be looked at from; otherwise frame it */
@@ -4015,7 +4200,7 @@ function syncForge(skipSliders){
 
 function togglePlay(){ running=!running; elPlay.textContent=running?'Pause':'Play'; }
 elPlay.addEventListener('click',togglePlay);
-function clearAll(){ held=null; lastSettle=null; ghosts=[]; bodies=[]; parts=[]; waves=[]; blobs=[]; selected=null; following=null; selectBody(null); }
+function clearAll(){ rerollSky(); held=null; lastSettle=null; ghosts=[]; bodies=[]; parts=[]; waves=[]; blobs=[]; selected=null; following=null; selectBody(null); }
 $('reset').addEventListener('click',clearAll);
 $('fit').addEventListener('click',()=>fitAll());
 function setTrails(v){ showTrails=v; $('trails').classList.toggle('on',v); if(!v) for(const b of bodies) b.trail.length=0; }
@@ -4042,14 +4227,20 @@ function setDragMode(v){
 }
 $('dragBtn').addEventListener('click',()=>setDragMode(!dragMode));
 setTrails(true); $('orbitAssist').classList.add('on');
-/* The top of the track is 1000x, which is what it costs to reach a year a
-   second: an orbit at one AU takes SOLAR_YEAR sim-seconds, and that is a shade
-   under a thousand. The exponent is steeper than the old 2.6 to cover the
-   extra range without losing the slow end, where the interesting part is —
-   a third of the way along is still about 9x. */
+/* Three quarters of the track is the original curve, topping out at 1000x —
+   about a year a second in our system. The last quarter runs 1000x to 10000x
+   on a log segment for when you want a star to finish while you are still
+   watching. The exponent on the slow end is steeper than the old 2.6 so a
+   third of the way along is still about 9x. */
+const SPEED_SLIDER_TOP = 75, SPEED_SLIDER_KNEE = 60, SPEED_KNEE = 1000, SPEED_MAX = 10000;
 $('speed').addEventListener('input',e=>{
-  const t=+e.target.value/60;
-  timeScale=t<=0?0:Math.pow(t,4.1)*1000;
+  const v=+e.target.value;
+  if(v<=0) timeScale=0;
+  else if(v<=SPEED_SLIDER_KNEE) timeScale=Math.pow(v/SPEED_SLIDER_KNEE,4.1)*SPEED_KNEE;
+  else {
+    const u=(v-SPEED_SLIDER_KNEE)/(SPEED_SLIDER_TOP-SPEED_SLIDER_KNEE);
+    timeScale=SPEED_KNEE*Math.pow(SPEED_MAX/SPEED_KNEE,u);
+  }
   $('speedv').innerHTML=fmtRate(timeScale)+'&times;';
   syncRate();
 });
@@ -4340,6 +4531,7 @@ function frame(now){
 
 /* ============================ boot ============================ */
 resize();
+loadBlackHoleSprites();
 pickKind('rocky');
 loadPreset('solar');
 requestAnimationFrame(t=>{ last=t; frame(t); });
