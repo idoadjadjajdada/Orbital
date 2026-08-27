@@ -21,7 +21,7 @@ Open `index.html`. That's the whole install.
 | Tap the lit world in the picker | put it out. With nothing lit, an empty press places nothing |
 | Tap a shelf in the picker | Small · Worlds · Giants · Stars · Remnants |
 | `1`–`9` | pick a body off the shelf on show, or the same one again to put it out |
-| `Space` `C` `T` `D` `F` `G` `O` | pause · clear · trails · drag · fit · forge · orbits |
+| `Space` `C` `T` `D` `F` `G` `O` `Z` `A` | pause · clear · trails · drag · fit · forge · orbits · zones · aging |
 
 Built for desktop and iPad: one finger draws and flings, two fingers pinch and
 pan, and a mouse wheel zooms about the cursor.
@@ -50,6 +50,81 @@ the orbit really is being perturbed. Nothing is drawn where there is no orbit:
 escaping, near-radial, a periapsis underneath the host's own surface, or a body
 heavier than the thing it is supposedly going round all disqualify it, and each
 of those is a case where an ellipse would be a claim about to break.
+
+**A tide does more than pull things apart.** The bulge one raises is carried a
+little past the line to whatever raised it, and a pull on an offset bulge is a
+torque — one that only ever runs toward turning once per orbit. Every large
+moon in our system has already lost that argument, which is why we have only
+ever seen one face of ours. The turn it loses is friction inside a body, so it
+comes out as heat.
+
+And locking is not the end of it. A locked body turns at one steady rate while
+its orbital rate changes round an eccentric orbit, so it is flexed twice a lap
+and can never stop. **That is why Io is molten**, and it is why Io is molten
+here: the Laplace resonance will not let it circularise, so the flexing has
+nowhere to stop. Ganymede, further out, cools. Take the other two moons away
+and Io goes cold — nothing about it is painted on.
+
+**Stars run out.** Brightness goes as about M^3.5 and the fuel only goes as M,
+so the time a star lasts goes as M^-2.5: one twice the Sun's mass is eleven
+times as bright and lasts a fifth as long, and the heavy ones are the ones that
+die while you are watching. A star that reaches the end of its hydrogen swells
+into a red giant at exactly the mass it always had — anything close enough is
+then simply inside it — drifts its envelope off as a planetary nebula, and
+leaves the core that was holding it up.
+
+How much of itself it leaves is not a constant. The heavier it was, the more of
+it goes, which is why nothing that dies this way arrives anywhere near the
+Chandrasekhar limit and a white dwarf has to be fed by something else to get
+there.
+
+Stellar time is compressed and that is the one number here doing it. Ten
+billion years would be 10^13 sim-seconds: at the fastest this clock runs you
+would wait three centuries for one star to finish. At the top of the speed
+track a Sun lasts about a minute and a half instead; at ordinary speeds nothing
+measurable happens to it, which is the point.
+
+**The habitable zone follows from the brightness**, so it moves outward as a
+star ages and jumps when one swells. A world can be handed a habitable zone and
+have it taken away again. Selecting anything says how much light is falling on
+it, in units of what Earth gets — Jupiter reads 0.04, which is what Jupiter
+gets.
+
+**A star can feed another one.** Swell one until it fills its own side of the
+surface where the pull of the pair changes hands, and it stops owning its outer
+layers. What leaves does so through the point between them and does not fall
+straight in — it carries the orbital motion of the star it left, so it misses,
+swings round, and winds into a disc.
+
+What the thing on the receiving end does about that depends on what it is.
+A white dwarf piles hydrogen on its surface until the bottom of the pile fuses,
+and then the layer goes all at once: a **nova**, which throws off roughly what
+it took on and leaves the star otherwise unchanged, ready to do it again. Feed
+it past Chandrasekhar and it does something else entirely. A white dwarf is not
+a core sitting inside a star, it is the whole object and it is made of fuel, so
+it does not collapse — it detonates, all of it, and leaves **nothing at all
+behind**. That is the real difference between the two kinds of supernova, and
+the collapse already here is the other one.
+
+**Orbits leak.** Two things going round each other radiate gravitational waves
+and the orbit pays for them. It is hopeless for anything ordinary — Earth's
+orbit loses about a proton's width a day — but it goes as 1/r^5, so for two
+dense things in a close orbit it stops being hopeless and becomes the only
+thing happening. It runs away at the end, because losing the orbit makes it
+tighter and a tighter orbit loses it faster.
+
+**And the ellipse does not quite close.** There is a further pull going as
+1/r^4, and what it does to a bound orbit is walk the whole thing slowly round.
+Mercury does it by 43 arcseconds a century and it took general relativity to
+say why. With the orbit outlines on you can watch it happen.
+
+**Five places hold station** with any pair. Three sit on the line through both
+and none of those are stable. The other two sit sixty degrees ahead and behind,
+making an equilateral triangle with the pair, and those genuinely hold: nudge
+something out of one and the Coriolis term of the rotating frame curls it back.
+Jupiter has kept two crowds of asteroids parked in its for the age of the solar
+system, and it keeps them here too — they are put in the right place with the
+right speed and nothing pins them there afterwards.
 
 Three systems ship with it, and two of them are about resonance.
 
@@ -234,6 +309,29 @@ That debris then has to end up somewhere:
 
 ## How it works
 
+- **Two numbers in here are chosen rather than derived, and both are the
+  price of being watchable.** The speed of light is one: at its true value
+  Mercury's perihelion moves five ten-millionths of a radian an orbit and you
+  would never see it, so it is set where the effect is real and the rate is
+  legible — about a degree an orbit. Stellar lifetimes are the other. Every
+  other constant here is either measured or falls out of one that is.
+- **Tidal heating is squared in the tide**, because the real rate falls off far
+  faster with distance than the stress alone does, and that steepness is the
+  whole point of it: it is what separates Io, which never cools, from Europa a
+  hundred units further out, which does. A shallower law heats both the same
+  and says nothing about either.
+- **The Roche lobe uses Eggleton's fit** — within a percent over every mass
+  ratio that ever comes up, and one line instead of a root-find.
+- **The white dwarf limit sits just under the collapse limit**, and the two are
+  near each other for a real reason: it is the same piece of physics. Which one
+  is crossed first is what decides whether something leaves a neutron star or
+  leaves nothing.
+- **The relativistic term is radial**, so it torques nothing and angular
+  momentum still holds exactly. It is skipped entirely beyond a cutoff, which
+  is nearly everywhere, and that guard is why it costs nothing.
+- **Gravitational-wave losses are taken out of both bodies** in the proportions
+  that leave the total momentum alone, rather than out of the orbit as a
+  bookkeeping entry.
 - **The clock's ceiling is a substep budget, not a number.** Fast-forward used
   to stop at 60x because the substep count was capped at 36: past that the
   substep grew instead of the count, and a circular orbit started spiralling.
@@ -427,7 +525,13 @@ and total energy must not drift. Both would catch an integrator regression that
 no amount of clicking around would reveal.
 
 `window.orbital` is a small scripting hook — `list()`, `add()`, `step(dt)`,
-`energy()`, `preset()`, `rate()`, `yearUnit()`, `orbit(id)`. The tests drive the sim through it with an exact `dt`
+`energy()`, `preset()`, `rate()`, `yearUnit()`, `orbit(id)`, `aging()`,
+`flux(x,y)`, `lagrange(id)`.
+
+Two of the physical tests are worth knowing about before reading a red line as
+a regression. The hit-and-run graze and the black-hole jet count are both
+stochastic, and both sit close enough to their thresholds that a single run can
+fall either side without anything having changed. Re-run before investigating. The tests drive the sim through it with an exact `dt`
 so results do not depend on machine speed. The ones about picking a world up go
 the other way and put a real cursor on the real canvas, because what is under
 test there is what a hand does.

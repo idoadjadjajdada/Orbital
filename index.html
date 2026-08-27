@@ -202,6 +202,8 @@
     <div class="kv"><span>Orbiting</span><b id="ispHost">—</b></div>
     <div class="kv"><span>Period</span><b id="ispPer">—</b></div>
     <div class="kv"><span>One orbit takes</span><b id="ispYear">—</b></div>
+    <div class="kv" id="ispStageRow"><span>Stage</span><b id="ispStage">—</b></div>
+    <div class="kv" id="ispSunRow"><span>Sunlight</span><b id="ispSun">—</b></div>
     <div class="acts">
       <button class="btn sm" id="ispFollow">Follow</button>
       <button class="btn sm" id="ispDel">Delete</button>
@@ -229,6 +231,8 @@
     <button class="btn" id="orbitAssist" title="Tap empty space to drop a body into a circular orbit">Auto-orbit</button>
     <button class="btn" id="trails" title="Orbit trails — T">Trails</button>
     <button class="btn" id="orbits" title="Draw the ellipse each stable orbit is following — O">Orbits</button>
+    <button class="btn" id="zones" title="Habitable zones, and the five Lagrange points of whatever is selected — Z">Zones</button>
+    <button class="btn" id="agingBtn" title="Let stars burn through their fuel, swell, and die — A">Aging</button>
     <div class="card slider" title="How much debris the sky will hold at once">
       <label for="debris">Debris</label>
       <input type="range" id="debris" min="0" max="8" value="6">
@@ -271,9 +275,41 @@ const CLUMP_SPREAD= 1.5;     /* how alike their velocities must be */
    scale — see the stress calculation in tides() */
 const COHESION = 0.8;
 const TIDE_K = 8;      /* fluid Roche coefficient, 2^3 — see tides() */
+/* How fast a tide drags a body's spin toward turning once per orbit, how much
+   of the spin it takes comes back as heat, and how hard a locked body on an
+   eccentric orbit is flexed. The last is tuned so Io at its real eccentricity
+   stays molten rather than cooling to rock, which is the thing it is for. */
+const TIDE_LOCK = 0.5, TIDE_HEAT = 0.05, TIDE_FLEX = 1.2e6;
 /* a year is divided up for the clock readout, nothing else */
 const MONTH = 1/12, DAY = 1/365.25;
 const NEUTRON_MASS = 4200;
+/* One solar mass, in world units — the same 3,000 the solar preset gives its
+   Sun. Stellar lives are measured against it. */
+const STAR_SUN = 3000;
+/* What a Sun-mass star spends on the main sequence, in sim-seconds.
+   Ten billion years would be 10^13 of them: at the fastest this clock runs you
+   would wait three centuries for one star to finish, so stellar time is
+   compressed and that compression is the one number here doing it. At the top
+   of the speed track a Sun lasts about a minute and a half; at ordinary speeds
+   nothing measurable happens, which is the point. */
+const SUN_LIFE = 80000;
+/* Chandrasekhar: what a white dwarf can carry before electron degeneracy stops
+   holding it up. It is deliberately a hair under NEUTRON_MASS, and the two are
+   near each other for a real reason — the collapse limit for a stellar core is
+   the same piece of physics. Being under it is what decides which of the two
+   happens first: a dwarf detonates and leaves nothing, where a heavy star's
+   core collapses and leaves a neutron star. Same limit, opposite endings. */
+const CHANDRA = 4100;
+/* Light, in world units a second. This is chosen rather than measured, and it
+   is the only number in here that is. It sets the size of both relativistic
+   effects: at the true value Mercury's perihelion would move by five ten-
+   millionths of a radian an orbit and you would never see it. At this value it
+   moves about a degree an orbit, so a few dozen laps visibly walk the ellipse
+   round — the effect is real, the rate is legible. */
+const C_LIGHT = 140;
+/* Past this separation the relativistic term is smaller than the arithmetic
+   the rest of the step is doing, so it is not worth the multiply. */
+const GR_REACH2 = 1400*1400;
 const HOLE_MASS    = 13000;
 const SHOCK_SPEED  = 190;    /* how fast a blast front travels, world units/s */
 
@@ -479,7 +515,7 @@ const KINDS = [
   /* a burnt-out core held up by degenerate matter — an Earth's width carrying
      most of a star, which is why it is the densest thing here short of a
      neutron star */
-  {id:'whited',   name:'White dwarf',cls:'star', pal:'ice',      mass:900,  dens:2600, cat:'remnant'},
+  {id:'whited',   name:'White dwarf',cls:'star', pal:'ice',      mass:900,  dens:2600, wd:1, cat:'remnant'},
   {id:'neutron',  name:'Neutron star',cls:'exotic',pal:'azure',  mass:5200, dens:9000, cat:'remnant'},
   {id:'pulsar',   name:'Pulsar',     cls:'exotic',pal:'azure',   mass:5000, dens:9000, spin:5.2, cat:'remnant'},
   /* the same object with the beam cranked: it spins down fast because the
@@ -507,14 +543,15 @@ const massFor   = (r, dens) => dens*Math.pow(r/RSCALE,3);
 let seedCounter = 1;
 function specFromKind(k, seed){
   return {cls:k.cls, pal:k.pal, seed: seed===undefined ? (seedCounter++*2654435761)%100000 : seed,
-          dens:k.dens, comet:k.comet||0, hole:k.hole||0, spin:k.spin||0, name:k.name};
+          dens:k.dens, comet:k.comet||0, hole:k.hole||0, spin:k.spin||0,
+          wd:k.wd||0, name:k.name};
 }
 
 /* ============================ state ============================ */
 let bodies = [], parts = [];
 let nextId = 1;
 let running = true, showTrails = true, orbitAssist = true, dragMode = false;
-let showOrbits = true;
+let showOrbits = true, showZones = false;
 let timeScale = 1, selected = null, following = null;
 const cam = {x:0, y:0, zoom:1};
 
@@ -543,6 +580,10 @@ function makeBody(x,y,vx,vy,spec,mass){
        flat sim is straight out of the screen — so one is picked in the plane
        instead and kept, rather than the jet wandering about. */
     jetAng: Math.random()*6.283, fed: 0, jetT: 0,
+    /* a star's own clock, and what it has taken off anything else. A dwarf
+       throws off roughly what it has swallowed, so the second number is what
+       decides when it next does. */
+    age: 0, stage: '', wd: spec.wd||0, accreted: 0,
     trail: [], flash: 0
   };
 }
@@ -655,6 +696,10 @@ function stepParts(dt, sources){
         b.vy = (b.vy*b.m + p.vy*p.pm)/nm;
         b.m = nm;
         if(b.compact) b.fed += p.pm;      /* how hard it is feeding just now */
+        /* hydrogen landing on a white dwarf does not simply join it — it piles
+           up on the surface until the bottom of the pile is dense enough to
+           fuse, and then all of it goes at once */
+        if(b.wd) b.accreted += p.pm;
         b.r = radiusFor(b.m, densityOf(b.spec));
         sR2[s]=b.r*b.r; sM[s]=b.m;
         if(p.heat>0.4) b.heat = Math.min(1, b.heat + 0.02);
@@ -1006,10 +1051,14 @@ function collapseCheck(){
     else if(b.m>=NEUTRON_MASS && b.spec.cls!=='exotic') collapseTo(b,'neutron');
   }
 }
-function collapseTo(b, kindId){
+function collapseTo(b, kindId, shedOverride, gentle){
   const k = kindById(kindId);
   const pal = (PALETTES[b.spec.pal]||PALETTES.amber).ramp;
-  const shed = kindId==='hole' ? 0.18 : 0.45;      /* how much it throws away */
+  /* A planetary nebula is the same event with the violence taken out: an
+     envelope leaving at tens of km/s rather than thousands, and a core left
+     sitting in it. Same machinery, gentler numbers. */
+  const shed = shedOverride!==undefined ? shedOverride
+             : (kindId==='hole' ? 0.18 : 0.45);    /* how much it throws away */
   const thrown = b.m*shed;
 
   /* Every nebula gets its own colour. Real ones take theirs from whatever the
@@ -1028,7 +1077,7 @@ function collapseTo(b, kindId){
   /* likewise: the shell is made of what the star threw off, so however many
      motes it takes to look like a nebula, between them they weigh that */
   const shellPM = thrown/n;
-  const vShell = kindId==='hole' ? 16 : 26;
+  const vShell = gentle ? 8 : (kindId==='hole' ? 16 : 26);
   for(let j=0;j<n;j++){
     const a=Math.random()*Math.PI*2;
     /* Speed varies a lot across the shell, and that alone is what stops it
@@ -1054,7 +1103,7 @@ function collapseTo(b, kindId){
       q.spread = 2.2+Math.random()*1.8;
     }
   }
-  addWave(b.x,b.y, b.r*26+220, kindId==='hole'?5.5:8.5,
+  addWave(b.x,b.y, b.r*26+220, gentle?1.6:(kindId==='hole'?5.5:8.5),
           kindId==='hole'?[190,150,255]:[255,226,180], b.vx, b.vy);
   b.m = Math.max(1, b.m-thrown);
   b.spec = specFromKind(k, b.spec.seed);
@@ -1437,7 +1486,7 @@ function tides(dt){
   for(let i=bodies.length-1;i>=0;i--){
     const b=bodies[i];
     if(b.hole) continue;
-    let worst=0, ang=0;
+    let worst=0, ang=0, worstH=null;
     for(const h of bodies){
       if(h===b) continue;
       const dx=b.x-h.x, dy=b.y-h.y;
@@ -1460,7 +1509,7 @@ function tides(dt){
          rubble sitting well inside limits that would shred a fluid body, and
          without it every close pass ends in gravel. */
       stress /= 1 + COHESION*b.r/(G*Math.max(1e-6,b.m));
-      if(stress>worst){ worst=stress; ang=Math.atan2(dy,dx); }
+      if(stress>worst){ worst=stress; ang=Math.atan2(dy,dx); worstH=h; }
     }
     b.tideAng = ang;
     /* Coming apart is not instant. A body has to sit inside the limit for
@@ -1480,6 +1529,41 @@ function tides(dt){
        decides whether it survives at all. Reaches about 1.35:1 just before the
        limit, which is roughly where a real fluid body gives up. */
     b.stretch += (worst - b.stretch)*Math.min(1, dt*1.5);
+
+    /* A tide does not only pull a body out of shape, it drags on how it turns.
+       The bulge it raises is carried a little past the line to whatever raised
+       it, and a pull on an offset bulge is a torque. It only ever runs one
+       way: toward turning once per orbit. Every large moon in the solar system
+       has already lost this argument, which is why we have only ever seen one
+       face of ours.
+
+       The turn it loses is not gone anywhere clever. It is friction, inside a
+       body, and it comes out as heat. */
+    if(worstH && worst>1e-5 && !b.hole && !b.compact){
+      const dx=b.x-worstH.x, dy=b.y-worstH.y, d2=dx*dx+dy*dy;
+      const rvx=b.vx-worstH.vx, rvy=b.vy-worstH.vy;
+      const wOrb=(dx*rvy-dy*rvx)/Math.max(1e-6,d2);
+      const dw=(wOrb-b.spin)*Math.min(0.5, worst*TIDE_LOCK*dt);
+      b.spin+=dw;
+      if(!b.lum) b.heat=Math.min(1, b.heat+Math.abs(dw)*b.r*TIDE_HEAT);
+
+      /* And locking is not the end of it. A locked body turns at one steady
+         rate while its orbital rate changes round an eccentric orbit, so it is
+         flexed twice a lap and can never stop being flexed. That is why Io is
+         molten and why Europa has an ocean under the ice: the resonance with
+         the other two will not let either of them settle into a circle, so the
+         flexing has nowhere to stop. Take the resonance away and Io goes cold. */
+      if(!b.lum && !b.gas){
+        const o=orbitPath(b);
+        /* Squared in the tide, because the real rate falls off far faster with
+           distance than the stress alone does — and that steepness is the
+           whole point. It is what separates Io, which never cools, from
+           Europa a hundred units further out, which does. A shallower law
+           heats both of them the same and says nothing. */
+        if(o && o.e>0.001)
+          b.heat=Math.min(1, b.heat + worst*worst*o.e*o.e*TIDE_FLEX*dt);
+      }
+    }
   }
 }
 /* Every pixel of a body's sprite, as a world position and a colour. Both the
@@ -1848,6 +1932,25 @@ function accelerate(){
       const f=G*inv*inv*inv;
       a.nax+=f*dx*b.m; a.nay+=f*dy*b.m;
       b.nax-=f*dx*a.m; b.nay-=f*dy*a.m;
+
+      /* Newton has a closed ellipse that comes back to exactly where it
+         started. The real one does not: there is a further pull going as
+         1/r^4, and what it does to a bound orbit is walk the whole ellipse
+         slowly round. Mercury does it by 43 arcseconds a century and it took
+         general relativity to say why.
+
+         The term is 3GM L^2 / (c^2 r^4), with L the specific angular momentum
+         of the pair — it is the leading correction and it is radial, so it
+         torques nothing and angular momentum still holds exactly. Skipped
+         entirely where it would not show, which is nearly everywhere: the
+         guard is the whole reason this costs nothing. */
+      if(d2 < GR_REACH2){
+        const rvx=b.vx-a.vx, rvy=b.vy-a.vy;
+        const L = dx*rvy - dy*rvx;
+        const gr = 3*G*L*L*inv*inv*inv*inv*inv/(C_LIGHT*C_LIGHT);
+        a.nax+=gr*dx*b.m; a.nay+=gr*dy*b.m;
+        b.nax-=gr*dx*a.m; b.nay-=gr*dy*a.m;
+      }
     }
   }
 }
@@ -1924,6 +2027,10 @@ function step(dt){
   blobTimer -= dt;
   if(blobTimer<=0){ blobTimer=0.2; reblob(); }
   tides(dt);
+  stellarClock(dt);
+  rocheOverflow(dt);
+  gravWaves(dt);
+  dwarfCheck();
   collapseCheck();
   accrete(dt);
   recordTrails();
@@ -1969,6 +2076,215 @@ function orbitOf(b){
   return {host,bound:true,a,period:2*Math.PI*Math.sqrt(a*a*a/mu)};
 }
 
+/* ===================== stars have lives =====================
+   A star's mass has only ever meant one thing here, which is how hard it
+   pulls. It means two more now. Brightness goes as about M^3.5 on the main
+   sequence, and since the fuel only goes as M, the time it lasts goes as
+   M^-2.5 - so a star twice the Sun's mass is eleven times as bright and lasts
+   a fifth as long. That is the whole reason the heavy ones are the ones that
+   die while you are watching, and the small red ones outlive everything. */
+const solarMass  = b => Math.max(1e-4, b.m/STAR_SUN);
+const luminosity = b => b.lum ? Math.pow(solarMass(b), 3.5) : 0;
+const mainSequence = b => SUN_LIFE*Math.pow(solarMass(b), -2.5);
+
+let aging = true;
+function stellarClock(dt){
+  if(!aging) return;
+  for(let i=bodies.length-1;i>=0;i--){
+    const b=bodies[i];
+    if(b.dead||!b.lum||b.hole||b.compact) continue;
+    b.age += dt;
+    const t = mainSequence(b);
+    if(b.stage==='giant'){ if(b.age > t*1.15) shedEnvelope(b); }
+    else if(b.age > t) swellToGiant(b);
+  }
+}
+/* Hydrogen in the core runs out, the core contracts, and the shell around it
+   burns hotter than the core ever did - so the star gets brighter and vastly
+   wider while weighing exactly what it did before. Ours will reach about as
+   far as Earth's orbit, and everything inside that is simply inside it. */
+function swellToGiant(b){
+  b.stage='giant';
+  b.spec.pal='ember';
+  b.spec.dens=1;                 /* it keeps its mass and lets go of its density */
+  b.r=radiusFor(b.m, densityOf(b.spec));
+  b.name='Red giant';
+  once('giant','A star has run through its hydrogen and swollen into a red giant. Anything close enough is now inside it.');
+}
+/* The envelope is barely held on by this point and it leaves - not as an
+   explosion but as a slow bright shell, which is a planetary nebula and has
+   nothing to do with planets. What is left is the core that was holding it up,
+   an Earth-width of degenerate matter with most of a star inside it. */
+/* How much of itself a star gets to keep. Not a constant: the heavier it was,
+   the more of it leaves, and the relation between what a star started as and
+   what it ends as is close to linear over the range that ever gets here. A Sun
+   leaves about half of itself; something half again as heavy leaves not much
+   more than that, having thrown away proportionally far more. Which is why
+   nothing that dies this way arrives anywhere near Chandrasekhar, and a dwarf
+   has to be fed by something else to get there. */
+function remnantShed(b){
+  const kept = (0.4 + 0.1*solarMass(b))*STAR_SUN;
+  return Math.min(0.82, Math.max(0.25, 1 - kept/Math.max(1e-6,b.m)));
+}
+function shedEnvelope(b){
+  collapseTo(b, 'whited', remnantShed(b), true);
+  b.stage='dead'; b.wd=1; b.age=0; b.accreted=0;
+  once('nebula','The envelope has drifted off. What is left is the core it was sitting on: a white dwarf.');
+}
+
+/* ===================== what a white dwarf does next ===================== */
+function dwarfCheck(){
+  for(let i=bodies.length-1;i>=0;i--){
+    const b=bodies[i];
+    if(b.dead||!b.wd||b.hole) continue;
+    if(b.m>=CHANDRA){ typeIa(b); continue; }
+    if(b.accreted > b.m*0.010) nova(b);
+  }
+}
+/* A nova is not the star going. Hydrogen lands on the surface, piles up until
+   the bottom of the pile is dense enough to fuse, and then the whole layer
+   goes at once - so it throws off roughly what it took on and is otherwise
+   unchanged, which is why some of them are on a timetable. */
+function nova(b){
+  const thrown = b.accreted*0.9;
+  b.accreted = 0;
+  if(thrown<=1e-9) return;
+  b.m = Math.max(1, b.m-thrown);
+  b.r = radiusFor(b.m, densityOf(b.spec));
+  b.flash = 1;
+  const n = Math.max(40, Math.min(900, Math.round(160+thrown*30)));
+  const pm = thrown/n;
+  const vesc = Math.sqrt(2*G*b.m/Math.max(0.55,b.r));
+  for(let j=0;j<n;j++){
+    const a=Math.random()*6.283, sp=vesc*(0.7+Math.random()*0.6);
+    const q=spawnPart(b.x+Math.cos(a)*b.r*1.3, b.y+Math.sin(a)*b.r*1.3,
+                      b.vx+Math.cos(a)*sp, b.vy+Math.sin(a)*sp,
+                      'gas', [255,238,198], 1, 700+Math.random()*500, pm);
+    if(q){ q.puff=2.0+Math.random()*1.8; q.dep=1.3; q.spread=1.5; }
+  }
+  addWave(b.x,b.y, b.r*16+70, 2.0, [255,242,214], b.vx, b.vy);
+  once('nova','A nova. The dwarf threw off what it had taken on and is still there - it will do it again.');
+}
+/* And this is the star going. Past Chandrasekhar the electrons cannot hold it
+   up, but a white dwarf is not a core sitting inside a star - it is the whole
+   object, and it is made of fuel. It does not collapse; it detonates, all of
+   it, and leaves nothing at all behind. That is the difference between this
+   and the collapse of a heavy star, which always leaves something. */
+function typeIa(b){
+  const total=b.m;
+  const pal=(PALETTES[b.spec.pal]||PALETTES.ice).ramp;
+  const hue=Math.random()*6.283;
+  const tint=[128+120*Math.sin(hue),128+120*Math.sin(hue+2.09),128+120*Math.sin(hue+4.19)];
+  const n=Math.min(4200, Math.round(1100+total*1.1));
+  const pm=total/n;
+  for(let j=0;j<n;j++){
+    const a=Math.random()*6.283;
+    const sp=34*(0.75+Math.random()*0.5);
+    const rr=b.r*(0.9+Math.random()*0.6);
+    const gasy=Math.random()<0.82;
+    const base=rampAt(pal,0.5+Math.random()*0.45);
+    const q=spawnPart(b.x+Math.cos(a)*rr, b.y+Math.sin(a)*rr,
+                      b.vx+Math.cos(a)*sp, b.vy+Math.sin(a)*sp,
+                      gasy?'gas':'rock',
+                      gasy?mixRGB(base,tint,0.5):base,
+                      gasy?0:1,
+                      gasy?2600+Math.random()*2000:70+Math.random()*90, pm);
+    if(q&&gasy){ q.puff=3.2+Math.random()*4.5; q.dep=2.2+Math.random()*2; q.spread=2.4+Math.random()*1.6; }
+  }
+  addWave(b.x,b.y, b.r*34+320, 11, [255,244,222], b.vx, b.vy);
+  b.dead=true;
+  const i=bodies.indexOf(b); if(i>=0) bodies.splice(i,1);
+  if(selected===b) selectBody(null);
+  if(following===b) following=null;
+  once('ia','A white dwarf went past what it could carry and detonated. Nothing at all is left of it, which is what makes this the other kind of supernova.');
+}
+
+/* ===================== one star feeding another =====================
+   Round any two bodies there is a surface where the pull of one gives way to
+   the pull of the other, and a star that swells until it fills its own side of
+   it stops owning its outer layers. What leaves does so through the point
+   between them, and it does not fall straight in: it carries the orbital
+   motion of the star it left, so it misses, swings round and winds into a
+   disc. Which is where the accretion code already here takes over. */
+const ROCHE_RATE = 0.5;
+function rocheOverflow(dt){
+  for(const d of bodies){
+    if(d.dead||d.compact||d.hole||!(d.lum||d.gas)) continue;
+    /* it needs a companion that can hold onto what it loses */
+    let acc=null, best=0;
+    for(const h of bodies){
+      if(h===d||h.dead) continue;
+      const dx=h.x-d.x, dy=h.y-d.y;
+      const pull=h.m/(dx*dx+dy*dy+1e-6);
+      if(pull>best){ best=pull; acc=h; }
+    }
+    if(!acc||!acc.compact) continue;
+    const a=Math.hypot(acc.x-d.x, acc.y-d.y);
+    if(a<=acc.r+d.r) continue;
+    /* Eggleton's fit for the lobe radius - within a percent over every mass
+       ratio that ever comes up, and one line instead of a root-find */
+    const q3=Math.cbrt(d.m/Math.max(1e-6,acc.m));
+    const rl=a*0.49*q3*q3/(0.6*q3*q3+Math.log(1+q3));
+    if(d.r<=rl) continue;
+    const over=Math.min(1,(d.r-rl)/Math.max(1e-6,rl));
+    const take=Math.min(d.m*ROCHE_RATE*over*dt, d.m*0.02);
+    if(take<=1e-9) continue;
+    d.m-=take; d.r=radiusFor(d.m, densityOf(d.spec));
+    const f=rl/a;
+    const lx=d.x+(acc.x-d.x)*f, ly=d.y+(acc.y-d.y)*f;
+    const ux=acc.x-lx, uy=acc.y-ly, ud=Math.hypot(ux,uy)||1;
+    const sp=Math.sqrt(G*acc.m/Math.max(1,ud))*0.3;
+    const n=Math.max(1,Math.min(12,Math.round(take*140)));
+    const pm=take/n;
+    const col=rampAt((PALETTES[d.spec.pal]||PALETTES.amber).ramp, 0.75);
+    for(let j=0;j<n;j++){
+      const q=spawnPart(lx+(Math.random()-0.5)*d.r*0.25, ly+(Math.random()-0.5)*d.r*0.25,
+                d.vx+ux/ud*sp+(Math.random()-0.5)*0.35,
+                d.vy+uy/ud*sp+(Math.random()-0.5)*0.35,
+                'gas', col, 0.8, 900, pm);
+      if(q){ q.puff=1.5; q.dep=0.9; q.spread=1.0; }
+    }
+    once('roche','A star has swollen past its own side of the pair. What crosses the point between them belongs to the other one now.');
+  }
+}
+
+/* ===================== orbits that leak =====================
+   Two things going round each other radiate gravitational waves, and the orbit
+   is what pays for them. It is a hopeless effect for anything ordinary - the
+   Earth's orbit loses about a proton's width a day - but it goes as 1/r^5, so
+   for two dense things in a close orbit it stops being hopeless and becomes
+   the only thing happening. It runs away at the end, because losing the orbit
+   makes it tighter and a tighter orbit loses it faster. */
+function gravWaves(dt){
+  for(let i=0;i<bodies.length;i++){
+    const a=bodies[i];
+    if(!a.compact||a.dead) continue;
+    for(let j=i+1;j<bodies.length;j++){
+      const b=bodies[j];
+      if(!b.compact||b.dead) continue;
+      const dx=b.x-a.x, dy=b.y-a.y;
+      const r=Math.hypot(dx,dy);
+      if(r<1e-6) continue;
+      const M=a.m+b.m, mu=a.m*b.m/M;
+      const rvx=b.vx-a.vx, rvy=b.vy-a.vy;
+      const v=Math.hypot(rvx,rvy);
+      if(v<1e-9) continue;
+      /* the quadrupole formula, straight out of the book */
+      const P=(32/5)*Math.pow(G,4)*a.m*a.m*b.m*b.m*M
+              /(Math.pow(C_LIGHT,5)*Math.pow(r,5));
+      /* take that much power out of the relative motion, and take it from both
+         of them in the proportions that leave the total momentum alone */
+      let dv=P*dt/(mu*v);
+      if(!(dv>0)) continue;
+      dv=Math.min(dv, v*0.04);
+      const ux=rvx/v, uy=rvy/v;
+      a.vx+=ux*dv*(b.m/M); a.vy+=uy*dv*(b.m/M);
+      b.vx-=ux*dv*(a.m/M); b.vy-=uy*dv*(a.m/M);
+      if(dv>v*0.004) once('gw','Two dense things are radiating their orbit away as gravitational waves. It only gets faster from here.');
+    }
+  }
+}
+
 /* The shape an orbit is going to keep, worked out before it has been round
    even once. A trail is where a world has been; this is where it is going, and
    the two together are what make a resonance legible — three moons whose rings
@@ -2008,6 +2324,97 @@ function orbitPath(b){
           cx:host.x-a*e*Math.cos(ang), cy:host.y-a*e*Math.sin(ang),
           b:a*Math.sqrt(1-e*e)};
 }
+/* ===================== the five places that hold =====================
+   Two bodies going round each other make five spots where a third thing can
+   sit and keep station with them. Three of them are on the line through both
+   and none of those three are stable — a speck at L1 slides off it. The other
+   two sit sixty degrees ahead and behind, making an equilateral triangle with
+   the pair, and those two genuinely hold: nudge something out of one and the
+   Coriolis term of the rotating frame curls it back. Jupiter has kept two
+   crowds of asteroids parked in its pair for the age of the solar system.
+
+   Nothing here enforces any of that. The points are drawn where the geometry
+   says they are; whether anything stays in one is up to the same gravity as
+   everything else. */
+function lagrange(b){
+  const o=orbitPath(b);
+  if(!o) return null;
+  const h=o.host;
+  const dx=b.x-h.x, dy=b.y-h.y, R=Math.hypot(dx,dy);
+  if(R<1e-6) return null;
+  const mu=b.m/(h.m+b.m);
+  const k=Math.cbrt(mu/3);
+  const ux=dx/R, uy=dy/R;
+  const c=0.5, sn=0.8660254;         /* sixty degrees, either way round */
+  return [
+    {n:'1', x:h.x+ux*R*(1-k),           y:h.y+uy*R*(1-k)},
+    {n:'2', x:h.x+ux*R*(1+k),           y:h.y+uy*R*(1+k)},
+    {n:'3', x:h.x-ux*R*(1+5*mu/12),     y:h.y-uy*R*(1+5*mu/12)},
+    {n:'4', x:h.x+dx*c-dy*sn,           y:h.y+dy*c+dx*sn},
+    {n:'5', x:h.x+dx*c+dy*sn,           y:h.y+dy*c-dx*sn}
+  ];
+}
+/* How much starlight falls on a spot, in units of what Earth gets. Brightness
+   over distance squared, summed over every star in the sky — so a world round
+   one of a pair is lit by both, and a world whose star has just swollen into a
+   giant is abruptly getting a great deal more than it was. */
+function fluxAt(x,y){
+  let f=0;
+  for(const s of bodies){
+    if(!s.lum||s.dead) continue;
+    const dx=x-s.x, dy=y-s.y;
+    f += luminosity(s)/Math.max(1e-6, (dx*dx+dy*dy)/(AU*AU));
+  }
+  return f;
+}
+/* The band round a star where the light arriving is neither so much that water
+   boils off nor so little that it all freezes. It is set by the star's
+   brightness, so it moves outward as a star ages and jumps when one swells —
+   a world can be handed a habitable zone and have it taken away again. */
+const HZ_HOT = 1.108, HZ_COLD = 0.533;
+function drawZones(){
+  for(const s of bodies){
+    if(!s.lum||s.dead) continue;
+    const L=luminosity(s);
+    if(L<=0) continue;
+    const rIn=AU*Math.sqrt(L/HZ_HOT), rOut=AU*Math.sqrt(L/HZ_COLD);
+    const x=toScreenX(s.x), y=toScreenY(s.y);
+    const a=rIn*cam.zoom, b2=rOut*cam.zoom;
+    if(b2<4||a>18000) continue;
+    ctx.save();
+    ctx.fillStyle='rgba(120,220,150,0.055)';
+    ctx.beginPath();
+    ctx.arc(x,y,b2,0,6.2832);
+    ctx.arc(x,y,a,0,6.2832,true);
+    ctx.fill();
+    ctx.strokeStyle='rgba(150,240,175,0.20)';
+    ctx.lineWidth=1;
+    ctx.setLineDash([2,4]);
+    ctx.beginPath(); ctx.arc(x,y,a,0,6.2832); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x,y,b2,0,6.2832); ctx.stroke();
+    ctx.restore();
+  }
+}
+function drawLagrange(){
+  if(!selected) return;
+  const pts=lagrange(selected);
+  if(!pts) return;
+  ctx.save();
+  ctx.font='6px monospace';
+  for(const q of pts){
+    const x=toScreenX(q.x), y=toScreenY(q.y);
+    if(x<-20||y<-20||x>W+20||y>H+20) continue;
+    /* the two that hold are drawn as though they do */
+    const solid=(q.n==='4'||q.n==='5');
+    ctx.fillStyle=solid?'rgba(198,155,255,0.72)':'rgba(198,155,255,0.34)';
+    ctx.fillRect(x-1,y-1,2,2);
+    ctx.fillRect(x-3,y,1,1); ctx.fillRect(x+2,y,1,1);
+    ctx.fillRect(x,y-3,1,1); ctx.fillRect(x,y+2,1,1);
+    ctx.fillText('L'+q.n, x+4, y-2);
+  }
+  ctx.restore();
+}
+
 function drawOrbits(){
   for(const b of bodies){
     if(b.dead||b.held) continue;
@@ -2636,7 +3043,9 @@ function render(t){
   drawSky(t);
   if(showTrails) drawTrails();
   /* under the bodies and over the trails: it is scaffolding, not scenery */
+  if(showZones) drawZones();
   drawOrbits();
+  if(showZones) drawLagrange();
   drawParts();
   drawGhosts();
   drawWaves();
@@ -2909,6 +3318,8 @@ addEventListener('keydown',e=>{
   else if(k==='c'||k==='C') clearAll();
   else if(k==='t'||k==='T') setTrails(!showTrails);
   else if(k==='o'||k==='O') setOrbits(!showOrbits);
+  else if(k==='z'||k==='Z') setZones(!showZones);
+  else if(k==='a'||k==='A') setAging(!aging);
   else if(k==='d'||k==='D') setDragMode(!dragMode);
   else if(k==='f'||k==='F') fitAll();
   else if(k==='g'||k==='G') toggleForge();
@@ -3108,11 +3519,16 @@ const GAL_RJ  = 26;                        /* Jupiter's drawn radius, true to
    being spread through the system. */
 const GAL_MOON = 10;
 /* name, distance (Jupiter radii), mass (Earths), radius (Earths), class, palette */
+/* The eccentricities are the forced ones — the values the resonance holds
+   these three at and will not let them lose. They look like rounding error and
+   they are the entire reason Io is the most volcanic object in the solar
+   system: a locked moon on an orbit it cannot circularise is flexed twice a
+   lap forever. */
 const GALILEAN = [
-  ['Io',       5.90, 0.0150, 0.286, 'lava', 'volcanic'],
-  ['Europa',   9.38, 0.0080, 0.245, 'ice',  'ice'],
-  ['Ganymede',14.97, 0.0250, 0.413, 'rock', 'barren'],
-  ['Callisto',26.33, 0.0180, 0.378, 'rock', 'barren']
+  ['Io',       5.90, 0.0150, 0.286, 'lava', 'volcanic', 0.0041],
+  ['Europa',   9.38, 0.0080, 0.245, 'ice',  'ice',      0.0094],
+  ['Ganymede',14.97, 0.0250, 0.413, 'rock', 'barren',   0.0013],
+  ['Callisto',26.33, 0.0180, 0.378, 'rock', 'barren',   0.0074]
 ];
 
 const PRESETS={
@@ -3148,6 +3564,31 @@ const PRESETS={
         {cls:'rock', pal:'barren', seed:(seedCounter++*2654435761)%100000,
          dens:m/Math.pow(r/RSCALE,3), name}, m));
       if(b) b.name=name;
+    }
+    /* Jupiter's Trojans: two crowds of asteroids sixty degrees ahead of it and
+       sixty behind, sitting in the two Lagrange points that actually hold.
+       Nothing pins them there. They are put at the right place with the right
+       speed and the geometry does the rest — they will still be there, slowly
+       swinging about the point, however long this is left running. */
+    if(made.Jupiter){
+      const J=made.Jupiter;
+      for(const sgn of [1,-1]){
+        const c=0.5, sn=0.8660254*sgn;
+        const tx=Math.cos(0)*0, ty=0;
+        const jx=J.x-sun.x, jy=J.y-sun.y;
+        const lx=sun.x+jx*c-jy*sn, ly=sun.y+jy*c+jx*sn;
+        for(let i=0;i<260;i++){
+          /* a real camp is a loose cloud tens of degrees long, not a dot */
+          const sp=(Math.random()-0.5)*0.30, rr=(Math.random()-0.5)*0.10;
+          const a=Math.atan2(ly-sun.y, lx-sun.x)+sp;
+          const R=Math.hypot(lx-sun.x, ly-sun.y)*(1+rr);
+          const px=sun.x+Math.cos(a)*R, py=sun.y+Math.sin(a)*R;
+          const v=circularVelocity(px,py,sun,1);
+          spawnPart(px,py, v.vx, v.vy, 'rock',
+                    [136+((Math.random()*30)|0), 126+((Math.random()*30)|0), 116+((Math.random()*30)|0)],
+                    0, 1e9, PART_MASS*0.02, 1);
+        }
+      }
     }
     /* The main belt, between Mars and Jupiter, where Jupiter never let a
        planet finish forming. All of it together weighs less than our Moon. */
@@ -3193,13 +3634,16 @@ const PRESETS={
     const jup = placeAt(0,0,0,0,'gas','amber', GAL_JUP, GAL_RJ, 'Jupiter');
     /* one Earth radius, at the scale Jupiter is drawn */
     const ER_G = GAL_RJ/11.209;
-    for(const [nm,d,mE,rE,cls,pal] of GALILEAN){
+    for(const [nm,d,mE,rE,cls,pal,ecc] of GALILEAN){
       const r = d*GAL_RJ;
       const m = mE*(GAL_JUP/317.8);
       const th = Math.random()*6.283;
       const x = Math.cos(th)*r, y = Math.sin(th)*r;
       const v = circularVelocity(x,y,jup,1);
-      placeAt(x,y,v.vx,v.vy, cls, pal, m, Math.max(0.6, rE*ER_G*GAL_MOON), nm);
+      /* started at periapsis, so the eccentricity is the one written down */
+      const k = Math.sqrt(1+ecc);
+      placeAt(x,y,jup.vx+(v.vx-jup.vx)*k, jup.vy+(v.vy-jup.vy)*k,
+              cls, pal, m, Math.max(0.6, rE*ER_G*GAL_MOON), nm);
     }
     /* the ring nobody sees: dust knocked off the inner moons, well inside the
        Roche distance, which is why it never became one */
@@ -3385,6 +3829,14 @@ $('trails').addEventListener('click',()=>setTrails(!showTrails));
 function setOrbits(v){ showOrbits=v; $('orbits').classList.toggle('on',v); }
 $('orbits').addEventListener('click',()=>setOrbits(!showOrbits));
 setOrbits(true);
+function setZones(v){ showZones=v; $('zones').classList.toggle('on',v); }
+$('zones').addEventListener('click',()=>setZones(!showZones));
+setZones(false);
+/* On, because a star that never changes is a worse lie than one that changes
+   too fast. At any ordinary clock rate nothing measurable happens to it. */
+function setAging(v){ aging=v; $('agingBtn').classList.toggle('on',v); }
+$('agingBtn').addEventListener('click',()=>setAging(!aging));
+setAging(true);
 $('orbitAssist').addEventListener('click',()=>{ orbitAssist=!orbitAssist; $('orbitAssist').classList.toggle('on',orbitAssist); });
 function setDragMode(v){
   dragMode=v;
@@ -3485,7 +3937,34 @@ function updateInspector(){
   $('ispPer').textContent=o?(o.bound?fmt(o.period,1)+'s':'escaping'):'—';
   const wall = o&&o.bound&&running&&timeScale>0 ? o.period/timeScale : 0;
   $('ispYear').textContent = wall ? (wall<0.1?'<0.1s':fmt(wall, wall<10?1:0)+'s') : '—';
+
+  /* what it is, in the sense of what it is doing with itself */
+  const st=stageText(selected);
+  $('ispStageRow').style.display = st?'flex':'none';
+  if(st) $('ispStage').textContent=st;
+
+  /* and how much light is falling on it, which is only interesting for
+     something that is not making its own */
+  const lit = !selected.lum && !selected.hole;
+  $('ispSunRow').style.display = lit?'flex':'none';
+  if(lit){
+    const f=fluxAt(selected.x,selected.y);
+    $('ispSun').textContent = f<1e-4 ? 'dark'
+      : (f>=HZ_COLD&&f<=HZ_HOT ? fmt(f,2)+'\u00d7 \u00b7 temperate' : fmt(f,f<10?2:0)+'\u00d7');
+  }
   $('ispFollow').classList.toggle('on',following===selected);
+}
+/* A star is only ever doing one of four things, and which one is the single
+   most useful thing to know about it. */
+function stageText(b){
+  if(b.hole) return 'Black hole';
+  if(b.wd) return 'White dwarf';
+  if(b.compact) return b.name;
+  if(!b.lum) return null;
+  if(b.stage==='giant') return 'Red giant';
+  const t=mainSequence(b);
+  const left=Math.max(0,Math.min(100, 100*(1-(b.age||0)/t)));
+  return 'Main sequence \u00b7 '+left.toFixed(0)+'% left';
 }
 function fmt(v,d){
   if(!isFinite(v)) return '—';
@@ -3523,7 +4002,9 @@ function totalEnergy(){
 window.orbital={
   list:()=>bodies.map(b=>({id:b.id,x:b.x,y:b.y,vx:b.vx,vy:b.vy,m:b.m,r:b.r,
                            cls:b.spec.cls,pal:b.spec.pal,heat:b.heat,name:b.name,
-                           hole:!!b.hole,stretch:b.stretch||0})),
+                           hole:!!b.hole,stretch:b.stretch||0,
+                           spin:b.spin||0,stage:b.stage||'',age:b.age||0,
+                           wd:!!b.wd,accreted:b.accreted||0})),
   count:()=>bodies.length,
   /* where a point in the world lands on the actual page, so a test can put a
      real cursor on a real world */
@@ -3625,10 +4106,14 @@ window.orbital={
   cam, aim, brush,
   /* what the clock readout says, and what a year costs in this scene */
   rate:()=>rateText(),
+  aging:v=>{ if(v!==undefined) setAging(!!v); return aging; },
+  flux:(x,y)=>fluxAt(x,y),
+  lagrange:id=>{ const b=bodies.find(x=>x.id===id); return b?lagrange(b):null; },
   yearUnit:()=>yearUnit,
   /* the ellipse a body is following, or null where there is not one */
   orbit:id=>{ const b=bodies.find(x=>x.id===id); if(!b) return null;
-              const o=orbitPath(b); return o?{a:o.a,e:o.e,host:o.host.name||null}:null; },
+              const o=orbitPath(b);
+              return o?{a:o.a,e:o.e,ang:o.ang,host:o.host.name||null}:null; },
   step:dt=>step(dt),
   setSpeed:v=>{ timeScale=v; },
   select:id=>selectBody(bodies.find(b=>b.id===id)||null),
