@@ -18,7 +18,8 @@ Open `index.html`. That's the whole install.
 | Tap nothing with something selected | also puts it down, instead of dropping a world |
 | Scroll / pinch | zoom |
 | Two-finger drag, middle-drag, or space+drag | pan |
-| `1`–`6` | pick a body class |
+| Tap the lit world in the picker | put it out. With nothing lit, an empty press places nothing |
+| `1`–`9` | pick a body class, or the same one again to put it out |
 | `Space` `C` `T` `D` `F` `G` | pause · clear · trails · drag · fit · forge |
 
 Built for desktop and iPad: one finger draws and flings, two fingers pinch and
@@ -284,6 +285,12 @@ That debris then has to end up somewhere:
   scale a fling is: the clock does not run at hand speed, so a cursor's true
   world velocity is nonsense as an orbital one, and a lazy sweep across the
   screen would otherwise be a thousand units a second.
+- **The picker can hold nothing.** It always had one of its worlds lit, which
+  meant every press on empty sky put a world there whether you wanted one or
+  not — and with a tool in hand, that is precisely the press you were trying to
+  make. Tapping the lit one puts it out, and with nothing lit an empty press
+  does nothing at all. Opening the forge lights it again, since opening the
+  forge is asking to build something.
 - **A tool press is not a selection.** With Drag on, pressing a world picks it
   up and leaves the inspector exactly as it was: selecting is its own thing, and
   a tool reaching for a world does not also get to decide what you are looking
