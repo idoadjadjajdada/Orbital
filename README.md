@@ -19,13 +19,54 @@ Open `index.html`. That's the whole install.
 | Scroll / pinch | zoom |
 | Two-finger drag, middle-drag, or space+drag | pan |
 | Tap the lit world in the picker | put it out. With nothing lit, an empty press places nothing |
-| `1`–`9` | pick a body class, or the same one again to put it out |
-| `Space` `C` `T` `D` `F` `G` | pause · clear · trails · drag · fit · forge |
+| Tap a shelf in the picker | Small · Worlds · Giants · Stars · Remnants |
+| `1`–`9` | pick a body off the shelf on show, or the same one again to put it out |
+| `Space` `C` `T` `D` `F` `G` `O` | pause · clear · trails · drag · fit · forge · orbits |
 
 Built for desktop and iPad: one finger draws and flings, two fingers pinch and
 pan, and a mouse wheel zooms about the cursor.
 
 ## What it does
+
+**The clock tells you what you are watching**, not what the slider is set to.
+A multiplier is a number about the sim; what a year costs is the thing worth
+knowing. Every system declares its own scale by naming one orbit in it whose
+real period is known, so the readout is honest in a system that is neither ours
+nor at our distances — and the unit steps down as you slow the clock, through
+years, months, days and hours, because 0.003 yr/s is a true statement nobody
+can read. The top of the track buys about a year a second in our system; the
+same setting in TRAPPIST-1 buys about five days, because its worlds go round
+in days.
+
+**Every stable orbit can be outlined** — the ellipse it is going to keep,
+drawn before it has been round even once. A trail is where a world has been;
+this is where it is going, and the two together are what make a resonance
+legible: three moons whose rings sit still while the moons move is the whole
+of the Laplace resonance in one picture, and you would otherwise have to sit
+and count laps to see it. It is the orbit the two-body problem says it has, so
+it is exactly right for a planet round a star and only nearly right for
+anything being pulled hard by a third thing — where the ellipse visibly drifts,
+the orbit really is being perturbed. Nothing is drawn where there is no orbit:
+escaping, near-radial, a periapsis underneath the host's own surface, or a body
+heavier than the thing it is supposedly going round all disqualify it, and each
+of those is a case where an ellipse would be a claim about to break.
+
+Three systems ship with it, and two of them are about resonance.
+
+**TRAPPIST-1** is seven Earth-sized worlds round an M8 red dwarf, the whole
+system packed inside a fifth of Mercury's orbit — so it cannot be drawn at our
+distance scale, and it is not: planet b is pinned at 150 units and the rest
+scale by the real ratios between their semi-major axes. That last part is why
+the resonance does not have to be arranged. Under one dominant mass Kepler's
+third law ties period to distance, so real distance ratios hand back real
+period ratios, and the chain — 8:5, 5:3, 3:2, 3:2, 4:3, 3:2 down the line —
+falls out of the geometry instead of being imposed on it.
+
+**The Galilean moons** are the same trick and the more famous result: Io,
+Europa and Ganymede come out locked 1:2:4, and Callisto pointedly does not.
+That resonance is also why Io is molten and is drawn that way — it can never
+settle into a circular orbit, because the other two keep pulling it back out of
+one, so Jupiter flexes it twice an orbit and the friction has to go somewhere.
 
 **Solar system** loads ours. Distances are to scale — every orbit is the real
 semi-major axis, started at its own perihelion with the perihelion speed, so
@@ -51,11 +92,21 @@ and the Hill sphere is set by the real distances while the planet is drawn
 eighty times too wide — so where our Moon sits sixty Earths out, this one sits
 at two, at the same fraction of the Hill radius.
 
-Seventeen kinds of thing, from an asteroid up: rocky and icy and molten
-worlds, gas and ice giants, a brown dwarf that never quite lit, dwarf stars and
+Twenty-eight kinds of thing on five shelves. **Small**: planetesimals,
+asteroids, comets, moons and dwarf planets. **Worlds**: rock, ice and molten,
+an iron world two thirds metal by weight, an ocean world, a super-Earth, a
+carbon world with diamond under the crust, and the bare core of a gas giant
+that parked too close to its star and lost the gas. **Giants**: gas and ice,
+a hot Jupiter puffed to twice its width by the heat, and a brown dwarf that
+never quite lit. **Stars**: a protostar still falling together, dwarf stars,
 stars, a red giant puffed to a hundred times its width at a thousandth of its
-density, a white dwarf carrying most of a star inside an Earth, neutron stars,
-pulsars and black holes.
+density, and a blue supergiant. **Remnants**: white dwarfs carrying most of a
+star inside an Earth, neutron stars, pulsars, magnetars, black holes and a
+supermassive one.
+
+The blue supergiant is deliberately parked just under the mass where a star
+here collapses. Placing one is not the event — it is a loaded gun. Feed it a
+moon and it goes off.
 
 Worlds are pixel art, generated rather than drawn: every body gets a sprite
 baked from value noise, shaded against a sphere normal, coloured from a ramp.
@@ -183,6 +234,26 @@ That debris then has to end up somewhere:
 
 ## How it works
 
+- **The clock's ceiling is a substep budget, not a number.** Fast-forward used
+  to stop at 60x because the substep count was capped at 36: past that the
+  substep grew instead of the count, and a circular orbit started spiralling.
+  It can be raised a long way because only bodies are integrated per substep —
+  the sixty thousand motes step once a frame however many substeps run — so the
+  cost is n² over a few dozen things rather than over the sky. It is still a
+  budget: a scene holding hundreds of bodies gets proportionally fewer, so the
+  integrator's frame cost stays bounded whatever is in it. That is what buys
+  the extra sixteen-fold and puts a year a second inside reach.
+- **A year is derived, never written down.** It is the period of a circular
+  orbit at one AU around the Sun the preset actually builds, so retuning the
+  distance scale or the Sun's mass moves the readout with it instead of leaving
+  it quietly lying. Systems built at another scale carry their own, worked out
+  the same way from one orbit whose real period is known.
+- **The outlined orbit comes out of the state vector**, not out of a fit to the
+  trail: energy gives the semi-major axis, and the eccentricity vector gives
+  both the shape and the direction of periapsis, which is the one thing a
+  scalar eccentricity cannot tell you and the ellipse has to be turned by. The
+  host sits at a focus, so the ellipse's centre is offset from it by *ae* back
+  along that direction.
 - **Integrator.** Velocity Verlet, which is symplectic — orbits keep their
   shape over long runs instead of spiralling the way plain Euler makes them.
   Accelerations carry between steps, so gravity is evaluated once per step.
@@ -356,7 +427,7 @@ and total energy must not drift. Both would catch an integrator regression that
 no amount of clicking around would reveal.
 
 `window.orbital` is a small scripting hook — `list()`, `add()`, `step(dt)`,
-`energy()`, `preset()`. The tests drive the sim through it with an exact `dt`
+`energy()`, `preset()`, `rate()`, `yearUnit()`, `orbit(id)`. The tests drive the sim through it with an exact `dt`
 so results do not depend on machine speed. The ones about picking a world up go
 the other way and put a real cursor on the real canvas, because what is under
 test there is what a hand does.

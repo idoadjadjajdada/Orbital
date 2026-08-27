@@ -1475,6 +1475,10 @@ async function open(b, vp){
     /* nothing selected, or the first press on empty sky goes on putting that
        down rather than placing anything */
     await p.keyboard.press('Escape'); await p.waitForTimeout(80);
+    /* The roster is shelved by category now, so a world has to be on the shelf
+       on show before it can be pressed — which is exactly the reach a hand has
+       to make. Picking one puts its own shelf up, so this is only needed once. */
+    await p.locator('.tab[data-cat="small"]').click(); await p.waitForTimeout(80);
     /* light one that is not already lit, whatever the picker was left on */
     await p.locator('.bd[data-k="moon"]').click(); await p.waitForTimeout(80);
     ok('one world in the picker is lit', await lit()===1);
@@ -1508,6 +1512,99 @@ async function open(b, vp){
        reach.lo.toFixed(1)+' to '+Math.round(reach.hi));
   }
   ok('no exceptions', errs.length===0, errs.join(' | '));
+  await ctx.close();
+
+  console.log('\n--- the clock says what it is costing ---');
+  ({p,ctx,errs}=await open(b));
+  {
+    const setSpeed=async v=>{ await p.evaluate(v=>{
+      const el=document.getElementById('speed'); el.value=v;
+      el.dispatchEvent(new Event('input'));
+    }, v); await p.waitForTimeout(60); };
+    const rate=()=>p.evaluate(()=>window.orbital.rate());
+
+    await setSpeed(0);
+    ok('a stopped clock says so', (await rate())==='paused', await rate());
+    await setSpeed(60);
+    const top=await rate();
+    ok('the top of the track buys about a year a second', /yr\/s/.test(top), top);
+    ok('and it is about one, not a hundred', Math.abs(parseFloat(top)-1)<0.4, top);
+    await setSpeed(45);
+    ok('easing off drops it to months', /mo\/s/.test(await rate()), await rate());
+    await setSpeed(19);
+    ok('and further to days', /d\/s/.test(await rate()), await rate());
+
+    /* the unit is derived from the scene, so a system built at another
+       distance scale has to move it rather than go on quoting ours */
+    const solar=await p.evaluate(()=>{ window.orbital.preset('solar'); return window.orbital.yearUnit(); });
+    const trap =await p.evaluate(()=>{ window.orbital.preset('trappist'); return window.orbital.yearUnit(); });
+    const gal  =await p.evaluate(()=>{ window.orbital.preset('galilean'); return window.orbital.yearUnit(); });
+    ok('each system carries its own year', solar!==trap && trap!==gal,
+       [solar,trap,gal].map(x=>Math.round(x)).join(' '));
+    ok('and ours is the shortest, because its worlds are the furthest out',
+       solar<trap && solar<gal, Math.round(solar)+' vs '+Math.round(trap)+' / '+Math.round(gal));
+    ok('no exceptions', errs.length===0, errs.join(' | '));
+  }
+  await ctx.close();
+
+  console.log('\n--- the systems are the systems they claim to be ---');
+  ({p,ctx,errs}=await open(b));
+  {
+    /* Period ratios are the whole point of both of these, and neither is
+       arranged: real distance ratios give real period ratios, so numbers
+       coming out right means the geometry went in right. */
+    const periods=async nm=>p.evaluate(n=>{
+      window.orbital.preset(n);
+      const L=window.orbital.list();
+      const host=L.reduce((a,x)=>x.m>a.m?x:a,L[0]);
+      return L.filter(x=>x!==host).map(x=>{
+        const r=Math.hypot(x.x-host.x,x.y-host.y);
+        return {name:x.name, T:2*Math.PI*Math.sqrt(r*r*r/host.m)};
+      }).sort((a,b)=>a.T-b.T);
+    }, nm);
+    const near=(x,y,tol)=>Math.abs(x-y)<tol;
+
+    const t=await periods('trappist');
+    ok('TRAPPIST-1 has its seven worlds', t.length===7, String(t.length));
+    ok('and they come out in the resonant chain, unprompted',
+       near(t[1].T/t[0].T,1.603,0.01) && near(t[2].T/t[1].T,1.672,0.01) &&
+       near(t[6].T/t[5].T,1.520,0.01),
+       t.slice(1).map((x,i)=>(x.T/t[i].T).toFixed(3)).join(' '));
+
+    const g=await periods('galilean');
+    ok('Jupiter keeps four moons', g.length===4, String(g.length));
+    ok('and the inner three are locked 1:2:4',
+       near(g[1].T/g[0].T,2.008,0.01) && near(g[2].T/g[1].T,2.015,0.01),
+       (g[1].T/g[0].T).toFixed(3)+' '+(g[2].T/g[1].T).toFixed(3));
+    ok('while Callisto is not in it', !near(g[3].T/g[2].T,2,0.05),
+       (g[3].T/g[2].T).toFixed(3));
+    ok('no exceptions', errs.length===0, errs.join(' | '));
+  }
+  await ctx.close();
+
+  console.log('\n--- an orbit is outlined only where there is one ---');
+  ({p,ctx,errs}=await open(b));
+  {
+    const r=await p.evaluate(()=>{
+      const o=window.orbital;
+      o.clear();
+      const sun=o.add(0,0,0,0,'star',1500);
+      const mu=1500, rr=300;
+      /* the circular speed this sim actually needs, softening and all */
+      const vc=Math.sqrt(mu)*rr/Math.pow(rr*rr+4,0.75);
+      const round=o.add( rr,0,0, vc,      'rocky',6);
+      const ell  =o.add(-rr,0,0,-vc*0.72, 'rocky',6);
+      const gone =o.add(0, rr, vc*2.4,0,  'rocky',6);
+      return {round:o.orbit(round), ell:o.orbit(ell), gone:o.orbit(gone), sun:o.orbit(sun)};
+    });
+    ok('a circular orbit is outlined, and reads as circular',
+       !!r.round && r.round.e<0.02, r.round?r.round.e.toFixed(4):'null');
+    ok('an elliptical one is outlined, and reads as elliptical',
+       !!r.ell && r.ell.e>0.3 && r.ell.e<1, r.ell?r.ell.e.toFixed(3):'null');
+    ok('nothing is outlined for something on its way out', r.gone===null, JSON.stringify(r.gone));
+    ok('and nothing for the star they are all going round', r.sun===null, JSON.stringify(r.sun));
+    ok('no exceptions', errs.length===0, errs.join(' | '));
+  }
   await ctx.close();
 
   console.log('\n--- two fingers pinch and pan ---');

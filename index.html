@@ -13,8 +13,10 @@
   :root{
     --bg:#0a0616; --panel:rgba(190,150,255,.10); --panel2:rgba(190,150,255,.18);
     --lip:inset 0 1px 0 rgba(255,255,255,.12);
+    --edge:inset 0 0 0 1px rgba(198,155,255,.14);
     --ink:#f0eaff; --dim:#a495c9; --acc:#c69bff; --hot:#ff9d5c;
     --r:12px;
+    --shadow:0 14px 38px rgba(0,0,0,.58);
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-touch-callout:none;}
   html,body{height:100%;margin:0;overflow:hidden;background:var(--bg);}
@@ -51,8 +53,39 @@
   .btn.sm{padding:6px 10px;font-size:12px;}
   @media (hover:hover){ .btn:hover{background:var(--panel2);} .btn.on:hover{background:#fff;} }
 
-  .card{background:rgba(18,10,34,.62);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
-    box-shadow:var(--lip), 0 12px 34px rgba(0,0,0,.55);border-radius:var(--r);padding:9px;}
+  .card{background:rgba(18,10,34,.66);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+    box-shadow:var(--lip), var(--edge), var(--shadow);border-radius:var(--r);padding:9px;}
+
+  /* the clock readout is the one number that says what you are watching, so it
+     is the one that gets the accent */
+  .rate{color:var(--acc);font-weight:700;font-size:13px;letter-spacing:.01em;}
+
+  /* --- the dock: worlds on the left, systems on the right --- */
+  .dock{display:flex;gap:9px;align-items:flex-end;margin-bottom:9px;}
+  .picker{flex:1;min-width:0;padding-top:7px;}
+  .systems{flex:0 0 auto;width:188px;}
+
+  /* category tabs. 28 kinds will not fit one strip, and a strip you have to
+     scroll for two seconds to reach a black hole is not a picker. */
+  .tabs{display:inline-flex;gap:3px;margin:0 1px 8px;background:rgba(0,0,0,.26);
+    border-radius:9px;padding:3px;align-self:flex-start;}
+  .picker{display:flex;flex-direction:column;}
+  .tab{border-radius:7px;padding:5px 13px;font-size:11px;color:var(--dim);
+    text-align:center;white-space:nowrap;transition:background .12s,color .12s;}
+  .tab.on{background:var(--panel2);color:var(--ink);box-shadow:var(--lip);}
+  @media (hover:hover){ .tab:hover{color:var(--ink);} }
+  /* out-of-category worlds stay in the document and are merely not shown, so
+     anything counting the roster still finds all of it */
+  .bd[hidden]{display:none;}
+
+  .sysList{display:flex;flex-direction:column;gap:5px;}
+  .sys{display:block;width:100%;text-align:left;background:var(--panel);box-shadow:var(--lip);
+    border-radius:9px;padding:6px 9px;transition:background .12s,transform .08s;}
+  .sys:active{transform:translateY(1px);}
+  .sys .sn{display:block;font-size:12px;font-weight:650;}
+  .sys .sb{display:block;font-size:10.5px;color:var(--dim);line-height:1.25;margin-top:1px;}
+  .sys.on{background:var(--ink);} .sys.on .sn{color:#150a26;} .sys.on .sb{color:#4a3768;}
+  @media (hover:hover){ .sys:hover{background:var(--panel2);} .sys.on:hover{background:#fff;} }
 
   .readout{font-variant-numeric:tabular-nums;font-size:12px;color:var(--dim);white-space:nowrap;
     text-shadow:0 1px 8px rgba(0,0,0,.9);}
@@ -108,7 +141,18 @@
   .insp .acts{display:flex;gap:6px;margin-top:8px;}
   .insp .acts .btn{flex:1;justify-content:center;text-align:center;}
 
+  /* the label the forge already used, now shared with the systems card */
+  .lbl{font-size:11px;color:var(--dim);margin:0 0 6px;letter-spacing:.06em;text-transform:uppercase;}
+
   @media (max-width:900px){ .forge{width:214px;} .insp{width:160px;} .brand{font-size:16px;} }
+  /* narrow: the systems card goes under the picker rather than squeezing it */
+  @media (max-width:720px){
+    .dock{flex-direction:column;align-items:stretch;}
+    .systems{width:auto;}
+    .sysList{flex-direction:row;}
+    .sys{flex:1;} .sys .sb{display:none;}
+    .tab{font-size:10px;padding:5px 2px;}
+  }
 </style>
 </head>
 <body>
@@ -119,6 +163,7 @@
     <div class="brand">Orbit<b>al</b></div>
     <button class="btn sm" id="forgeBtn" title="Design a world">Forge</button>
     <div class="grow"></div>
+    <div class="readout rate" id="rate" title="How much sky goes by per second of watching">—</div>
     <div class="readout" id="stat"></div>
     <button class="btn" id="play" title="Play / pause — Space">Pause</button>
     <button class="btn" id="reset" title="Clear everything — C">Clear</button>
@@ -156,32 +201,40 @@
     <div class="kv"><span>Speed</span><b id="ispVel">—</b></div>
     <div class="kv"><span>Orbiting</span><b id="ispHost">—</b></div>
     <div class="kv"><span>Period</span><b id="ispPer">—</b></div>
+    <div class="kv"><span>One orbit takes</span><b id="ispYear">—</b></div>
     <div class="acts">
       <button class="btn sm" id="ispFollow">Follow</button>
       <button class="btn sm" id="ispDel">Delete</button>
     </div>
   </div>
 
-  <div class="card" style="margin-bottom:9px">
-    <div class="bodies" id="bodies"></div>
+  <div class="dock">
+    <div class="card picker">
+      <div class="tabs" id="catTabs"></div>
+      <div class="bodies" id="bodies"></div>
+    </div>
+    <div class="card systems">
+      <div class="lbl">Systems</div>
+      <div class="sysList" id="sysList"></div>
+    </div>
   </div>
 
   <div class="row">
     <div class="card slider">
       <label for="speed">Speed</label>
-      <input type="range" id="speed" min="0" max="60" value="29">
+      <input type="range" id="speed" min="0" max="60" value="19">
       <span class="readout" id="speedv">1.0&times;</span>
     </div>
     <button class="btn" id="dragBtn" title="Grab a world and move it, and let go to throw it — D">Drag</button>
     <button class="btn" id="orbitAssist" title="Tap empty space to drop a body into a circular orbit">Auto-orbit</button>
     <button class="btn" id="trails" title="Orbit trails — T">Trails</button>
+    <button class="btn" id="orbits" title="Draw the ellipse each stable orbit is following — O">Orbits</button>
     <div class="card slider" title="How much debris the sky will hold at once">
       <label for="debris">Debris</label>
       <input type="range" id="debris" min="0" max="8" value="6">
       <span class="readout" id="debrisv">60k</span>
     </div>
     <div class="grow"></div>
-    <button class="btn sm" data-preset="solar" title="Our own, to scale in distance">Solar system</button>
     <button class="btn sm" id="fit" title="Frame everything — F">Fit</button>
   </div>
 </div>
@@ -218,6 +271,8 @@ const CLUMP_SPREAD= 1.5;     /* how alike their velocities must be */
    scale — see the stress calculation in tides() */
 const COHESION = 0.8;
 const TIDE_K = 8;      /* fluid Roche coefficient, 2^3 — see tides() */
+/* a year is divided up for the clock readout, nothing else */
+const MONTH = 1/12, DAY = 1/365.25;
 const NEUTRON_MASS = 4200;
 const HOLE_MASS    = 13000;
 const SHOCK_SPEED  = 190;    /* how fast a blast front travels, world units/s */
@@ -374,28 +429,67 @@ function rampAt(ramp,t){
 /* mass is the only number that matters to gravity; radius follows from mass
    and the class density, so a gas giant is genuinely puffy for its weight. */
 const KINDS = [
-  {id:'asteroid', name:'Asteroid',   cls:'rock', pal:'barren',   mass:0.5},
-  {id:'comet',    name:'Comet',      cls:'ice',  pal:'ice',      mass:0.3,  comet:1},
-  {id:'moon',     name:'Moon',       cls:'rock', pal:'barren',   mass:2.6},
-  {id:'dwarfp',   name:'Dwarf planet',cls:'rock',pal:'desert',   mass:7},
-  {id:'rocky',    name:'Rocky world',cls:'rock', pal:'terran',   mass:22},
-  {id:'iceworld', name:'Ice world',  cls:'ice',  pal:'ice',      mass:26},
-  {id:'molten',   name:'Molten world',cls:'lava',pal:'volcanic', mass:28},
-  {id:'gas',      name:'Gas giant',  cls:'gas',  pal:'amber',    mass:150},
-  {id:'icegiant', name:'Ice giant',  cls:'gas',  pal:'azure',    mass:100},
-  {id:'brownd',   name:'Brown dwarf',cls:'gas',  pal:'ember',    mass:340, dens:70},
-  {id:'dwarfs',   name:'Dwarf star', cls:'star', pal:'ember',    mass:520},
-  {id:'star',     name:'Star',       cls:'star', pal:'amber',    mass:1500},
+  /* --- small bodies: rubble, ice and the things that never finished --- */
+  {id:'planetesimal',name:'Planetesimal',cls:'rock',pal:'barren', mass:0.15, cat:'small'},
+  {id:'asteroid', name:'Asteroid',   cls:'rock', pal:'barren',   mass:0.5,  cat:'small'},
+  {id:'comet',    name:'Comet',      cls:'ice',  pal:'ice',      mass:0.3,  comet:1, cat:'small'},
+  {id:'moon',     name:'Moon',       cls:'rock', pal:'barren',   mass:2.6,  cat:'small'},
+  {id:'dwarfp',   name:'Dwarf planet',cls:'rock',pal:'desert',   mass:7,    cat:'small'},
+
+  /* --- worlds: solid all the way down, and told apart by what they are
+     made of rather than how big they are --- */
+  {id:'rocky',    name:'Rocky world',cls:'rock', pal:'terran',   mass:22,   cat:'world'},
+  /* Mercury is two thirds iron by mass, which is why it is the second densest
+     thing in our system while being the smallest planet in it. Dense enough to
+     hold together where a rocky world of the same width is pulled apart. */
+  {id:'ironworld',name:'Iron world', cls:'rock', pal:'barren',   mass:18, dens:240, cat:'world'},
+  /* the jade ramp was sitting in the palette table unused */
+  {id:'oceanworld',name:'Ocean world',cls:'ice', pal:'jade',     mass:24, dens:95,  cat:'world'},
+  {id:'superearth',name:'Super-Earth',cls:'rock',pal:'terran',   mass:60,   cat:'world'},
+  /* carbon rather than silicate: graphite on top, diamond underneath, and no
+     water anywhere in it */
+  {id:'carbon',   name:'Carbon world',cls:'rock',pal:'barren',   mass:30, dens:130, cat:'world'},
+  {id:'iceworld', name:'Ice world',  cls:'ice',  pal:'ice',      mass:26,   cat:'world'},
+  {id:'molten',   name:'Molten world',cls:'lava',pal:'volcanic', mass:28,   cat:'world'},
+  /* what is left when a gas giant parks next to a star long enough to lose the
+     gas: the core it was built around, bare and still hot */
+  {id:'chthonian',name:'Stripped core',cls:'rock',pal:'volcanic',mass:45, dens:190, cat:'world'},
+
+  /* --- giants: held up by gas, so they are wide for what they weigh --- */
+  {id:'gas',      name:'Gas giant',  cls:'gas',  pal:'amber',    mass:150,  cat:'giant'},
+  {id:'icegiant', name:'Ice giant',  cls:'gas',  pal:'azure',    mass:100,  cat:'giant'},
+  /* a giant that migrated in and got cooked: the heat puffs it to twice the
+     width for the same mass, which is also what makes it easy to shred */
+  {id:'hotjup',   name:'Hot Jupiter',cls:'gas',  pal:'ember',    mass:180, dens:12, cat:'giant'},
+  {id:'brownd',   name:'Brown dwarf',cls:'gas',  pal:'ember',    mass:340, dens:70, cat:'giant'},
+
+  /* --- stars --- */
+  /* still falling together and not yet fusing, so it is wide and dim */
+  {id:'protostar',name:'Protostar',  cls:'star', pal:'ember',    mass:700, dens:20, cat:'star'},
+  {id:'dwarfs',   name:'Dwarf star', cls:'star', pal:'ember',    mass:520,  cat:'star'},
+  {id:'star',     name:'Star',       cls:'star', pal:'amber',    mass:1500, cat:'star'},
+  /* Deliberately parked just under NEUTRON_MASS. Placing one is not the event;
+     it is a loaded gun. Feed it a moon and it goes off. */
+  {id:'bluegiant',name:'Blue supergiant',cls:'star',pal:'azure', mass:3800, dens:18, cat:'star'},
   /* puffed up to hundreds of times its old width and a thousandth of the
      density: a red giant is mostly a vacuum with a star's mass in the middle */
-  {id:'redgiant', name:'Red giant',  cls:'star', pal:'ember',    mass:1400, dens:0.6},
+  {id:'redgiant', name:'Red giant',  cls:'star', pal:'ember',    mass:1400, dens:0.6, cat:'star'},
+
+  /* --- remnants: what is left after the above stop holding themselves up --- */
   /* a burnt-out core held up by degenerate matter — an Earth's width carrying
      most of a star, which is why it is the densest thing here short of a
      neutron star */
-  {id:'whited',   name:'White dwarf',cls:'star', pal:'ice',      mass:900,  dens:2600},
-  {id:'neutron',  name:'Neutron star',cls:'exotic',pal:'azure',  mass:5200, dens:9000},
-  {id:'pulsar',   name:'Pulsar',     cls:'exotic',pal:'azure',   mass:5000, dens:9000, spin:5.2},
-  {id:'hole',     name:'Black hole', cls:'exotic',pal:'violet',  mass:9000, dens:20000, hole:1}
+  {id:'whited',   name:'White dwarf',cls:'star', pal:'ice',      mass:900,  dens:2600, cat:'remnant'},
+  {id:'neutron',  name:'Neutron star',cls:'exotic',pal:'azure',  mass:5200, dens:9000, cat:'remnant'},
+  {id:'pulsar',   name:'Pulsar',     cls:'exotic',pal:'azure',   mass:5000, dens:9000, spin:5.2, cat:'remnant'},
+  /* the same object with the beam cranked: it spins down fast because the
+     field it is dragging round with it is doing the braking */
+  {id:'magnetar', name:'Magnetar',   cls:'exotic',pal:'violet',  mass:5400, dens:9000, spin:12, cat:'remnant'},
+  {id:'hole',     name:'Black hole', cls:'exotic',pal:'violet',  mass:9000, dens:20000, hole:1, cat:'remnant'},
+  /* Past HOLE_MASS, so it would collapse on placement if it were not already
+     a hole — collapseCheck skips anything that is one. The horizon is wide
+     enough to lens most of the screen. */
+  {id:'smbh',     name:'Supermassive',cls:'exotic',pal:'violet', mass:40000, dens:60000, hole:1, cat:'remnant'}
 ];
 const kindById = id => KINDS.find(k=>k.id===id) || KINDS[4];
 const densityOf = spec => spec.dens || (CLASSES[spec.cls] ? CLASSES[spec.cls].dens : 100);
@@ -420,6 +514,7 @@ function specFromKind(k, seed){
 let bodies = [], parts = [];
 let nextId = 1;
 let running = true, showTrails = true, orbitAssist = true, dragMode = false;
+let showOrbits = true;
 let timeScale = 1, selected = null, following = null;
 const cam = {x:0, y:0, zoom:1};
 
@@ -1802,8 +1897,18 @@ function recordTrails(){
 }
 function step(dt){
   /* Keep each substep near 1/90s of simulated time however fast the clock runs,
-     or fast-forward turns circular orbits into spirals. */
-  const sub = Math.max(SUBSTEPS, Math.min(36, Math.ceil(dt*90)));
+     or fast-forward turns circular orbits into spirals.
+
+     The ceiling used to be a flat 36, which was the whole reason the clock
+     could not go past 60x: beyond that the substep grew instead of the count,
+     and a circular orbit started spiralling. It can be raised because only
+     bodies are integrated here — the 60,000 motes step once per frame however
+     many substeps run — so the cost is n^2 over a few dozen things, not over
+     the sky. It is still a budget rather than a blank cheque: a scene holding
+     hundreds of bodies gets proportionally fewer, so the frame cost of the
+     integrator stays bounded whatever is in it. */
+  const cap = Math.max(36, Math.min(900, (40000/Math.max(1,bodies.length))|0));
+  const sub = Math.max(SUBSTEPS, Math.min(cap, Math.ceil(dt*90)));
   const h=dt/sub;
   for(let s=0;s<sub;s++) integrate(h);
   const src = gravitySources();
@@ -1862,6 +1967,69 @@ function orbitOf(b){
   if(e>=0) return {host,bound:false};
   const a=-mu/(2*e);
   return {host,bound:true,a,period:2*Math.PI*Math.sqrt(a*a*a/mu)};
+}
+
+/* The shape an orbit is going to keep, worked out before it has been round
+   even once. A trail is where a world has been; this is where it is going, and
+   the two together are what make a resonance legible — three moons whose rings
+   sit still while the moons move is the whole of the Laplace resonance in one
+   picture, and you would otherwise have to sit and count laps to see it.
+
+   It is the orbit the two-body problem says it has, so it is exactly right for
+   a planet round a star and only nearly right for anything being pulled hard
+   by a third thing. That is the honest reading: where the ellipse visibly
+   drifts, the orbit really is being perturbed.
+
+   Nothing is drawn for an orbit that is not one. Four things disqualify it —
+   escaping, near-radial, a periapsis underneath the host's own surface, or a
+   body heavier than what it is supposedly going round — and each of those is a
+   case where a drawn ellipse would be a claim the sim is about to break. */
+function orbitPath(b){
+  const host=dominant(b.x,b.y,b);
+  if(!host||host===b||b.m>=host.m) return null;
+  const dx=b.x-host.x, dy=b.y-host.y, r=Math.hypot(dx,dy);
+  if(r<1e-6) return null;
+  const vx=b.vx-host.vx, vy=b.vy-host.vy;
+  const v2=vx*vx+vy*vy, mu=G*(host.m+b.m);
+  const en=v2/2-mu/r;
+  if(en>=0) return null;                       /* unbound: there is no closed shape */
+  const a=-mu/(2*en);
+  const rdv=dx*vx+dy*vy;
+  /* the eccentricity vector points at periapsis, which is the one thing a
+     scalar eccentricity cannot tell you and the ellipse has to be turned by */
+  const ex=((v2-mu/r)*dx-rdv*vx)/mu, ey=((v2-mu/r)*dy-rdv*vy)/mu;
+  const e=Math.hypot(ex,ey);
+  if(!(e<0.985)) return null;                  /* a plunge, or a NaN */
+  if(a*(1-e)<=host.r) return null;             /* it goes through the host */
+  const ang=e>1e-9?Math.atan2(ey,ex):0;
+  /* the host sits at a focus, so the centre is offset from it by a*e back
+     along the periapsis direction */
+  return {host, a, e, ang,
+          cx:host.x-a*e*Math.cos(ang), cy:host.y-a*e*Math.sin(ang),
+          b:a*Math.sqrt(1-e*e)};
+}
+function drawOrbits(){
+  for(const b of bodies){
+    if(b.dead||b.held) continue;
+    const sel = b===selected;
+    if(!showOrbits && !sel) continue;
+    const o=orbitPath(b);
+    if(!o) continue;
+    const rx=o.a*cam.zoom, ry=o.b*cam.zoom;
+    if(rx<3||rx>24000) continue;               /* a dot, or a wall */
+    const pal=(PALETTES[b.spec.pal]||PALETTES.terran).ramp;
+    const c=pal[pal.length-2];
+    ctx.save();
+    ctx.lineWidth=1;
+    /* dashed, so it never reads as a trail — one is a record and the other is
+       a prediction, and they are frequently on top of each other */
+    ctx.setLineDash(sel?[3,2]:[2,3]);
+    ctx.strokeStyle=`rgba(${c[0]},${c[1]},${c[2]},${sel?0.62:0.22})`;
+    ctx.beginPath();
+    ctx.ellipse(toScreenX(o.cx), toScreenY(o.cy), rx, ry, o.ang, 0, 6.2832);
+    ctx.stroke();
+    ctx.restore();
+  }
 }
 
 /* ============================ render pipeline ============================ */
@@ -2467,6 +2635,8 @@ function drawBeams(b,x,y,r,pal){
 function render(t){
   drawSky(t);
   if(showTrails) drawTrails();
+  /* under the bodies and over the trails: it is scaffolding, not scenery */
+  drawOrbits();
   drawParts();
   drawGhosts();
   drawWaves();
@@ -2738,12 +2908,18 @@ addEventListener('keydown',e=>{
   if(k===' '){ e.preventDefault(); spaceHeld=true; togglePlay(); }
   else if(k==='c'||k==='C') clearAll();
   else if(k==='t'||k==='T') setTrails(!showTrails);
+  else if(k==='o'||k==='O') setOrbits(!showOrbits);
   else if(k==='d'||k==='D') setDragMode(!dragMode);
   else if(k==='f'||k==='F') fitAll();
   else if(k==='g'||k==='G') toggleForge();
   else if(k==='Escape') selectBody(null);
   else if((k==='Backspace'||k==='Delete')&&selected) deleteSelected();
-  else if(k>='1'&&k<='9'){ const kk=KINDS[+k-1]; if(kk) pickKind(kk.id); }
+  /* within the shelf on show, not the first nine of twenty-eight — which
+     with the roster this size would leave two thirds of it unreachable */
+  else if(k>='1'&&k<='9'){
+    const inCat=KINDS.filter(x=>(x.cat||'world')===currentCat);
+    const kk=inCat[+k-1]; if(kk) pickKind(kk.id);
+  }
 });
 addEventListener('keyup',e=>{ if(e.key===' ') spaceHeld=false; });
 
@@ -2810,6 +2986,14 @@ const AU = 420;
 const EM = 0.18;          /* one Earth mass, in world units */
 const ER = 1.4;           /* one Earth radius */
 const SUNM = 3000;
+/* One year, in sim-seconds: the period of a circular orbit at one AU around
+   the Sun this preset builds. Derived rather than written down, so retuning AU
+   or SUNM moves the readout with it instead of leaving it quietly lying. */
+const SOLAR_YEAR = 2*Math.PI*Math.sqrt(Math.pow(AU,3)/(G*SUNM));
+/* What the scene on screen calls a year. A preset built at a different
+   distance scale — and both of the new ones are — declares its own by naming
+   one orbit in it whose real period is known. Everything else follows. */
+let yearUnit = SOLAR_YEAR;
 
 /* name, class, palette, a (AU), eccentricity, mass (Earths), radius (Earths) */
 const PLANETS = [
@@ -2846,8 +3030,95 @@ const MOONS = [
   ['Neptune','Triton',   78,   0.00358, 0.212, -1]
 ];
 
+/* Place a body at an explicit drawn radius rather than letting density decide
+   it. Every preset here exaggerates size — worlds are invisible at true scale —
+   and this is where that exaggeration is admitted to, once, instead of being
+   smeared through the numbers. */
+function placeAt(x,y,vx,vy,cls,pal,mass,radius,name){
+  const b=addBody(makeBody(x,y,vx,vy,
+    {cls, pal, seed:(seedCounter++*2654435761)%100000,
+     dens:mass/Math.pow(radius/RSCALE,3), name}, mass));
+  if(b) b.name=name;
+  return b;
+}
+/* A scene's own calibration. Give it one orbit whose real period is known and
+   it works out what a year costs here: T sim-seconds buy `days` real days, so
+   a year buys 365.25 of them. This is the whole reason the clock readout can
+   be honest in a system that is not ours and not at our distance scale. */
+function yearFrom(hostMass, radius, realDays){
+  const T = 2*Math.PI*Math.sqrt(Math.pow(radius,3)/(G*hostMass));
+  return T/realDays*365.25;
+}
+
+
+/* ========================= TRAPPIST-1 =========================
+   Seven Earth-sized worlds round an M8 red dwarf, the whole system packed
+   inside a fifth of Mercury's orbit. It cannot be drawn at the solar preset's
+   distance scale — the innermost orbit would sit inside the star's own disc —
+   so this one has its own, pinned by putting planet b at 150 units and scaling
+   the rest by the real ratios between their semi-major axes.
+
+   That last part is the reason the resonance does not have to be arranged.
+   Under one dominant mass Kepler's third law ties period to semi-major axis,
+   so keeping the real distance ratios hands back the real period ratios, and
+   the chain — very nearly 8:5, 5:3, 3:2, 3:2, 4:3, 3:2 down the line — falls
+   out of the geometry rather than being imposed on it. Watch long enough and
+   the pattern repeats.
+
+   The star is 0.0898 solar masses, which is 29,900 Earths — past the point
+   where anything here collapses, so it takes the same treatment ours does and
+   sits at 1,400 with the planets lifted to match. Every planet-to-planet and
+   planet-to-star ratio is intact.                                          */
+const T1_STAR = 1400;
+const T1_RB   = 150;                       /* where planet b is drawn */
+const T1_EARTH = T1_STAR/29900;            /* one Earth mass, in world units */
+/* Worlds are drawn about ten times too large against this system's distances,
+   and the star about five — the same trade the solar preset makes, and for the
+   same reason: at true scale planet b is a third of a pixel. The ratios
+   between the seven planets are exact, which is the part worth having. */
+const T1_RSCALE = 7;
+/* name, semi-major axis (AU), mass (Earths), radius (Earths), palette */
+const TRAPPIST = [
+  ['b', 0.01154, 1.374, 1.116, 'volcanic'],   /* baked; tidally cooked like Io */
+  ['c', 0.01580, 1.308, 1.097, 'desert'],
+  ['d', 0.02227, 0.388, 0.788, 'desert'],
+  ['e', 0.02925, 0.692, 0.920, 'terran'],     /* the one in the habitable zone */
+  ['f', 0.03849, 1.039, 1.045, 'jade'],
+  ['g', 0.04683, 1.321, 1.129, 'ice'],
+  ['h', 0.06189, 0.326, 0.755, 'ice']
+];
+
+/* ================== Jupiter and the Galilean moons ==================
+   Io, Europa and Ganymede are locked 1:2:4 — the Laplace resonance, the only
+   three-body one known — and again it is not arranged here. Real distance
+   ratios give real period ratios, so Europa comes out at 2.008 Ios and
+   Ganymede at 2.015 Europas, which is what makes the pattern close up and
+   repeat every seven days.
+
+   That resonance is also why Io is molten. It can never settle into a circular
+   orbit, because Europa and Ganymede keep pulling it back out of one, so
+   Jupiter flexes it twice an orbit and the friction has to go somewhere. It is
+   the most volcanic body in our system and it is drawn as one.            */
+const GAL_JUP = 1200;
+const GAL_RJ  = 26;                        /* Jupiter's drawn radius, true to
+                                              the distance scale used here */
+/* Io is a fortieth of Jupiter's width, which at any zoom that holds Callisto's
+   orbit is well under a pixel. The moons are drawn ten times too large; Jupiter
+   is not drawn large at all, so the exaggeration sits in one number rather than
+   being spread through the system. */
+const GAL_MOON = 10;
+/* name, distance (Jupiter radii), mass (Earths), radius (Earths), class, palette */
+const GALILEAN = [
+  ['Io',       5.90, 0.0150, 0.286, 'lava', 'volcanic'],
+  ['Europa',   9.38, 0.0080, 0.245, 'ice',  'ice'],
+  ['Ganymede',14.97, 0.0250, 0.413, 'rock', 'barren'],
+  ['Callisto',26.33, 0.0180, 0.378, 'rock', 'barren']
+];
+
 const PRESETS={
-  solar(){
+  solar:{
+  name:'Solar system', blurb:'Ours, to scale in distance',
+  build(){
     const sun = addBody(makeBody(0,0,0,0,
       {cls:'star', pal:'amber', seed:4242, dens:SUNM/Math.pow(70/RSCALE,3), name:'Sun'}, SUNM));
     const made = {};
@@ -2893,18 +3164,67 @@ const PRESETS={
                             [110,132,170], PART_MASS*0.002, 1, 0.010);
     /* opens on the inner system: out here Neptune is a five-hour orbit and
        Mercury is a four-minute one, and the four-minute one is the show */
-    return {x:0, y:0, zoom:Math.min(22, W/(2.4*5.6*AU))};
-  }
+    return {x:0, y:0, zoom:Math.min(22, W/(2.4*5.6*AU)), yearUnit:SOLAR_YEAR};
+  }},
+
+  trappist:{
+  name:'TRAPPIST-1', blurb:'Seven worlds inside Mercury’s orbit',
+  build(){
+    const star = placeAt(0,0,0,0,'star','ember', T1_STAR, 34, 'TRAPPIST-1');
+    const aB = TRAPPIST[0][1];
+    for(const [nm,a,mE,rE,pal] of TRAPPIST){
+      const r = T1_RB*(a/aB);                       /* real ratios, our scale */
+      const m = mE*T1_EARTH;
+      const th = Math.random()*6.283;
+      const x = Math.cos(th)*r, y = Math.sin(th)*r;
+      const v = circularVelocity(x,y,star,1);
+      placeAt(x,y,v.vx,v.vy, pal==='volcanic'?'lava':'rock', pal, m, Math.max(0.6, rE*T1_RSCALE), 'TRAPPIST-1'+nm);
+    }
+    /* frame the outermost orbit rather than the widest axis, or h spends half
+       its year off the top of the screen */
+    const rOut = T1_RB*(TRAPPIST[6][1]/aB);
+    return {x:0, y:0, zoom:Math.min(30, Math.min(W,H)*0.42/rOut),
+            yearUnit:yearFrom(T1_STAR, T1_RB, 1.5109)};
+  }},
+
+  galilean:{
+  name:'Galilean moons', blurb:'Io, Europa and Ganymede locked 1:2:4',
+  build(){
+    const jup = placeAt(0,0,0,0,'gas','amber', GAL_JUP, GAL_RJ, 'Jupiter');
+    /* one Earth radius, at the scale Jupiter is drawn */
+    const ER_G = GAL_RJ/11.209;
+    for(const [nm,d,mE,rE,cls,pal] of GALILEAN){
+      const r = d*GAL_RJ;
+      const m = mE*(GAL_JUP/317.8);
+      const th = Math.random()*6.283;
+      const x = Math.cos(th)*r, y = Math.sin(th)*r;
+      const v = circularVelocity(x,y,jup,1);
+      placeAt(x,y,v.vx,v.vy, cls, pal, m, Math.max(0.6, rE*ER_G*GAL_MOON), nm);
+    }
+    /* the ring nobody sees: dust knocked off the inner moons, well inside the
+       Roche distance, which is why it never became one */
+    /* Ours is barely detectable from Earth and is drawn to match — the motes
+       are additive, so a bright colour here saturates into a solid white hoop
+       and buries the planet it is meant to be circling. */
+    beltOf(jup, 150, GAL_RJ*1.4, GAL_RJ*2.5, [74,62,52], PART_MASS*0.002, 1, 0.012);
+    const rOut = GALILEAN[3][1]*GAL_RJ;
+    return {x:0, y:0, zoom:Math.min(26, Math.min(W,H)*0.42/rOut),
+            yearUnit:yearFrom(GAL_JUP, GALILEAN[0][1]*GAL_RJ, 1.769)};
+  }}
 };
 function loadPreset(n){
   held=null; ghosts=[]; blobs=[];
   bodies=[]; parts=[]; waves=[]; selected=null; following=null;
   /* a preset may say where it wants to be looked at from; otherwise frame it */
-  const view=(PRESETS[n]||PRESETS.solar)();
+  const p=PRESETS[n]||PRESETS.solar;
+  yearUnit=SOLAR_YEAR;                 /* until the preset says otherwise */
+  const view=(p.build||p)();
+  if(view&&view.yearUnit) yearUnit=view.yearUnit;
   accelerate();
   for(const b of bodies){ b.ax=b.nax; b.ay=b.nay; }
   if(view){ cam.x=view.x; cam.y=view.y; cam.zoom=view.zoom; following=null; }
   else fitAll();
+  if(typeof markPreset==='function') markPreset(n);
   hideHint();
 }
 
@@ -2929,8 +3249,11 @@ function pickKind(id){
     brush.comet=k.comet||0; brush.hole=k.hole||0; brush.name=k.name;
     brush.seed=(seedCounter++*2654435761)%100000;
   }
-  for(const el of $('bodies').children)
+  for(const el of $('bodies').querySelectorAll('.bd'))
     el.classList.toggle('on', currentKindId!==null && el.dataset.k===currentKindId);
+  /* lighting something in a category you are not looking at would put it out of
+     sight the moment you chose it */
+  if(currentKindId!==null){ const k=kindById(currentKindId); if(k.cat!==currentCat) showCat(k.cat); }
   syncForge();
 }
 /* is there a world on the end of the cursor at all */
@@ -2942,14 +3265,48 @@ function thumb(spec,size){
   c.getContext('2d').drawImage(makeSprite(spec,size),0,0);
   return c;
 }
+/* Five shelves rather than one long scroll. The order is the order of the
+   roster, which is roughly the order of how much of a thing something is. */
+const CATS=[['small','Small'],['world','Worlds'],['giant','Giants'],
+            ['star','Stars'],['remnant','Remnants']];
+let currentCat='world';
 for(const k of KINDS){
   const btn=document.createElement('button');
-  btn.className='bd'; btn.dataset.k=k.id; btn.type='button';
+  btn.className='bd'; btn.dataset.k=k.id; btn.dataset.cat=k.cat||'world'; btn.type='button';
+  btn.title=k.name;
   btn.appendChild(thumb(specFromKind(k,k.id.length*7919),18));
   const nm=document.createElement('span'); nm.className='nm'; nm.textContent=k.name;
   btn.appendChild(nm);
   btn.addEventListener('click',()=>pickKind(k.id));
   $('bodies').appendChild(btn);
+}
+/* Hidden, not removed: every world stays in the document whichever shelf is
+   showing, so anything counting the roster still counts all of it. */
+function showCat(c){
+  currentCat=c;
+  for(const el of $('bodies').querySelectorAll('.bd')) el.hidden = el.dataset.cat!==c;
+  for(const el of $('catTabs').children) el.classList.toggle('on', el.dataset.cat===c);
+  $('bodies').scrollLeft=0;
+}
+for(const [id,label] of CATS){
+  const t=document.createElement('button');
+  t.className='tab'; t.dataset.cat=id; t.type='button'; t.textContent=label;
+  t.addEventListener('click',()=>showCat(id));
+  $('catTabs').appendChild(t);
+}
+showCat('world');
+
+/* ---- systems ---- */
+/* built from the registry, so a preset added there shows up here and nowhere
+   has to be told about it twice */
+for(const id in PRESETS){
+  const pr=PRESETS[id];
+  const b=document.createElement('button');
+  b.className='sys'; b.dataset.preset=id; b.type='button'; b.title=pr.blurb||'';
+  b.innerHTML='<span class="sn"></span><span class="sb"></span>';
+  b.querySelector('.sn').textContent=pr.name||id;
+  b.querySelector('.sb').textContent=pr.blurb||'';
+  $('sysList').appendChild(b);
 }
 
 /* ---- world forge ---- */
@@ -3023,6 +3380,11 @@ $('reset').addEventListener('click',clearAll);
 $('fit').addEventListener('click',()=>fitAll());
 function setTrails(v){ showTrails=v; $('trails').classList.toggle('on',v); if(!v) for(const b of bodies) b.trail.length=0; }
 $('trails').addEventListener('click',()=>setTrails(!showTrails));
+/* A selected world keeps its ellipse whether this is on or not: asking what
+   something is doing is the moment you most want to be shown it. */
+function setOrbits(v){ showOrbits=v; $('orbits').classList.toggle('on',v); }
+$('orbits').addEventListener('click',()=>setOrbits(!showOrbits));
+setOrbits(true);
 $('orbitAssist').addEventListener('click',()=>{ orbitAssist=!orbitAssist; $('orbitAssist').classList.toggle('on',orbitAssist); });
 function setDragMode(v){
   dragMode=v;
@@ -3032,10 +3394,16 @@ function setDragMode(v){
 }
 $('dragBtn').addEventListener('click',()=>setDragMode(!dragMode));
 setTrails(true); $('orbitAssist').classList.add('on');
+/* The top of the track is 1000x, which is what it costs to reach a year a
+   second: an orbit at one AU takes SOLAR_YEAR sim-seconds, and that is a shade
+   under a thousand. The exponent is steeper than the old 2.6 to cover the
+   extra range without losing the slow end, where the interesting part is —
+   a third of the way along is still about 9x. */
 $('speed').addEventListener('input',e=>{
   const t=+e.target.value/60;
-  timeScale=t<=0?0:Math.pow(t,2.6)*60;
-  $('speedv').innerHTML=timeScale.toFixed(timeScale<1?2:1)+'&times;';
+  timeScale=t<=0?0:Math.pow(t,4.1)*1000;
+  $('speedv').innerHTML=fmtRate(timeScale)+'&times;';
+  syncRate();
 });
 $('speed').dispatchEvent(new Event('input'));
 
@@ -3053,6 +3421,9 @@ $('debris').addEventListener('input',e=>{
 $('debris').dispatchEvent(new Event('input'));
 for(const el of document.querySelectorAll('[data-preset]'))
   el.addEventListener('click',()=>loadPreset(el.dataset.preset));
+function markPreset(n){
+  for(const el of document.querySelectorAll('.sys')) el.classList.toggle('on', el.dataset.preset===n);
+}
 
 function selectBody(b){
   selected=b;
@@ -3077,13 +3448,43 @@ function deleteSelected(){
 }
 $('ispDel').addEventListener('click',deleteSelected);
 $('ispClose').addEventListener('click',()=>selectBody(null));
+/* ======================= how fast the clock runs =======================
+   The speed slider says 200x, which is a number about the sim and means
+   nothing about the sky. What a year costs is the thing worth knowing, and it
+   is only knowable because the scene declares its scale: yearUnit is how many
+   sim-seconds one real year takes here, so timeScale/yearUnit is years of sky
+   per second of sitting watching it.
+
+   The unit steps down as the clock slows — years, months, days, then hours —
+   because 0.003 yr/s is a true statement nobody can read. */
+function fmtRate(v){
+  if(v>=100) return v.toFixed(0);
+  if(v>=10)  return v.toFixed(1);
+  if(v>=1)   return v.toFixed(2);
+  return v.toFixed(3).replace(/0+$/,'').replace(/\.$/,'');
+}
+function rateText(){
+  if(!running || timeScale<=0) return 'paused';
+  const yps = timeScale/yearUnit;
+  if(yps>=1)     return fmtRate(yps)+' yr/s';
+  if(yps>=MONTH) return fmtRate(yps*12)+' mo/s';
+  if(yps>=DAY)   return fmtRate(yps*365.25)+' d/s';
+  return fmtRate(yps*365.25*24)+' h/s';
+}
+function syncRate(){ const el=$('rate'); if(el) el.textContent=rateText(); }
+
 function updateInspector(){
   if(!selected) return;
   $('ispMass').textContent=fmt(selected.m);
   $('ispVel').textContent=fmt(Math.hypot(selected.vx,selected.vy),2);
   const o=orbitOf(selected);
   $('ispHost').textContent=o?o.host.name:'—';
+  /* Its period is in sim-seconds; what you want to know is how long you have
+     to sit there. That is the same number over the clock rate, and it moves
+     when you move the slider, which is the point of showing it. */
   $('ispPer').textContent=o?(o.bound?fmt(o.period,1)+'s':'escaping'):'—';
+  const wall = o&&o.bound&&running&&timeScale>0 ? o.period/timeScale : 0;
+  $('ispYear').textContent = wall ? (wall<0.1?'<0.1s':fmt(wall, wall<10?1:0)+'s') : '—';
   $('ispFollow').classList.toggle('on',following===selected);
 }
 function fmt(v,d){
@@ -3222,6 +3623,12 @@ window.orbital={
     return {x,y};
   },
   cam, aim, brush,
+  /* what the clock readout says, and what a year costs in this scene */
+  rate:()=>rateText(),
+  yearUnit:()=>yearUnit,
+  /* the ellipse a body is following, or null where there is not one */
+  orbit:id=>{ const b=bodies.find(x=>x.id===id); if(!b) return null;
+              const o=orbitPath(b); return o?{a:o.a,e:o.e,host:o.host.name||null}:null; },
   step:dt=>step(dt),
   setSpeed:v=>{ timeScale=v; },
   select:id=>selectBody(bodies.find(b=>b.id===id)||null),
@@ -3246,6 +3653,7 @@ function frame(now){
   render(clock);
   updateInspector();
   elStat.textContent=`${bodies.length} bodies · ${parts.length} debris · ${Math.round(fps)} fps`;
+  syncRate();
   requestAnimationFrame(frame);
 }
 
