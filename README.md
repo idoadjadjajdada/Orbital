@@ -25,6 +25,30 @@ pan, and a mouse wheel zooms about the cursor.
 
 ## What it does
 
+**Solar system** loads ours. Distances are to scale — every orbit is the real
+semi-major axis, started at its own perihelion with the perihelion speed, so
+the eccentricities are real too and Mercury's 0.21 is plainly visible. The
+eight planets carry their true masses and true sizes *relative to each other*
+(Jupiter is 11.2 Earths across because it is, and 318 Earths heavy because it
+is), the main belt sits between Mars and Jupiter where Jupiter never let a
+planet finish forming, and thirteen moons go round in the real order and the
+real directions. Triton still goes backwards. Saturn, Uranus, Jupiter and
+Neptune all have their rings, made of debris inside the Roche distance, which
+is the whole reason they are rings and not moons.
+
+Three things are not to scale and cannot be, so they are at least honest about
+which way they are wrong. **Sizes**: to scale, Earth would be a sixtieth of a
+world unit — smaller than one pixel at any zoom on offer — so bodies are drawn
+about eighty times too large, every ratio between them intact. **The Sun's
+mass**: ours is 333,000 Earths and anything past 4,200 units collapses under
+itself here, so the Sun is 3,000 and the planets are lifted twenty-fold against
+it. The price is that Jupiter pulls the Sun round a circle about a quarter the
+width of Mercury's orbit rather than a hundredth, which you can sit and watch
+it do. **Moon orbits**: a moon has to sit well inside its planet's Hill sphere,
+and the Hill sphere is set by the real distances while the planet is drawn
+eighty times too wide — so where our Moon sits sixty Earths out, this one sits
+at two, at the same fraction of the Hill radius.
+
 Seventeen kinds of thing, from an asteroid up: rocky and icy and molten
 worlds, gas and ice giants, a brown dwarf that never quite lit, dwarf stars and
 stars, a red giant puffed to a hundred times its width at a thousandth of its
@@ -259,6 +283,17 @@ That debris then has to end up somewhere:
   scale a fling is: the clock does not run at hand speed, so a cursor's true
   world velocity is nonsense as an orbital one, and a lazy sweep across the
   screen would otherwise be a thousand units a second.
+- **Nothing is drawn smaller than two buffer pixels.** A planet is a very small
+  thing a very long way from the next one: pull back far enough to see two
+  orbits at once and every world in the sky is a hundredth of a pixel, which is
+  true and useless. Below the floor the picture stops being to scale rather than
+  the sim stopping being right — which is what every planetarium ever written
+  does.
+- **Circular velocity accounts for the softening.** The force law is
+  `1/(r²+ε²)^1.5`, so the speed that balances it is `√(GM)·r/(r²+ε²)^0.75`, not
+  `√(GM/r)`. Far out the two agree to nothing; close in they do not, and the
+  textbook one launches a moon a quarter too fast — enough to strip it off its
+  planet inside two years.
 - **Both forge sliders are logarithmic.** A linear density track spends nine
   tenths of itself between rock and slightly denser rock and still cannot reach
   a neutron star; on a log track every doubling costs the same distance, so one

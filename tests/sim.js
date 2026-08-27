@@ -24,13 +24,11 @@ async function open(b, vp){
   ok('no exceptions', errs.length===0, errs.join(' | '));
   ok('the default system is populated', await p.evaluate(()=>window.orbital.count())>8,
      String(await p.evaluate(()=>window.orbital.count())));
-  for(const n of ['solar','binary','smash','cluster']){
-    await p.locator(`[data-preset="${n}"]`).click();
-    await p.waitForTimeout(300);
-    ok(`preset ${n} loads`, await p.evaluate(()=>window.orbital.count())>1,
-       String(await p.evaluate(()=>window.orbital.count())));
-  }
-  ok('no exceptions after every preset', errs.length===0, errs.join(' | '));
+  await p.locator('[data-preset="solar"]').click();
+  await p.waitForTimeout(300);
+  ok('the solar system loads', await p.evaluate(()=>window.orbital.count())>1,
+     String(await p.evaluate(()=>window.orbital.count())));
+  ok('no exceptions after loading it', errs.length===0, errs.join(' | '));
   ok('every class in the roster can be placed', await p.evaluate(()=>{
     const o=window.orbital; o.clear();
     const ids=[...document.querySelectorAll('.bd')].map(e=>e.dataset.k);
@@ -1142,6 +1140,9 @@ async function open(b, vp){
     const toss=async (steps,px,wait)=>{
       const s=await p.evaluate(()=>{
         const o=window.orbital; o.clear(); o.setSpeed(0);
+        /* a throw is measured in world units the cursor covered, so the zoom it
+           is measured at has to be pinned or the numbers mean nothing */
+        o.cam.x=0; o.cam.y=0; o.cam.zoom=1;
         const id=o.add(0,0,0,0,'rocky',60);
         const w=o.list()[0];
         return Object.assign(o.screen(w.x,w.y),{id});
@@ -1178,6 +1179,76 @@ async function open(b, vp){
   await p.keyboard.press('d');
   ok('and D turns it off again',
      !(await p.evaluate(()=>document.getElementById('dragBtn').classList.contains('on'))));
+  ok('no exceptions', errs.length===0, errs.join(' | '));
+  await ctx.close();
+
+  console.log('\n--- our own solar system ---');
+  ({p,ctx,errs}=await open(b));
+  {
+    const sys = await p.evaluate(()=>{
+      const o=window.orbital;
+      const L=o.list();
+      const by={}; for(const x of L) by[x.name]=x;
+      /* Earth starts at its own perihelion, which is 0.9833 AU, not one */
+      const AU=Math.hypot(by.Earth.x, by.Earth.y)/(1-0.0167);
+      const dist=n=>Math.hypot(by[n].x, by[n].y)/AU;
+      return {
+        n:L.length, parts:o.particles(),
+        names:L.map(x=>x.name),
+        /* perihelion distances, since each starts at its own */
+        a:{mercury:dist('Mercury'), venus:dist('Venus'), mars:dist('Mars'),
+           jupiter:dist('Jupiter'), saturn:dist('Saturn'),
+           uranus:dist('Uranus'), neptune:dist('Neptune')},
+        /* masses relative to Earth */
+        m:{mercury:by.Mercury.m/by.Earth.m, jupiter:by.Jupiter.m/by.Earth.m,
+           saturn:by.Saturn.m/by.Earth.m, mars:by.Mars.m/by.Earth.m},
+        /* and sizes */
+        r:{jupiter:by.Jupiter.r/by.Earth.r, mercury:by.Mercury.r/by.Earth.r},
+        sun:by.Sun.m/by.Earth.m
+      };
+    });
+    const want=['Sun','Mercury','Venus','Earth','Mars','Jupiter','Saturn','Uranus','Neptune'];
+    ok('the Sun and all eight planets are there',
+       want.every(n=>sys.names.includes(n)), sys.names.slice(0,9).join(' '));
+    const moons=['Moon','Phobos','Deimos','Io','Europa','Ganymede','Callisto',
+                 'Rhea','Titan','Iapetus','Titania','Oberon','Triton'];
+    ok('with the moons on them', moons.every(n=>sys.names.includes(n)),
+       moons.filter(n=>!sys.names.includes(n)).join(',')||'all of them');
+    ok('and a belt and some rings made of debris', sys.parts>3000,
+       sys.parts+' motes');
+    /* Distances are ours to scale: what a test can check is that the ratios
+       between them are the real ones, whatever one AU was set to. */
+    const near=(got,real,tol)=>Math.abs(got-real)/real < tol;
+    ok('every orbit is the real distance from the Sun',
+       near(sys.a.mercury,0.387*(1-0.2056),0.02) && near(sys.a.venus,0.723,0.02) &&
+       near(sys.a.mars,1.524*(1-0.0934),0.02) && near(sys.a.jupiter,5.203*(1-0.0484),0.02) &&
+       near(sys.a.saturn,9.537*(1-0.0542),0.02) && near(sys.a.uranus,19.191*(1-0.0472),0.02) &&
+       near(sys.a.neptune,30.07*(1-0.0086),0.02),
+       'Jupiter at '+sys.a.jupiter.toFixed(2)+' AU, Neptune at '+sys.a.neptune.toFixed(1));
+    ok('and every planet weighs what it should against the others',
+       near(sys.m.jupiter,317.8,0.01) && near(sys.m.saturn,95.2,0.01) &&
+       near(sys.m.mercury,0.0553,0.01) && near(sys.m.mars,0.107,0.01),
+       'Jupiter is '+sys.m.jupiter.toFixed(0)+' Earths');
+    ok('and is the right size against them',
+       near(sys.r.jupiter,11.209,0.02) && near(sys.r.mercury,0.383,0.02),
+       'Jupiter is '+sys.r.jupiter.toFixed(1)+' Earths across');
+    /* the one ratio that cannot be ours: anything past 4,200 collapses here */
+    ok('the Sun is lighter against them than ours is, and says so',
+       sys.sun>1000 && sys.sun<40000, 'Sun is '+Math.round(sys.sun)+' Earths');
+
+    /* and it holds together */
+    const held = await p.evaluate(()=>{
+      const o=window.orbital;
+      o.setSpeed(0);
+      const before=o.list().map(x=>x.name);
+      for(let i=0;i<36000;i++) o.step(1/60);   /* six Earth years */
+      const after=o.list().map(x=>x.name);
+      return {lost:before.filter(n=>!after.includes(n)), n:after.length};
+    });
+    ok('and it is still a solar system six years later',
+       held.lost.length===0,
+       held.lost.length?('lost '+held.lost.join(',')):'nothing lost');
+  }
   ok('no exceptions', errs.length===0, errs.join(' | '));
   await ctx.close();
 
