@@ -2,8 +2,8 @@ import { Body, type Cls, type Look, type Style } from './body';
 import { KM, M_EARTH, M_JUP, M_MOON, MSUN_KG, R_EARTH, R_JUP, radiusFromDensity, schwarzschild, DAY, HOUR } from './units';
 import { newStar, structure, wdRadius, NS_RADIUS, giantLife, teffOf, SUPERWIND } from './stellar';
 
-export type Shelf = 'Small' | 'Worlds' | 'Giants' | 'Stars' | 'Remnants';
-export const SHELVES: Shelf[] = ['Small', 'Worlds', 'Giants', 'Stars', 'Remnants'];
+export type Shelf = 'Small' | 'Worlds' | 'Giants' | 'Stars' | 'Remnants' | 'Special';
+export const SHELVES: Shelf[] = ['Small', 'Worlds', 'Giants', 'Stars', 'Remnants', 'Special'];
 
 export interface Entry {
   key: string;
@@ -39,6 +39,10 @@ export const CATALOG: Entry[] = [
   { key: 'dwarf', name: 'Dwarf planet', shelf: 'Small', cls: 'ice', m: kg(1.303e22), r: 1188.3 * KM, day: 6.39 * DAY, tilt: 122,
     look: look('ice', 0x8a6a50, 0xe8d8c4), blurb: 'Pluto: nitrogen ice over a rocky core.' },
 
+  { key: 'metal', name: 'Metal asteroid', shelf: 'Small', cls: 'rock', m: kg(2.29e19), r: 113 * KM, day: 4.2 * HOUR,
+    look: look('iron', 0x6a6460, 0xb4aea8), blurb: 'Psyche: a 226 km lump of iron and nickel, perhaps a planet’s exposed core.' },
+  { key: 'kbo', name: 'Kuiper object', shelf: 'Small', cls: 'ice', m: kg(7.5e14), r: 9 * KM, day: 15.9 * HOUR,
+    look: look('ice', 0x6a3a2a, 0xb06a4a), blurb: 'Arrokoth: two lumps of reddened ice that touched gently 4.5 billion years ago.' },
   // ---- Worlds ----
   { key: 'terran', name: 'Earth-like', shelf: 'Worlds', cls: 'rock', m: M_EARTH, r: R_EARTH, day: 23.93 * HOUR, tilt: 23.4,
     look: look('terran', 0x1d4f8c, 0x4f8a3c, { atmo: 0x6aa8ff }), blurb: 'One Earth: oceans, continents, a thin blue sky.' },
@@ -59,6 +63,8 @@ export const CATALOG: Entry[] = [
   { key: 'core', name: 'Stripped core', shelf: 'Worlds', cls: 'rock', m: 10 * M_EARTH, rho: 7.5, day: 1 * DAY,
     look: look('iron', 0x5a3a30, 0xc06a3a), blurb: 'The heavy heart of a giant that lost its gas to its star.' },
 
+  { key: 'eyeball', name: 'Eyeball world', shelf: 'Worlds', cls: 'ice', m: 1.2 * M_EARTH, rho: 4.5, day: 10 * DAY,
+    look: look('ocean', 0x10406a, 0xe8f4ff, { atmo: 0x9ac8ff }), blurb: 'Tidally locked to a red dwarf: frozen almost everywhere, one ocean facing its sun.' },
   // ---- Giants ----
   { key: 'jupiter', name: 'Gas giant', shelf: 'Giants', cls: 'gas', m: M_JUP, r: R_JUP, day: 9.93 * HOUR, tilt: 3.1,
     look: look('gas', 0xb08860, 0xf0e0c8, { atmo: 0xf0d8b0 }), blurb: 'Jupiter: 318 Earths, mostly hydrogen.' },
@@ -72,6 +78,10 @@ export const CATALOG: Entry[] = [
   { key: 'browndwarf', name: 'Brown dwarf', shelf: 'Giants', cls: 'gas', m: 50 * M_JUP, r: 0.9 * R_JUP, day: 5 * HOUR,
     look: look('browndwarf', 0x3a0c10, 0xc04020), blurb: 'Fifty Jupiters: too light to fuse hydrogen, glowing from its own contraction.' },
 
+  { key: 'minineptune', name: 'Mini-Neptune', shelf: 'Giants', cls: 'gas', m: 6 * M_EARTH, r: 2.4 * R_EARTH, day: 20 * HOUR,
+    look: look('icegiant', 0x3a7a9a, 0x8ac8d8, { atmo: 0x9ad8e8 }), blurb: 'Six Earths under a thick hydrogen envelope — common out there, absent here.' },
+  { key: 'superpuff', name: 'Super-puff', shelf: 'Giants', cls: 'gas', m: 3.7 * M_EARTH, r: 7.1 * R_EARTH, day: 30 * HOUR,
+    look: look('gas', 0x8a7a6a, 0xd8ccb8, { atmo: 0xe0d0b8 }), blurb: 'Kepler-51b: Jupiter-sized at four Earths, a hundredth of the density of water.' },
   // ---- Stars ----
   { key: 'protostar', name: 'Protostar', shelf: 'Stars', cls: 'star', m: 1, ageFrac: -0.5, day: 3 * DAY,
     look: look('star', 0, 0), blurb: 'A Sun still contracting toward the main sequence.' },
@@ -88,6 +98,18 @@ export const CATALOG: Entry[] = [
   { key: 'supergiant', name: 'Red supergiant', shelf: 'Stars', cls: 'star', m: 20, ageFrac: nearEnd(20, 400), day: 30 * 365.25 * DAY,
     look: look('star', 0, 0), blurb: 'A Betelgeuse a few centuries from core collapse.' },
 
+  { key: 'kdwarf', name: 'K dwarf', shelf: 'Stars', cls: 'star', m: 0.75, ageFrac: 0.2, day: 30 * DAY,
+    look: look('star', 0, 0), blurb: 'An orange dwarf: three quarters of a Sun, lives thirty billion years.' },
+  { key: 'fstar', name: 'F-type star', shelf: 'Stars', cls: 'star', m: 1.4, ageFrac: 0.3, day: 4 * DAY,
+    look: look('star', 0, 0), blurb: 'Procyon A’s class: a little hotter and whiter than the Sun.' },
+  { key: 'bstar', name: 'B-type star', shelf: 'Stars', cls: 'star', m: 6, ageFrac: 0.3, day: 1 * DAY,
+    look: look('star', 0, 0), blurb: 'Six suns, blue-white, a thousand times the light; ends as a white dwarf.' },
+  { key: 'bluesg', name: 'Blue supergiant', shelf: 'Stars', cls: 'star', m: 21, ageFrac: 1.004, day: 20 * DAY,
+    look: look('star', 0, 0), blurb: 'Rigel: just off the main sequence, swelling toward red supergiant.' },
+  { key: 'hypergiant', name: 'Red hypergiant', shelf: 'Stars', cls: 'star', m: 35, ageFrac: nearEnd(35, 2000), day: 50 * 365.25 * DAY,
+    look: look('star', 0, 0), blurb: 'A star wider than Jupiter’s orbit, a few thousand years from collapse.' },
+  { key: 'lbv', name: 'Eta Carinae-class', shelf: 'Stars', cls: 'star', m: 100, ageFrac: 0.6, day: 5 * DAY,
+    look: look('star', 0, 0), blurb: 'A hundred suns, five million times the light. Too heavy to explode: it will collapse.' },
   // ---- Remnants ----
   { key: 'wd', name: 'White dwarf', shelf: 'Remnants', cls: 'wd', m: 0.6, day: 1 * HOUR,
     look: look('wd', 0, 0), blurb: "0.6 suns in an Earth's width. Push it past 1.38 and it detonates." },
@@ -99,6 +121,21 @@ export const CATALOG: Entry[] = [
     look: look('bh', 0, 0), blurb: 'Ten suns inside 30 km. Nothing gets out from inside three times that.' },
   { key: 'smbh', name: 'Supermassive', shelf: 'Remnants', cls: 'bh', m: 4.15e6, day: 1,
     look: look('bh', 0, 0), blurb: "Sagittarius A*: four million suns, 0.08 AU across." },
+  { key: 'magnetar', name: 'Magnetar', shelf: 'Remnants', cls: 'ns', m: 1.5, day: 5 / 3600 * HOUR,
+    look: look('ns', 0, 0, { pulsar: true }), blurb: 'A neutron star with a 10¹¹-tesla field, spinning down fast.' },
+  { key: 'heavywd', name: 'Heavy white dwarf', shelf: 'Remnants', cls: 'wd', m: 1.36, day: 0.2 * HOUR,
+    look: look('wd', 0, 0), blurb: '1.36 suns in the size of the Moon — a whisker under the Chandrasekhar limit.' },
+  { key: 'imbh', name: 'Intermediate BH', shelf: 'Remnants', cls: 'bh', m: 1e3, day: 1,
+    look: look('bh', 0, 0), blurb: 'A thousand suns: the missing link between stellar and supermassive holes.' },
+  // ---- Special ----
+  { key: 'rogue', name: 'Rogue planet', shelf: 'Special', cls: 'gas', m: M_JUP, r: R_JUP, day: 10 * HOUR,
+    look: look('gas', 0x2a2830, 0x5a5670), blurb: 'A Jupiter thrown out of its system, cold and dark, drifting between the stars.' },
+  { key: 'oumuamua', name: 'Interstellar object', shelf: 'Special', cls: 'rock', m: kg(8e9), r: 0.1 * KM, day: 8 * HOUR,
+    look: look('barren', 0x6a4a3a, 0xa07a5a), blurb: 'ʻOumuamua: a few hundred metres of something from another star. Throw it fast.' },
+  { key: 'pbh', name: 'Primordial BH', shelf: 'Special', cls: 'bh', m: 1e-12, day: 1,
+    look: look('bh', 0, 0), blurb: 'A hypothetical black hole from the Big Bang, the mass of an asteroid and the size of an atom.' },
+  { key: 'ton618', name: 'TON 618', shelf: 'Special', cls: 'bh', m: 6.6e10, day: 1,
+    look: look('bh', 0, 0), blurb: '66 billion suns. Its horizon would swallow the solar system forty times over.' },
 ];
 
 export const ENTRY = new Map(CATALOG.map(e => [e.key, e]));
@@ -106,7 +143,10 @@ export const ENTRY = new Map(CATALOG.map(e => [e.key, e]));
 /** Roche factor: fluid bodies (gas, stars, white dwarfs) are torn at 2.44, rubble at ~1.5. */
 export function rocheFactor(b: Body): number {
   if (b.cls === 'gas' || b.cls === 'star' || b.cls === 'wd') return 2.44;
-  if ((b.cls === 'rock' || b.cls === 'ice') && b.r > 0.5 * KM) return 1.5;
+  // past a few hundred km a body is held together by its own gravity, not its
+  // strength, and is torn apart like a fluid; smaller ones are rubble piles
+  if ((b.cls === 'rock' || b.cls === 'ice' || (b.cls === 'debris' && b.source)) && b.r > 200 * KM) return 2.44;
+  if ((b.cls === 'rock' || b.cls === 'ice' || (b.cls === 'debris' && b.source)) && b.r > 0.5 * KM) return 1.5;
   return 0;
 }
 export function refreshRoche(b: Body) {

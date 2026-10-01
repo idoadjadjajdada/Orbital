@@ -23,7 +23,8 @@ export interface Look {
   c1: number;
   c2: number;
   atmo?: number;            // rim-glow colour
-  rings?: { inner: number; outer: number; color: number; opacity: number }; // in body radii
+  /** in body radii; `kind` picks a measured radial profile */
+  rings?: { inner: number; outer: number; color: number; opacity: number; kind?: 'saturn' | 'uranus' | 'neptune' | 'jupiter' };
   pulsar?: boolean;
 }
 
@@ -84,6 +85,15 @@ export class Body {
   hostId = 0;        // cached orbital host (analysis.ts), 0 = none
   /** Roche distance from a source of mass M is rocheK · ∛M; 0 = cannot be torn apart */
   rocheK = 0;
+  /** for fragments and particles: the bulk density (g/cm³) of what they came from */
+  dens = 3;
+  /** mass is an estimate from an assumed size and density, not a measurement */
+  sizeGuess = false;
+  /** craters, in the body's own rotating frame: unit direction, angular radius (rad), sim time made */
+  craters: { x: number; y: number; z: number; a: number; t: number }[] = [];
+  /** compact objects: mass swallowed since the renderer last looked, and the angular momentum it brought */
+  swallowed = 0;
+  lx = 0; ly = 0; lz = 0;
 
   constructor(o: {
     name: string; kind: string; cls: Cls; look: Look; m: number; r: number;

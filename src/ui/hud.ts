@@ -22,8 +22,9 @@ export class Hud {
   constructor(private app: App) {
     for (const e of CATALOG) {
       const b = { look: { ...e.look, seed: 7 }, heat: e.key === 'lava' ? 1 : 0, cls: e.cls, tilt: ((e.tilt ?? 0) * Math.PI) / 180,
-        star: e.cls === 'star' ? { m0: e.m, age: 0, phase: e.key === 'redgiant' || e.key === 'supergiant' ? 'giant' as const : 'ms' as const, L: 1,
-          teff: { protostar: 4300, reddwarf: 3200, sun: 5772, astar: 9900, ostar: 38000, redgiant: 3400, supergiant: 3600 }[e.key] ?? 5772, coreM: 0 } : undefined };
+        star: e.cls === 'star' ? { m0: e.m, age: 0, phase: e.key === 'redgiant' || e.key === 'supergiant' || e.key === 'hypergiant' ? 'giant' as const : 'ms' as const, L: 1,
+          teff: ({ protostar: 4300, reddwarf: 3200, kdwarf: 4500, sun: 5772, fstar: 6600, astar: 9900, bstar: 15000, ostar: 38000, bluesg: 12000,
+            redgiant: 3400, supergiant: 3600, hypergiant: 3500, lbv: 25000 } as Record<string, number>)[e.key] ?? 5772, coreM: 0 } : undefined };
       this.icons.set(e.key, app.icons.render(b));
     }
     this.buildPresets();
@@ -51,7 +52,15 @@ export class Hud {
 
   private buildPresets() {
     const menu = $('presetMenu');
+    let group = '';
     for (const p of PRESETS) {
+      if (p.group !== group) {
+        group = p.group;
+        const h = document.createElement('div');
+        h.className = 'mgroup';
+        h.textContent = group;
+        menu.appendChild(h);
+      }
       const b = document.createElement('button');
       b.innerHTML = `<b>${p.name}</b><span>${p.blurb}</span>`;
       b.onclick = () => { this.app.loadPreset(p.key); menu.hidden = true; this.sync(); };
@@ -140,7 +149,6 @@ export class Hud {
       this.inspect(true);
     };
     $('iDelete').onclick = () => this.app.deleteSelected();
-    $('iAge').onclick = () => this.app.ageSelected();
   }
 
   private inspect(force = false) {
@@ -189,6 +197,13 @@ export class Hud {
       } else if (b.cls === 'wd') rows.push(['Cooling for', fmtDuration(s.age)]);
     }
     if (b.heat > 0.05 && !b.star) rows.push(['Surface', b.heat > 0.4 ? 'molten' : 'cooling']);
+    if (b.craters.length) rows.push([b.cls === 'gas' ? 'Impact scars' : 'Craters', String(b.craters.length)]);
+    if (b.compact) {
+      const v = this.app.bodies.map.get(b);
+      if (v && v.accRate > 0) rows.push(['Feeding', `${sig(v.accRate)} M☉/yr · ${sig(v.accRate / (2.2e-8 * b.m))}× Eddington`]);
+    }
+    if (b.sizeGuess) rows.push(['Note', 'mass estimated, not measured']);
+    if (!b.source && !b.isParticle) rows.push(['Gravity', 'too small to pull on others']);
     const dl = $('iStats');
     dl.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
     for (const a of dl.querySelectorAll<HTMLElement>('a[data-id]')) {
@@ -197,7 +212,6 @@ export class Hud {
     }
     $('iFollow').textContent = this.app.focus === b ? 'Unfollow' : 'Follow';
     $('iFollow').classList.toggle('on', this.app.focus === b);
-    $('iAge').hidden = !(b.cls === 'star');
   }
 
   // ---- forge ----

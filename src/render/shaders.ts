@@ -13,6 +13,43 @@ float fbm3(vec3 p){ float s = 0.0, a = 0.5; for (int i = 0; i < 3; i++){ s += a 
 float ridged(vec3 p){ float s = 0.0, a = 0.5; for (int i = 0; i < 5; i++){ s += a * (1.0 - abs(2.0 * vnoise(p) - 1.0)); p = p * 2.1 + vec3(3.3, 1.1, 5.2); a *= 0.5; } return s; }
 `;
 
+export const RING_TAU = /* glsl */ `
+// Normal optical depth of planetary rings against radius in planet radii, from
+// the Voyager and Cassini occultation profiles (smoothed). kind: 1 Saturn,
+// 2 Uranus, 3 Neptune, 4 Jupiter.
+float band(float r, float a, float b, float soft){ return smoothstep(a - soft, a + soft, r) * (1.0 - smoothstep(b - soft, b + soft, r)); }
+float ringTau(int kind, float r, float seed){
+  if (kind == 1) {
+    float t = 0.0;
+    t += 0.01 * band(r, 1.11, 1.236, 0.004);                                   // D
+    t += (0.09 + 0.05 * sin(r * 140.0)) * band(r, 1.239, 1.527, 0.003);         // C, with its plateaus
+    t += (1.8 + 0.9 * sin(r * 70.0 + 1.3) + 0.25 * sin(r * 211.0)) * band(r, 1.527, 1.951, 0.003); // B
+    t += 0.12 * band(r, 1.951, 2.025, 0.003);                                   // Cassini Division
+    t += (0.55 + 0.1 * sin(r * 160.0)) * band(r, 2.025, 2.27, 0.002);           // A
+    t *= 1.0 - band(r, 2.211, 2.217, 0.0008);                                   // Encke gap
+    t *= 1.0 - band(r, 2.264, 2.266, 0.0005);                                   // Keeler gap
+    t += 0.5 * band(r, 2.324, 2.328, 0.0008);                                   // F
+    return max(t, 0.0) * (0.9 + 0.2 * vnoise(vec3(r * 260.0, seed, 0.0)));
+  }
+  if (kind == 2) {
+    float t = 0.0;
+    t += 0.3 * band(r, 1.637, 1.640, 0.0004) + 0.3 * band(r, 1.652, 1.655, 0.0004) + 0.3 * band(r, 1.665, 1.668, 0.0004);
+    t += 0.4 * band(r, 1.745, 1.752, 0.0006) + 0.3 * band(r, 1.785, 1.790, 0.0006);
+    t += 0.3 * band(r, 1.845, 1.849, 0.0005) + 0.5 * band(r, 1.860, 1.863, 0.0004) + 0.4 * band(r, 1.895, 1.899, 0.0005);
+    t += 1.2 * band(r, 1.990, 2.005, 0.0012);                                   // ε
+    return t;
+  }
+  if (kind == 3) {
+    return 0.08 * band(r, 1.67, 1.71, 0.005) + 0.05 * band(r, 2.13, 2.17, 0.004) + 0.01 * band(r, 2.17, 2.4, 0.01)
+      + 0.1 * band(r, 2.535, 2.545, 0.002);                                      // Adams
+  }
+  if (kind == 4) {
+    return 0.002 * band(r, 1.29, 1.71, 0.05) + 0.006 * band(r, 1.72, 1.81, 0.01) + 0.0006 * band(r, 1.81, 3.2, 0.1);
+  }
+  return 0.5 * band(r, 0.0, 1.0, 0.02);
+}
+`;
+
 export const BODY_VERT = /* glsl */ `
 varying vec3 vN;
 varying vec3 vObjN;
@@ -39,12 +76,44 @@ uniform vec3 uLightPos[4];
 uniform vec3 uLightCol[4];
 uniform int uNLights;
 uniform float uAmbient;
+uniform vec4 uCraters[32];   // xyz: direction in the body's frame, w: angular radius
+uniform float uCraterHot[32];
+uniform int uNCraters;
+uniform int uRingKind;
+uniform vec3 uRingN;         // ring-plane normal, world
+uniform vec3 uCenter;        // planet centre, scene
+uniform float uRadius;       // drawn radius
+uniform float uRingIn, uRingOut, uRingScale;
 varying vec3 vN;
 varying vec3 vObjN;
 varying vec3 vPos;
 #include <common>
 #include <logdepthbuf_pars_fragment>
 ${NOISE}
+${RING_TAU}
+
+/* Craters: a dark floor, a bright raised rim, a faint ejecta blanket. On a gas
+   giant the same record is a dark scar in the clouds that the winds smear out. */
+vec3 craters(vec3 n, vec3 col, inout float emit, bool gas){
+  for (int i = 0; i < 32; i++) {
+    if (i >= uNCraters) break;
+    vec4 c = uCraters[i];
+    float d = acos(clamp(dot(n, c.xyz), -1.0, 1.0)) / max(c.w, 1e-4);
+    if (d > 2.5) continue;
+    if (gas) {
+      float scar = smoothstep(1.6, 0.4, d + 0.3 * vnoise(n * 40.0));
+      col = mix(col, col * 0.25, scar * uCraterHot[i]);
+      continue;
+    }
+    float floor_ = smoothstep(0.85, 0.6, d);
+    float rim = exp(-pow((d - 0.95) / 0.12, 2.0));
+    float blanket = smoothstep(2.4, 1.0, d) * (1.0 - floor_) * (0.5 + 0.5 * vnoise(n * 200.0 + float(i)));
+    col *= 1.0 - 0.35 * floor_;
+    col *= 1.0 + 0.45 * rim + 0.12 * blanket;
+    emit += uCraterHot[i] * (floor_ * 1.5 + rim * 0.5);
+  }
+  return col;
+}
 
 vec3 surface(vec3 n, out float emit, out float spec){
   emit = 0.0; spec = 0.0;
@@ -132,6 +201,7 @@ void main(){
   vec3 V = normalize(cameraPosition - vPos);
   float emit, spec;
   vec3 alb = surface(n, emit, spec);
+  if (uNCraters > 0) alb = craters(n, alb, emit, uStyle >= 9);
   vec3 lit = vec3(0.0);
   vec3 sp = vec3(0.0);
   float dayside = 0.0;
@@ -140,6 +210,18 @@ void main(){
     vec3 L = normalize(uLightPos[i] - vPos);
     float d = dot(N, L);
     float diff = smoothstep(-0.04, 0.12, d) * max(d, 0.0) + 0.02 * smoothstep(-0.2, 0.05, d);
+    // the rings' shadow: follow the light back to the ring plane
+    if (uRingKind > 0) {
+      float den = dot(L, uRingN);
+      if (abs(den) > 1e-4) {
+        float t = dot(uCenter - vPos, uRingN) / den;
+        if (t > 0.0) {
+          float rr = length(vPos + L * t - uCenter) / uRadius;
+          float tau = ringTau(uRingKind, rr, 0.0) * uRingScale;
+          if (rr > uRingIn && rr < uRingOut) diff *= exp(-tau / max(abs(den), 0.05));
+        }
+      }
+    }
     lit += uLightCol[i] * diff;
     dayside = max(dayside, d);
     vec3 H = normalize(L + V);
@@ -203,7 +285,8 @@ void main(){
 
 export const RING_FRAG = /* glsl */ `
 uniform vec3 uColor;
-uniform float uOpacity, uSeed;
+uniform float uOpacity, uSeed, uInner, uOuter;
+uniform int uKind;
 uniform vec3 uLightPos[4];
 uniform vec3 uLightCol[4];
 uniform int uNLights;
@@ -215,25 +298,37 @@ varying vec3 vN;
 #include <common>
 #include <logdepthbuf_pars_fragment>
 ${NOISE}
+${RING_TAU}
 void main(){
   #include <logdepthbuf_fragment>
-  float r = vUv.x;
-  float dens = 0.55 + 0.45 * sin(r * 140.0 + uSeed) * sin(r * 37.0 + 1.3 * uSeed);
-  dens *= 0.6 + 0.4 * vnoise(vec3(r * 300.0, uSeed, 0.0));
-  dens *= smoothstep(0.0, 0.04, r) * smoothstep(1.0, 0.96, r);
-  dens *= 1.0 - 0.85 * smoothstep(0.62, 0.64, r) * smoothstep(0.69, 0.67, r); // a Cassini-like gap
-  vec3 lit = vec3(0.0);
+  float r = mix(uInner, uOuter, vUv.x);       // planet radii
+  float tau = ringTau(uKind, r, uSeed) * uOpacity;
+  if (tau < 1e-4) discard;
+  vec3 V = normalize(cameraPosition - vPos);
+  float muV = max(abs(dot(vN, V)), 0.02);
+  // what fraction of the view through the ring is blocked: grazing views see more ring
+  float cover = 1.0 - exp(-tau / muV);
+  vec3 col = vec3(0.0);
   for (int i = 0; i < 4; i++) {
     if (i >= uNLights) break;
     vec3 L = normalize(uLightPos[i] - vPos);
+    float mu0 = max(abs(dot(vN, L)), 0.02);
+    bool sameSide = dot(vN, L) * dot(vN, V) > 0.0;
     // the planet's shadow across the rings
     vec3 toP = uPlanetPos - vPos;
     float t = dot(toP, L);
     float miss = length(toP - L * t);
-    float shadow = t > 0.0 ? smoothstep(uPlanetR * 0.97, uPlanetR * 1.03, miss) : 1.0;
-    lit += uLightCol[i] * (0.35 + 0.65 * abs(dot(vN, L))) * shadow;
+    float shadow = t > 0.0 ? smoothstep(uPlanetR * 0.985, uPlanetR * 1.015, miss) : 1.0;
+    // the lit face reflects in proportion to how much sunlight the ring stops;
+    // the unlit face only glows where light gets through and is scattered on —
+    // which is why the thick B ring is dark seen from behind and the thin C ring bright
+    float lit = sameSide ? (1.0 - exp(-tau / mu0)) : 2.2 * tau / mu0 * exp(-tau / mu0);
+    float phase = sameSide ? 1.0 : 1.0 + 1.5 * pow(max(dot(-L, V), 0.0), 6.0);
+    col += uLightCol[i] * lit * phase * shadow;
   }
-  gl_FragColor = vec4(uColor * lit * (0.6 + 0.4 * dens), dens * uOpacity);
+  // a little colour variation: the C ring and Cassini Division greyer, the B ring warmer
+  vec3 tint = uColor * mix(vec3(0.82, 0.84, 0.86), vec3(1.05, 1.0, 0.92), smoothstep(0.1, 1.2, tau / max(uOpacity, 1e-3)));
+  gl_FragColor = vec4(tint * col / max(cover, 1e-3) * 0.9, cover);
 }
 `;
 
@@ -324,5 +419,42 @@ void main(){
   }
   vec4 c = texture2D(tDiffuse, uv);
   gl_FragColor = vec4(c.rgb * dark + vec3(1.0, 0.85, 0.65) * ring, 1.0);
+}
+`;
+
+/** A relativistic jet: a bright, narrow, knotted flow along the hole's spin axis. */
+export const JET_VERT = /* glsl */ `
+varying float vAlong;
+varying vec3 vN;
+varying vec3 vPos;
+#include <common>
+#include <logdepthbuf_pars_vertex>
+void main(){
+  vAlong = position.y;
+  vN = normalize(mat3(modelMatrix) * normal);
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vPos = wp.xyz;
+  gl_Position = projectionMatrix * viewMatrix * wp;
+  #include <logdepthbuf_vertex>
+}
+`;
+export const JET_FRAG = /* glsl */ `
+uniform float uTime, uPower;
+uniform vec3 uColor;
+varying float vAlong;
+varying vec3 vN;
+varying vec3 vPos;
+#include <common>
+#include <logdepthbuf_pars_fragment>
+${NOISE}
+void main(){
+  #include <logdepthbuf_fragment>
+  vec3 V = normalize(cameraPosition - vPos);
+  // brightest down the middle of the cone as seen, fading to its edges
+  float core = pow(abs(dot(normalize(vN), V)), 1.5);
+  float knots = 0.5 + 0.5 * vnoise(vec3(vAlong * 22.0 - uTime * 3.0, 0.0, 0.0));
+  float fade = smoothstep(0.0, 0.03, vAlong) * pow(1.0 - vAlong, 1.4);
+  float a = core * knots * fade * uPower;
+  gl_FragColor = vec4(uColor * 2.5, a);
 }
 `;

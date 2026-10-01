@@ -10,8 +10,13 @@ npm install
 npm run dev        # http://localhost:5173
 npm test           # physics tests (vitest)
 npm run build      # static site in dist/
-npm run test:browser   # smoke test in Chromium, after a build
+npm run test:browser   # smoke test in Chromium, desktop and iPad, after a build
+python3 tools/fetch-moons.py   # refresh the moon table from JPL
 ```
+
+Runs in any current browser with WebGL2, iPad Safari included: touch to
+throw and select, double-tap to follow, pinch to zoom, two fingers to pan.
+Resolution adapts to the frame rate.
 
 ## Playing
 
@@ -56,18 +61,50 @@ black holes spiral together on the timescale the formula predicts and merge,
 radiating ~5% of their mass.
 
 **Collisions** are resolved by regime (Leinhardt & Stewart 2012): a slow
-impact merges, a grazing one is a hit-and-run in which both survive, and a
-violent one leaves a largest remnant given by the universal law, with the rest
-thrown out above escape speed. Debris worth more than a percent of the remnant
-is spawned as self-gravitating fragments that pull each other and can re-form
-moons; lighter debris is a swarm of test particles. Anything that hits a star
-or a compact object is swallowed; anything inside three Schwarzschild radii of
-a black hole has no stable orbit left and falls in.
+impact merges; a grazing one near escape speed is a *graze-and-merge* that
+leaves a few percent of the mass in an orbiting disc (the regime of the
+Moon-forming impact, Canup 2004); a faster graze is a hit-and-run in which
+both survive; a violent one leaves a largest remnant given by the universal
+law, the rest thrown out above escape speed. Debris worth more than a percent
+of the remnant is spawned as self-gravitating fragments. Anything that hits a
+star or a compact object is swallowed; inside three Schwarzschild radii of a
+black hole there is no stable orbit left and it falls in.
 
-**Tides.** A body inside the Roche limit of something much heavier — 2.44 for
-fluid bodies, ~1.5 for rubble — comes apart, and the pieces keep the spin and
-orbit it had. The stream that follows is the tidal tail, not a drawing of one;
-a star at Sgr A* becomes a tidal disruption event the same way.
+**Small impacts dig craters.** Something under 1/10,000 of the target's mass
+does not just add itself: it makes a crater sized by the Schmidt–Housen
+π-scaling law and throws out ejecta, of which the part faster than escape
+speed leaves. A big planet keeps most of the impactor; a small moon or
+asteroid, with an escape speed of metres per second, loses more than it
+gains — small bodies are worn down. Fresh craters glow with melt and cool;
+a gas giant takes a dark scar in its clouds that fades in weeks, as
+Shoemaker–Levy 9's did on Jupiter.
+
+**Tides.** A body inside the Roche limit of something much heavier comes
+apart — the fluid limit, 2.44 R (ρ_M/ρ_m)^⅓, for anything held together by its
+own gravity, ~1.5 for small rubble piles — and the pieces keep the spin and
+orbit it had.
+
+**Rings form; they are not painted on.** Debris going round something
+collides with itself. Each simulated particle stands for a great many
+metre-sized pieces, and in each patch of the disc their random velocities
+relax toward the local orbital flow at the rate kinetic ring theory gives,
+about 3Ωτ for optical depth τ, with each patch's angular momentum kept
+exactly. That is what turns a cloud into a thin, circular ring. Outside the
+Roche limit (for the debris' own density) a patch whose pieces collide slower
+than the escape speed of what they would make — and whose orbit stays
+outside the limit — gathers into a moonlet; inside it nothing can, so a ring
+is what remains. Whether a torn-up moon becomes a ring or new moons depends on
+where its orbit's angular momentum settles it: a(1−e²) inside or outside the
+limit.
+
+**Accretion discs and jets.** Gas round a white dwarf, neutron star or black
+hole is an α-disc (Shakura & Sunyaev, α = 0.1): the same collisions settle it,
+viscosity drains its angular momentum so it spirals in, and it glows hotter
+inward as r^−3/4. What reaches the inner edge is swallowed; the rate is
+measured against the Eddington rate and drives a pair of jets along the spin
+axis the swallowed angular momentum defines. A star that outgrows its Roche
+lobe (Eggleton 1983) feeds its companion through L1 — the stream cannot fall
+straight in, so it circles and becomes the disc.
 
 **Stars** follow fitted relations for mass, luminosity, radius and lifetime
 (L ∝ M⁴ near a solar mass, lifetime ∝ M/L, the Sun calibrated to 0.7 L☉ at
@@ -90,10 +127,11 @@ Real timescales come with real consequences:
 
 - **Collisions are rare.** Planets are tiny targets. The aim line marks an
   impact when the path you are drawing hits something.
-- **Stars live for billions of years.** The catalogue's dying giant and red
-  supergiant are placed near the end of their lives so the end is something
-  you can watch, and **Age to next stage** skips a star's clock forward. That
-  is a jump in its age, not a physical process, and it says so.
+- **Stars live for billions of years.** Nothing skips time. The catalogue's
+  dying giant, red supergiant and hypergiant are placed near the end of their
+  lives as initial conditions, so the end is something you can watch.
+- **Rings and discs take real time to settle**: months to years of simulated
+  time for a ring, weeks for an X-ray binary's disc to start feeding its hole.
 - **Kirkwood gaps take ~10⁴–10⁵ years to open**, and only in semi-major axis —
   a top-down view of the belt never shows them. The Kirkwood system adds a
   histogram of the belt by semi-major axis with Jupiter's resonances marked.
@@ -101,17 +139,38 @@ Real timescales come with real consequences:
 
 ## Systems
 
-- **Solar system** — the eight planets and Pluto at their J2000 elements
-  (Standish), Ceres, Vesta, 600 belt asteroids, and eleven moons on their real
-  orbits, tilted with their planets' equators. Triton goes backwards.
-- **TRAPPIST-1** — seven planets with Agol et al. (2021) masses, radii and
-  periods round a 0.09 M☉ dwarf. The semi-major axes come from the periods.
-- **Galilean moons** — Io, Europa and Ganymede set in the Laplace resonance
-  (λ_I − 3λ_E + 2λ_G = 180°), Callisto outside it.
-- **Kirkwood gaps** — the Sun, Mars, Jupiter, Saturn and 3,000 asteroids.
-- **Sagittarius A\*** — 4.15 million suns, S2 and five neighbours on their
-  published orbits, and a Sun-like star on a plunging orbit.
-- **Black hole merger** — two 30 M☉ holes about forty minutes from merging.
+**Solar System.** Every planet at its J2000 elements (Standish), each tilted to
+its IAU pole, and **all 460 moons in JPL's satellite tables** placed in their
+own reference frames (ecliptic, Laplace plane or planet equator) at J2000. The
+43 with measured masses carry them; the rest are given 1.5 g/cm³ and their
+published size (2 km where even that is unknown) and are flagged as estimates.
+Moons lighter than 2×10¹⁹ kg are test particles: they feel everything but are
+too small to pull on the others. Presets: the whole system with dwarf planets
+and the main and Kuiper belts; the inner and outer systems; Earth with the
+Moon, the ISS, Tiangong, Hubble, six GPS satellites, three geostationary ones
+and JWST at L2; Jupiter, Saturn, Uranus, Neptune and Pluto–Charon with all
+their moons and rings (Saturn's, Uranus's, Neptune's and Jupiter's drawn with
+their measured radial profiles).
+
+**Exoplanets.** TRAPPIST-1 (Agol 2021), Kepler-16's circumbinary Saturn
+(Doyle 2011), HR 8799's four imaged giants (Wang 2018 masses), 55 Cancri
+(Bourrier 2018; minimum masses), Kepler-90's eight planets (masses from the
+Chen & Kipping relation except g and h, flagged), Proxima Centauri b and d.
+
+**Events.** Theia grazing the proto-Earth; a moon torn into a ring; a black
+hole binary in the SS 433 configuration (overflow, stream, disc, jets); two
+black holes merging; Sgr A* with the S-stars and a tidal disruption; the
+Kirkwood belt with a semi-major-axis histogram.
+
+**Catalogue**, six shelves: comets, asteroids, Psyche-like metal and
+Arrokoth-like Kuiper objects, moons, dwarf planets; rocky, desert, icy, ocean,
+molten, iron, carbon, eyeball and stripped-core worlds and super-Earths;
+gas, ringed and ice giants, mini-Neptunes, super-puffs, hot Jupiters, brown
+dwarfs; protostars, red, K, Sun-like, F, A, B and O stars, a blue
+supergiant, dying giants, red supergiants and hypergiants, an Eta
+Carinae-class star; white dwarfs (one a whisker under Chandrasekhar), neutron
+stars, pulsars, magnetars, stellar, intermediate-mass and supermassive black
+holes; and a rogue planet, ʻOumuamua, a primordial black hole and TON 618.
 
 ## Limits
 
@@ -119,6 +178,14 @@ Real timescales come with real consequences:
   exert none inside a step; their pull on the bodies they left is applied as a
   split kick each frame, so momentum holds to second order.
 - Fragments are the smallest thing resolved: when they meet they stick.
+- Ring and disc collisions are a kinetic (mean-field) model over patches of the
+  disc, not particle-by-particle contact; viscous spreading of rings and moonlet
+  migration by ring torques are not modelled.
+- Jets are drawn from the measured accretion rate; their energy does not act
+  back on the gas.
+- A test particle's pull on a body it orbits many times per step is left out
+  of the back-reaction kick rather than aliased; it averages out over each
+  orbit.
 - The 1PN term is the test-particle form, exact for periapsis advance; it does
   not include frame-dragging or the full Einstein–Infeld–Hoffmann terms.
 - Stellar evolution is single-star and parametric, not a stellar-structure code.
@@ -130,6 +197,7 @@ Real timescales come with real consequences:
 ```
 src/physics/   integrator, forces, collisions, stars, presets — no DOM, fully tested
 src/render/    three.js scene, shaders, overlays
+src/physics/data/moons.ts   generated from JPL by tools/fetch-moons.py
 src/ui/        input, HUD, the belt histogram
 tests/         physics.test.ts (vitest), browser.mjs (Playwright smoke test)
 ```

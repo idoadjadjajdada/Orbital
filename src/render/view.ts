@@ -43,6 +43,7 @@ export class View {
   constructor(readonly canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+    this.renderer.debug.checkShaderErrors = import.meta.env.DEV;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.0;
     this.renderer.autoClear = false;
@@ -52,7 +53,12 @@ export class View {
     this.skyCamera = new THREE.PerspectiveCamera(50, 1, 0.1, 10);
     this.skyCamera.up.set(0, 0, 1);
 
-    this.composer = new EffectComposer(this.renderer);
+    // HDR buffers for bloom where the GPU can render to half floats (every
+    // current iPad and desktop); plain 8-bit buffers where it cannot
+    const ext = this.renderer.extensions;
+    const half = this.renderer.capabilities.isWebGL2 && (ext.has('EXT_color_buffer_half_float') || ext.has('EXT_color_buffer_float'));
+    const target = new THREE.WebGLRenderTarget(1, 1, { type: half ? THREE.HalfFloatType : THREE.UnsignedByteType });
+    this.composer = new EffectComposer(this.renderer, target);
     const rp = new RenderPass(this.scene, this.camera);
     rp.clear = false;
     this.composer.addPass(rp);
@@ -134,6 +140,24 @@ export class View {
     const t = (zPlane - this.camera.position.z) / dir.z;
     if (t <= 0) return null;
     return this.camera.position.clone().addScaledVector(dir, t);
+  }
+
+  /** Resolution follows the frame rate: dropped when frames run long, raised again when there is room. */
+  private ratio = Math.min(2, window.devicePixelRatio || 1);
+  private frameMs = 16;
+  adapt(frameMs: number) {
+    this.frameMs += (frameMs - this.frameMs) * 0.05;
+    const max = Math.min(2, window.devicePixelRatio || 1);
+    let r = this.ratio;
+    if (this.frameMs > 26 && r > 0.75) r = Math.max(0.75, r - 0.25);
+    else if (this.frameMs < 15 && r < max) r = Math.min(max, r + 0.25);
+    if (r !== this.ratio) {
+      this.ratio = r;
+      this.frameMs = 20;
+      this.renderer.setPixelRatio(r);
+      this.composer.setPixelRatio(r);
+      this.resize();
+    }
   }
 
   render() {

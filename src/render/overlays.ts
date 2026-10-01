@@ -109,8 +109,11 @@ export class Overlays {
     for (const b of sources) {
       if (b.cls === 'debris') continue;
       const host = hostOf(b);
-      // ---- trail ----
+      // ---- trail: for everything that pulls, and whatever is selected ----
       let t = this.trails.get(b);
+      if (!b.source && b !== selected) {
+        if (t) t.line.visible = false;
+      } else {
       if (!t) { t = new Trail(tintOf(b)); this.trails.set(b, t); this.root.add(t.line); }
       const hid = host ? host.id : 0;
       if (hid !== t.hostId) { t.n = 0; t.head = 0; t.hostId = hid; }
@@ -135,6 +138,7 @@ export class Overlays {
         t.geom.attributes.position.needsUpdate = true;
         t.geom.attributes.color.needsUpdate = true;
       }
+      }
 
       // ---- osculating orbit ----
       let ol = this.orbits.get(b);
@@ -143,7 +147,10 @@ export class Overlays {
         const { r, v, mu } = relative(b, host);
         const oc = osculating(mu, r, v);
         // only where an ellipse is a fair claim: bound, not plunging into the host, not too lopsided
-        if (oc.a > 0 && oc.e < 0.995 && oc.rp > host.r && b.m < host.m) {
+        // skip orbits too small to see from here — there may be hundreds of moons
+        this.v.set(host.x - o.x, host.y - o.y, host.z - o.z);
+        const px = oc.a / this.view.pixelWorld(Math.max(1e-30, this.v.distanceTo(cam)));
+        if (oc.a > 0 && oc.e < 0.995 && oc.rp > host.r && b.m < host.m && (px > 6 || b === selected)) {
           if (!ol) {
             const g = new THREE.BufferGeometry();
             g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(257 * 3), 3).setUsage(THREE.DynamicDrawUsage));
@@ -152,12 +159,13 @@ export class Overlays {
             this.orbits.set(b, ol);
             this.root.add(ol);
           }
-          const pts = ellipsePoints(oc, r, 256);
+          const pts = ellipsePoints(oc, r, b.source || b === selected ? 256 : 96);
           const arr = (ol.geometry.attributes.position as THREE.BufferAttribute).array as Float32Array;
           const ox = host.x - o.x, oy = host.y - o.y, oz = host.z - o.z;
           pts.forEach((p, k) => { arr[k * 3] = p[0] + ox; arr[k * 3 + 1] = p[1] + oy; arr[k * 3 + 2] = p[2] + oz; });
+          ol.geometry.setDrawRange(0, pts.length);
           ol.geometry.attributes.position.needsUpdate = true;
-          (ol.material as THREE.LineBasicMaterial).opacity = b === selected ? 0.75 : 0.3;
+          (ol.material as THREE.LineBasicMaterial).opacity = b === selected ? 0.75 : b.source ? 0.3 : 0.14;
           show = true;
         }
       }
@@ -236,7 +244,7 @@ export class Overlays {
   addFlash(e: SimEvent, now: number) {
     const color = {
       supernova: 0xbfd8ff, ia: 0xfff2d0, kilonova: 0xff9a60, impact: 0xffa050, merge: 0xffc080, graze: 0xffb070,
-      disrupt: 0xffd0a0, collapse: 0xc090ff, nebula: 0x70e0e0, swallow: 0xffb080,
+      disrupt: 0xffd0a0, collapse: 0xc090ff, nebula: 0x70e0e0, swallow: 0xffb080, crater: 0xffb070,
     }[e.kind];
     const big = e.kind === 'supernova' || e.kind === 'ia' || e.kind === 'kilonova';
     const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));

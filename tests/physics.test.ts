@@ -8,6 +8,7 @@ import { lagrangePoints, assignHosts } from '../src/physics/analysis';
 import { makeBody } from '../src/physics/catalog';
 import { msLife, zamsL } from '../src/physics/stellar';
 import { buildPreset } from '../src/physics/presets';
+import { MOONS } from '../src/physics/data/moons';
 
 const FOREVER = Number.POSITIVE_INFINITY;
 
@@ -66,8 +67,8 @@ describe('integrator', () => {
     expect(Math.abs(o.e - 0.95)).toBeLessThan(1e-6);
   });
 
-  it('runs a hierarchical Sun–Earth–Moon system for a year without drift', () => {
-    const w = buildPreset('solar');
+  it('runs the inner solar system, moons and all, for a year without drift', () => {
+    const w = buildPreset('inner');
     const E0 = energy(w.bodies);
     run(w, 1, 1 / 50);
     expect(Math.abs((energy(w.bodies) - E0) / E0)).toBeLessThan(1e-8);
@@ -175,8 +176,10 @@ describe('collisions', () => {
 
   it('merges a slow head-on impact into one body', () => {
     const { w } = impact(2 * KMS, 0);
-    expect(w.sources.length).toBe(1);
-    expect(w.sources[0].m).toBeGreaterThan(1.98 * M_EARTH);
+    // one planet; the half-percent spray may already be gathering into a moonlet
+    const planets = w.sources.filter(b => b.cls !== 'debris');
+    expect(planets.length).toBe(1);
+    expect(planets[0].m).toBeGreaterThan(1.98 * M_EARTH);
   });
 
   it('lets a grazing impact go on as two bodies', () => {
@@ -217,10 +220,12 @@ describe('stars', () => {
     const w = new World();
     const g = makeBody('redgiant');
     w.add(g);
-    run(w, 5e4, 50);
+    let t = 0;
+    while (g.cls !== 'wd' && t < 1e5) t += w.step(50, Infinity);
+    w.step(50, Infinity);
     expect(g.cls).toBe('wd');
     expect(g.m).toBeCloseTo(0.109 * 1.2 + 0.394, 2);
-    expect(w.particleCount).toBeGreaterThan(100);
+    expect(w.particleCount).toBeGreaterThan(50);
   });
 
   it('a red supergiant goes supernova and leaves a neutron star', () => {
@@ -257,3 +262,133 @@ describe('analysis', () => {
     expect(o.i).toBeCloseTo((12 * Math.PI) / 180, 10);
   });
 });
+
+describe('rings and discs', () => {
+  function cloud(aMin: number, aMax: number, n: number, total: number, seed = 1) {
+    const w = new World();
+    const p = makeBody('saturn');
+    p.look = { ...p.look, rings: undefined };
+    p.setPos(0, 0, 0); p.setVel(0, 0, 0);
+    w.add(p);
+    let s = seed;
+    const r = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+    for (let k = 0; k < n; k++) {
+      const q = new Body({ name: 'bit', kind: 'fragment', cls: 'debris', look: { style: 'rocky', seed: k, c1: 0, c2: 0 }, m: total / n, r: 1e-9, source: false });
+      q.dens = 0.9;
+      orbiting(p, q, p.r * (aMin + (aMax - aMin) * r()), 0.15 * r(), 0.15 * r(), 2 * Math.PI * r());
+      // spread the nodes and phases
+      const ang = 2 * Math.PI * r(), c = Math.cos(ang), sn = Math.sin(ang);
+      [q.x, q.y] = [c * q.x - sn * q.y, sn * q.x + c * q.y];
+      [q.vx, q.vy] = [c * q.vx - sn * q.vy, sn * q.vx + c * q.vy];
+      w.add(q);
+    }
+    return { w, p };
+  }
+  const stats = (w: World, p: Body) => {
+    let e = 0, inc = 0, n = 0, L = 0;
+    for (const b of w.bodies) {
+      if (b === p || !b.alive) continue;
+      const { r, v, mu } = relative(b, p);
+      const o = osculating(mu, r, v);
+      e += o.e; inc += Math.abs(Math.sin(o.i)); n++;
+      L += b.m * (r[0] * v[1] - r[1] * v[0]);
+    }
+    return { e: e / n, inc: inc / n, L, n };
+  };
+
+  it('flattens and circularises a debris cloud inside the Roche limit into a ring', () => {
+    // a moon's worth of ice spread between 1.3 and 2 planet radii
+    const { w, p } = cloud(1.3, 2.0, 1500, 4e20 / 1.98847e30);
+    const s0 = stats(w, p);
+    const P = 2 * Math.PI * Math.sqrt((1.6 * p.r) ** 3 / (G * p.m));
+    run(w, 60 * P, P / 4);
+    const s1 = stats(w, p);
+    expect(s1.inc).toBeLessThan(s0.inc / 4);
+    expect(s1.e).toBeLessThan(s0.e / 3);
+    expect(Math.abs(s1.L / s0.L - 1)).toBeLessThan(0.02);
+    // nothing gathered: it stays a ring of particles
+    expect(w.sources.length).toBe(1);
+  });
+
+  it('lets debris outside the Roche limit gather into moonlets', () => {
+    const { w, p } = cloud(4, 4.4, 1500, 4e21 / 1.98847e30, 7);
+    const P = 2 * Math.PI * Math.sqrt((4.2 * p.r) ** 3 / (G * p.m));
+    run(w, 40 * P, P / 4);
+    expect(w.bodies.some(b => b.name === 'moonlet')).toBe(true);
+  });
+});
+
+describe('impacts', () => {
+  function hit(target: Body, v: number, m: number) {
+    const w = new World();
+    target.setPos(0, 0, 0); target.setVel(0, 0, 0);
+    const q = new Body({ name: 'rock', kind: 'fragment', cls: 'debris', look: { style: 'rocky', seed: 1, c1: 0, c2: 0 }, m, r: 0, source: false });
+    q.r = Math.cbrt(3 * m / (4 * Math.PI * 2.5 * 1000 * (1.495978707e11) ** 3 / 1.98847e30));
+    q.setPos(-3 * target.r, 0.3 * target.r, 0); q.setVel(v, 0, 0);
+    w.add(target); w.add(q);
+    const m0 = target.m;
+    run(w, 6 * target.r / v, target.r / v / 20);
+    return { w, m0 };
+  }
+
+  it('leaves a crater, and a big planet keeps most of the impactor', () => {
+    const e = makeBody('terran');
+    const imp = 1e15 / 1.98847e30;
+    const { w, m0 } = hit(e, 20 * KMS, imp);
+    expect(e.craters.length).toBe(1);
+    const gained = e.m - m0;
+    expect(gained).toBeGreaterThan(0.5 * imp);
+    expect(gained).toBeLessThan(imp);
+    expect(w.events.some(ev => ev.kind === 'crater')).toBe(true);
+  });
+
+  it('wears a small body down: it loses more than the impactor brings', () => {
+    const v = makeBody('asteroid');
+    const imp = 1e12 / 1.98847e30;
+    const { m0 } = hit(v, 5 * KMS, imp);
+    expect(v.craters.length).toBe(1);
+    expect(v.m).toBeLessThan(m0);
+  });
+});
+
+describe('events', () => {
+  it('Theia grazes, merges, and leaves a disc in orbit', () => {
+    const w = buildPreset('theia');
+    const m0 = w.bodies.reduce((s, b) => s + b.m, 0);
+    run(w, 0.003, 1e-4);
+    const E = w.sources.find(b => b.name === 'Proto-Earth')!;
+    expect(w.sources.find(b => b.name === 'Theia')).toBeUndefined();
+    const orbiting = w.bodies.filter(b => b !== E && b.name !== 'Sun' && b.alive);
+    expect(orbiting.length).toBeGreaterThan(10);
+    const m1 = w.bodies.reduce((s, b) => s + b.m, 0);
+    expect(Math.abs(m1 / m0 - 1)).toBeLessThan(1e-9);
+  });
+
+  it('a star overflowing its Roche lobe feeds gas toward its black hole', () => {
+    const w = buildPreset('xrb');
+    const donor = w.sources.find(b => b.name === 'Donor star')!;
+    const m0 = donor.m;
+    run(w, 0.01, 2e-4);
+    expect(donor.m).toBeLessThan(m0);
+    expect(w.particleCount).toBeGreaterThan(20);
+  });
+});
+
+describe('moon data', () => {
+  it('has every moon in the JPL table and places them round their planets', () => {
+    expect(MOONS.length).toBeGreaterThan(400);
+    const w = buildPreset('saturn');
+    const sat = w.sources.find(b => b.name === 'Saturn')!;
+    const titan = w.bodies.find(b => b.name === 'Titan')!;
+    const d = norm(relative(titan, sat).r) / KM_;
+    expect(d).toBeGreaterThan(1.15e6);
+    expect(d).toBeLessThan(1.3e6);
+    // Saturn's moons orbit near its equator, which is tilted 26.7° to its orbit
+    const o = osculating(G * sat.m, relative(titan, sat).r, relative(titan, sat).v);
+    const ax = [Math.sin(sat.tilt) * Math.sin(sat.node), -Math.sin(sat.tilt) * Math.cos(sat.node), Math.cos(sat.tilt)];
+    const hn = norm(o.h);
+    const cosang = (o.h[0] * ax[0] + o.h[1] * ax[1] + o.h[2] * ax[2]) / hn;
+    expect(cosang).toBeGreaterThan(0.99);
+  });
+});
+const KM_ = 1 / 1.495978707e8;

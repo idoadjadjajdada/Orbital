@@ -1,12 +1,12 @@
 import { Body, type Cls } from './body';
-import { G, C, KMS, GCC, radiusFromDensity, schwarzschild, fmtMass } from './units';
+import { G, C, KM, KMS, GCC, AU_M, YEAR_S, MSUN_KG, radiusFromDensity, schwarzschild, fmtMass } from './units';
 import { becomeRemnant, msLife, M_TOV, remnantMass, structure, newStar, teffOf } from './stellar';
 import { refreshRoche } from './catalog';
 import type { World } from './world';
 
 /** A visual cue the renderer can pick up: flashes, shock rings. */
 export interface SimEvent {
-  kind: 'impact' | 'merge' | 'disrupt' | 'supernova' | 'ia' | 'kilonova' | 'collapse' | 'nebula' | 'swallow' | 'graze';
+  kind: 'impact' | 'merge' | 'disrupt' | 'supernova' | 'ia' | 'kilonova' | 'collapse' | 'nebula' | 'swallow' | 'graze' | 'crater';
   x: number; y: number; z: number;
   size: number;     // AU, a sensible radius for the visual
   energy: number;   // 0..1, how big a deal it is
@@ -39,6 +39,8 @@ export interface FragSpec {
   beta?: number;
   /** extra rigid-rotation velocity ω × offset, for tidal disruption */
   omega?: [number, number, number];
+  /** bulk density of the material, g/cm³ (sets its Roche limit later) */
+  rho?: number;
   /** if set, this body takes the recoil of the ejecta instead of the swarm's drift being removed */
   recoil?: Body;
   /** fragments that pull on everything (and each other), for debris too heavy to ignore */
@@ -90,6 +92,7 @@ export function spawnFragments(w: World, f: FragSpec): Body[] {
     p.setPos(f.x + ox, f.y + oy, f.z + oz);
     p.setVel(vx, vy, vz);
     p.heat = f.heat * (0.6 + 0.4 * rnd());
+    p.dens = f.rho ?? 3;
     p.beta = f.beta ?? 0;
     sx += vx; sy += vy; sz += vz;
     out.push(p);
@@ -126,15 +129,84 @@ function grow(t: Body, density: number) {
   } else if (t.cls === 'rock' || t.cls === 'ice' || t.cls === 'gas') t.r = radiusFromDensity(t.m, density);
 }
 
-/** A test particle running into a source: its mass and momentum join it. */
+/** A test particle running into a source. */
 export function accrete(w: World, src: Body, p: Body) {
-  const v2 = (src.vx - p.vx) ** 2 + (src.vy - p.vy) ** 2 + (src.vz - p.vz) ** 2;
+  if ((src.cls === 'rock' || src.cls === 'ice' || src.cls === 'gas' || src.cls === 'debris') && p.cls === 'debris') {
+    crater(w, src, p);
+    return;
+  }
+  if (src.compact) swallow(src, p);
   const rho = src.cls === 'rock' || src.cls === 'ice' || src.cls === 'gas' ? src.density : 0;
   absorbInto(src, p);
   if (rho) grow(src, rho);
-  // energy deposited per unit mass of target sets how hot the skin gets
-  if (!src.star) src.heat = Math.min(1, src.heat + (p.m / src.m) * v2 / (G * src.m / src.r) * 20);
   w.massChanged(src);
+}
+
+/** What a compact object takes in is tallied for its jets, along with the spin it brings. */
+function swallow(c: Body, p: Body) {
+  c.swallowed += p.m;
+  const rx = p.x - c.x, ry = p.y - c.y, rz = p.z - c.z, vx = p.vx - c.vx, vy = p.vy - c.vy, vz = p.vz - c.vz;
+  c.lx += p.m * (ry * vz - rz * vy); c.ly += p.m * (rz * vx - rx * vz); c.lz += p.m * (rx * vy - ry * vx);
+}
+
+const KG_M3 = 1000; // one g/cm³ in kg/m³
+
+/**
+ * A small body hits a much larger one. It does not simply add itself: it digs
+ * a crater sized by the Schmidt–Housen π-scaling law for the gravity regime,
+ *   D = 1.161 (ρi/ρt)^⅓ L^0.78 v^0.44 g^−0.22   (SI),
+ * and throws out ejecta, the part of it faster than escape speed leaving for
+ * good. On a big planet that is a sliver of the impactor's mass; on a small
+ * moon or asteroid, where escape speed is tiny, it can be more than the
+ * impactor brought — small bodies are worn down by impacts, not built up.
+ * A gas giant has no surface to dig: the impactor leaves a dark scar in the
+ * clouds, as Shoemaker–Levy 9 did on Jupiter, which the winds smear away.
+ */
+export function crater(w: World, T: Body, p: Body) {
+  const dvx = p.vx - T.vx, dvy = p.vy - T.vy, dvz = p.vz - T.vz;
+  const v = Math.hypot(dvx, dvy, dvz);
+  let nx = p.x - T.x, ny = p.y - T.y, nz = p.z - T.z;
+  let nn = Math.hypot(nx, ny, nz);
+  if (nn < 0.5 * T.r) { nx = -dvx; ny = -dvy; nz = -dvz; nn = v || 1; } // swept through: it came in along its velocity
+  nx /= nn; ny /= nn; nz /= nn;
+  const vesc = Math.sqrt(2 * G * T.m / T.r);
+  const gSI = (G * T.m) / (T.r * T.r) * AU_M / (YEAR_S * YEAR_S);
+  const vSI = v * AU_M / YEAR_S;
+  const rhoT = Math.max(0.3, T.density) * KG_M3;
+  const rhoI = (p.r > 0 ? Math.min(8, Math.max(0.5, p.density)) : 2.5) * KG_M3;
+  const Li = 2 * (p.r > 0 ? p.r : radiusFromDensity(p.m, rhoI / KG_M3)) * AU_M;
+  const D = 1.161 * Math.cbrt(rhoI / rhoT) * Li ** 0.78 * vSI ** 0.44 * gSI ** -0.22;
+  const ang = Math.min(1.2, D / 2 / (T.r * AU_M));
+  const gas = T.cls === 'gas';
+  // excavated mass ~ a bowl a fifth as deep as it is wide
+  const mCrater = gas ? 0 : rhoT * 0.1 * D ** 3 / MSUN_KG;
+  const mEsc = gas ? 0 : Math.min(0.5 * mCrater, 0.08 * p.m * Math.max(0, (v / vesc) ** 2 - 1), 0.2 * T.m);
+  const heatBefore = T.heat;
+  const rho = T.density;
+  absorbInto(T, p);
+  grow(T, rho);
+  T.heat = Math.min(1, heatBefore + (p.m / T.m) * (v / vesc) ** 2 * 30);
+  T.craters.push({ x: nx, y: ny, z: nz, a: ang, t: w.time });
+  if (T.craters.length > 64) {
+    // the smallest go first; the old ones are eroded or buried
+    let worst = 0;
+    for (let i = 1; i < T.craters.length; i++) if (T.craters[i].a < T.craters[worst].a) worst = i;
+    T.craters.splice(worst, 1);
+  }
+  // escaping ejecta are spawned in proportion to their mass, never more pieces than the impactor was
+  const nEj = mEsc > 0 ? Math.max(1, Math.min(12, Math.round((4 * mEsc) / p.m))) : 0;
+  if (nEj > 0 && w.particleCount < w.maxParticles) {
+    const ex = T.x + nx * T.r * 1.02, ey = T.y + ny * T.r * 1.02, ez = T.z + nz * T.r * 1.02;
+    // the ejecta's mass comes out of the target only as it is actually thrown
+    T.m -= mEsc;
+    const made = spawnFragments(w, { mass: mEsc, n: nEj, cls: 'debris', x: ex, y: ey, z: ez,
+      vx: T.vx, vy: T.vy, vz: T.vz, rIn: 0, rOut: Math.min(T.r * 0.2, D / AU_M), vMin: 1.02 * vesc, vMax: 1.5 * vesc,
+      heat: 1, color: T.look.c2, bias: [nx, ny, nz], biasK: 1.6, recoil: T, rho: Math.max(0.5, T.density) });
+    if (!made.length) T.m += mEsc;
+  }
+  w.massChanged(T);
+  if (ang > 0.004 || p.m > 1e-6 * T.m)
+    w.emit({ kind: 'crater', x: T.x + nx * T.r, y: T.y + ny * T.r, z: T.z + nz * T.r, size: Math.max(D / AU_M, T.r * 0.05), energy: Math.min(1, ang * 4), t: w.time, body: T });
 }
 
 /**
@@ -196,6 +268,7 @@ export function collide(w: World, a: Body, b: Body) {
       w.kill(P);
       ev('merge', T.r * 3, 0.8);
     } else {
+      if (T.compact) swallow(T, P);
       absorbInto(T, P);
       grow(T, T.density);
       refreshRoche(T);
@@ -203,6 +276,14 @@ export function collide(w: World, a: Body, b: Body) {
       ev('swallow', Math.max(T.r * 1.5, P.r * 20), Math.min(1, P.m / T.m * 50 + 0.2));
     }
     w.massChanged(T);
+    return;
+  }
+
+  // something tiny against a world digs a crater rather than merging as an equal
+  if (P.m < 1e-4 * T.m && T.cls !== 'debris') {
+    crater(w, T, P);
+    w.kill(P);
+    w.structural();
     return;
   }
 
@@ -236,6 +317,10 @@ export function collide(w: World, a: Body, b: Body) {
   const heat = Math.min(1, 0.35 + QR / Qstar);
   const debrisColor = T.cls === 'gas' ? 0xd8b080 : 0xa08060;
 
+  if (bImp > Rt / (Rt + Rp) && vImp <= 1.15 * vesc) {
+    grazeAndMerge(w, T, P, { vImp, vesc, bImp, bcrit: Rt / (Rt + Rp), rhoMix, heat, color: debrisColor });
+    return;
+  }
   if (bImp > Rt / (Rt + Rp) && vImp > vesc) {
     // hit and run: both survive, the projectile scraped and both turned aside
     const nx = dx / d, ny = dy / d, nz = dz / d;
@@ -309,6 +394,79 @@ export function collide(w: World, a: Body, b: Body) {
   ev(vImp < 1.1 * vesc ? 'merge' : 'impact', R * 6, heat);
 }
 
+/**
+ * A grazing impact near escape speed: the projectile shears past, is slowed,
+ * comes back and merges, and the spiral arm it trails is left in orbit. This
+ * is the regime of the canonical Moon-forming impact (Canup 2004): a few
+ * percent of the mass ends up in a disc round the merged body, spinning the
+ * way the impact did. Inside the Roche limit that disc can only be a ring;
+ * outside it the pieces can gather into a moon.
+ */
+function grazeAndMerge(w: World, T: Body, P: Body, o: { vImp: number; vesc: number; bImp: number; bcrit: number; rhoMix: number; heat: number; color: number }) {
+  const Mtot = T.m + P.m;
+  const fDisk = 0.01 + 0.04 * Math.min(1, (o.bImp - o.bcrit) / (1 - o.bcrit));
+  const disk = fDisk * Mtot;
+  const cx = (T.x * T.m + P.x * P.m) / Mtot, cy = (T.y * T.m + P.y * P.m) / Mtot, cz = (T.z * T.m + P.z * P.m) / Mtot;
+  const vx = (T.vx * T.m + P.vx * P.m) / Mtot, vy = (T.vy * T.m + P.vy * P.m) / Mtot, vz = (T.vz * T.m + P.vz * P.m) / Mtot;
+  const dx = P.x - T.x, dy = P.y - T.y, dz = P.z - T.z, ux = P.vx - T.vx, uy = P.vy - T.vy, uz = P.vz - T.vz;
+  let lx = dy * uz - dz * uy, ly = dz * ux - dx * uz, lz = dx * uy - dy * ux;
+  const ln = Math.hypot(lx, ly, lz) || 1; lx /= ln; ly /= ln; lz /= ln;
+  // a basis in the impact plane
+  let ax = dx, ay = dy, az = dz;
+  const an = Math.hypot(ax, ay, az) || 1; ax /= an; ay /= an; az /= an;
+  const bx = ly * az - lz * ay, by = lz * ax - lx * az, bz = lx * ay - ly * ax;
+
+  T.m = Mtot - disk;
+  T.x = cx; T.y = cy; T.z = cz; T.vx = vx; T.vy = vy; T.vz = vz;
+  if (P.cls === 'gas' && P.m > 0.3 * T.m) T.cls = 'gas';
+  T.r = radiusFromDensity(T.m, o.rhoMix);
+  T.heat = 1;
+  refreshRoche(T);
+  w.kill(P);
+
+  const heavy = disk > 0.01 * T.m;
+  const n = heavy ? 36 : 300;
+  const mEach = disk / n;
+  const rFrag = radiusFromDensity(mEach, 3);
+  const placed: [number, number, number][] = [];
+  const made: Body[] = [];
+  let sx = 0, sy = 0, sz = 0;
+  for (let k = 0; k < n; k++) {
+    let px = 0, py = 0, pz = 0, rr = 0, th = 0;
+    for (let tries = 0; tries < 40; tries++) {
+      rr = T.r * (1.3 + 3.2 * rnd() ** 1.5) + rFrag;
+      th = 2 * Math.PI * rnd();
+      const h = (rnd() - 0.5) * 0.1 * rr;
+      px = (ax * Math.cos(th) + bx * Math.sin(th)) * rr + lx * h;
+      py = (ay * Math.cos(th) + by * Math.sin(th)) * rr + ly * h;
+      pz = (az * Math.cos(th) + bz * Math.sin(th)) * rr + lz * h;
+      if (!heavy || !placed.some(q => (q[0] - px) ** 2 + (q[1] - py) ** 2 + (q[2] - pz) ** 2 < 4.4 * rFrag * rFrag)) break;
+    }
+    placed.push([px, py, pz]);
+    const vc = Math.sqrt(G * T.m / rr) * (0.88 + 0.16 * rnd());
+    const vr = (rnd() - 0.5) * 0.15 * vc;
+    // tangential, prograde with the impact
+    const tx = (-ax * Math.sin(th) + bx * Math.cos(th)), ty = (-ay * Math.sin(th) + by * Math.cos(th)), tz = (-az * Math.sin(th) + bz * Math.cos(th));
+    const rx = px / rr, ry = py / rr, rz = pz / rr;
+    const pvx = tx * vc + rx * vr, pvy = ty * vc + ry * vr, pvz = tz * vc + rz * vr;
+    const f = new Body({ name: heavy ? 'debris' : 'fragment', kind: 'fragment', cls: 'debris', m: mEach, r: rFrag, source: heavy, spin: 0,
+      look: { style: 'barren', seed: ++fragSeq, c1: o.color, c2: o.color } });
+    f.setPos(cx + px, cy + py, cz + pz);
+    f.setVel(pvx, pvy, pvz);
+    f.heat = 1;
+    f.dens = o.rhoMix;
+    sx += pvx; sy += pvy; sz += pvz;
+    made.push(f);
+  }
+  // the disc carries no net linear momentum of its own; the remnant keeps the pair's
+  sx /= n; sy /= n; sz /= n;
+  for (const f of made) { f.vx += vx - sx; f.vy += vy - sy; f.vz += vz - sz; if (heavy) refreshRoche(f); w.add(f); }
+  w.massChanged(T);
+  w.structural();
+  w.emit({ kind: 'merge', x: cx, y: cy, z: cz, size: T.r * 6, energy: 1, t: w.time,
+    name: `Graze and merge — ${fmtMass(disk)} thrown into orbit` });
+}
+
 /** Inside the Roche limit of something much heavier: the body comes apart and its pieces follow their own orbits. */
 export function disrupt(w: World, b: Body, by: Body) {
   const rx = b.x - by.x, ry = b.y - by.y, rz = b.z - by.z;
@@ -318,9 +476,9 @@ export function disrupt(w: World, b: Body, by: Body) {
   const omega: [number, number, number] = [(ry * vz - rz * vy) / r2, (rz * vx - rx * vz) / r2, (rx * vy - ry * vx) / r2];
   const gas = b.cls === 'star' || b.cls === 'gas';
   const color = b.cls === 'star' ? 0xffc080 : b.cls === 'gas' ? 0xd8b890 : b.cls === 'ice' ? 0xc8d8e8 : 0x9a8070;
-  spawnFragments(w, { mass: b.m, n: b.cls === 'star' ? 900 : b.cls === 'gas' ? 600 : 400, cls: gas ? 'gasp' : 'debris',
+  spawnFragments(w, { mass: b.m, n: b.cls === 'star' ? 900 : b.cls === 'gas' ? 600 : b.cls === 'debris' ? 60 : b.r > 200 * KM ? 1200 : 400, cls: gas ? 'gasp' : 'debris',
     x: b.x, y: b.y, z: b.z, vx: b.vx, vy: b.vy, vz: b.vz, rIn: 0, rOut: b.r, vMin: 0, vMax: 0,
-    heat: gas ? 0.9 : 0.3, color, omega });
+    heat: gas ? 0.9 : 0.3, color, omega, rho: b.cls === 'debris' ? b.dens : b.density });
   w.kill(b);
   w.structural();
   w.emit({ kind: 'disrupt', x: b.x, y: b.y, z: b.z, size: b.r * 4, energy: 0.6, t: w.time, body: by, name: `${b.name} was torn apart by ${by.name}` });
@@ -385,7 +543,8 @@ export function starDeath(w: World, b: Body, ev: 'wd' | 'sn' | 'collapse' | 'ia'
 /** Mass a star sheds between frames leaves as a dust-driven wind. */
 export function wind(w: World, b: Body, shed: number) {
   const s = b.star!;
-  const parcel = Math.max(1e-6, (s.m0 - s.coreM) / 1200);
+  // fine enough that a few hundred parcels are in flight at once, so the outflow reads as a cloud
+  const parcel = Math.max(1e-7, (s.m0 - s.coreM) / 30000);
   const acc = (windAcc.get(b) ?? 0) + shed;
   const n = Math.floor(acc / parcel);
   windAcc.set(b, acc - n * parcel);

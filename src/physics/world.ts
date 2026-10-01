@@ -4,6 +4,8 @@ import { accrete, collide, disrupt, starDeath, wind, cometActivity, type SimEven
 import { evolve } from './stellar';
 import { refreshRoche } from './catalog';
 import { G } from './units';
+import { DiskPhysics, rocheOverflow } from './disks';
+import { assignHosts } from './analysis';
 
 /**
  * The simulation: a set of bodies, the integrator that moves them, and
@@ -21,6 +23,10 @@ export class World {
   /** called when bodies are removed, so views can drop what they hold for them */
   onRemove: ((b: Body) => void) | null = null;
 
+  /** who orbits whom among the sources, refreshed every step */
+  hosts = new Map<Body, { host: Body | null; hill: number }>();
+  private disks = new DiskPhysics();
+  private overflowPending = new WeakMap<Body, number>();
   private dirtyStructure = true;
   private dirtyForces = true;
   private massRef = new Map<Body, number>();
@@ -89,7 +95,9 @@ export class World {
       done += got;
       this.time += got;
       for (const { p, into } of this.integ.absorbed) {
+        // if what it hit was itself merged away this step, the particle flies on
         if (into.alive) accrete(this, into, p);
+        else { p.alive = true; p.dtWant = 0; }
         this.dirtyStructure = true;
       }
       const hits = this.integ.hits.slice();
@@ -125,9 +133,16 @@ export class World {
       if (s.held) continue;
       let ax = 0, ay = 0, az = 0;
       const soft = s.r * s.r;
+      // A kick per step only stands in for a pull that changes slowly over the
+      // step. A particle orbiting this source many times per step (a small moon,
+      // a ring) would be sampled at random phases: its pull averages out over
+      // each orbit, so it is left out rather than aliased into a false push.
+      const span = 2 * Math.abs(dt) * 4;
+      const near = Math.cbrt(G * s.m * span * span) ** 2;
       for (const p of this.bodies) {
         if (p.source || !p.alive || p.m === 0) continue;
         const dx = p.x - s.x, dy = p.y - s.y, dz = p.z - s.z;
+        if (dx * dx + dy * dy + dz * dz < near) continue;
         const r2 = dx * dx + dy * dy + dz * dz + soft;
         const f = G * p.m / (r2 * Math.sqrt(r2));
         ax += f * dx; ay += f * dy; az += f * dz;
@@ -138,6 +153,10 @@ export class World {
 
   /** Everything slower than an orbit: stars age, winds blow, debris cools, far strays are dropped. */
   private after(dt: number) {
+    this.hosts = assignHosts(this.sources);
+    // rings settle, discs drain, moonlets gather, stars overflow their lobes
+    if (this.disks.step(this, this.hosts, dt)) this.dirtyForces = true;
+    rocheOverflow(this, this.hosts, dt, this.overflowPending);
     const stars = this.sources.filter(b => b.luminous && b.cls === 'star');
     for (const b of [...this.sources]) {
       if (!b.alive) continue;
@@ -155,7 +174,8 @@ export class World {
     // drop particles that have left the system, and comet gas that has thinned out
     let far = 0;
     for (const s of this.sources) far = Math.max(far, Math.hypot(s.x, s.y, s.z) + s.r);
-    const cull2 = Math.max(400, 6 * far) ** 2;
+    // a planetary nebula is thousands of AU across before it fades into the background
+    const cull2 = Math.max(2000, 20 * far) ** 2;
     for (const b of this.bodies) {
       if (b.source || !b.alive) continue;
       b.age += dt;

@@ -346,11 +346,16 @@ export class Hermite {
   }
 }
 
-/** Total energy of the sources (test particles carry none of their own), Msun AU² / yr². */
+/**
+ * Total energy, Msun AU² / yr²: every body's kinetic energy, the potential
+ * between sources, and between each test particle and the sources (particles
+ * do not interact with one another).
+ */
 export function energy(bodies: Body[], gr = true): number {
   let E = 0;
-  const src = bodies.filter(b => b.source && b.alive);
-  for (const b of src) E += 0.5 * b.m * (b.vx ** 2 + b.vy ** 2 + b.vz ** 2);
+  const live = bodies.filter(b => b.alive);
+  const src = live.filter(b => b.source);
+  for (const b of live) E += 0.5 * b.m * (b.vx ** 2 + b.vy ** 2 + b.vz ** 2);
   for (let i = 0; i < src.length; i++) {
     for (let j = i + 1; j < src.length; j++) {
       const a = src[i], b = src[j];
@@ -358,6 +363,10 @@ export function energy(bodies: Body[], gr = true): number {
       E -= G * a.m * b.m / r;
       if (gr) E -= 3 * G * G * (a.m + b.m) * a.m * b.m / (C2 * r * r);
     }
+  }
+  for (const p of live) {
+    if (p.source || p.m === 0) continue;
+    for (const s of src) E -= G * p.m * s.m / Math.hypot(p.x - s.x, p.y - s.y, p.z - s.z);
   }
   return E;
 }
