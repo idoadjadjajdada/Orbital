@@ -1,13 +1,24 @@
 {
   "name": "orbital",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "An n-body gravity sandbox in one HTML file.",
+  "description": "An n-body gravity sandbox at real scale, in the browser.",
+  "type": "module",
   "scripts": {
-    "test": "node tests/sim.js",
-    "setup": "playwright install chromium"
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "three": "^0.186.1"
   },
   "devDependencies": {
-    "playwright": "^1.49.0"
+    "@types/node": "^26.6.3",
+    "@types/three": "^0.186.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1",
+    "vitest": "^5.0.3"
   }
 }
