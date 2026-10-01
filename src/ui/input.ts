@@ -1,27 +1,27 @@
-import * as THREE from 'three';
-import type { App } from '../app';
+import type { App, P3 } from '../app';
 import type { Body } from '../physics/body';
 
-type Mode = 'none' | 'rotate' | 'pan' | 'press-body' | 'grab' | 'aim' | 'touch2';
+type Mode = 'none' | 'pan' | 'press-body' | 'grab' | 'aim' | 'touch2';
 
 /**
- * Pointer and keyboard. One finger or the left button does whatever makes
- * sense where it lands: on a body it selects or carries it, on empty space
- * it throws the picked body or, with nothing picked, turns the view.
+ * Pointer and keyboard for a flat, top-down view. One finger or the left
+ * button does what makes sense where it lands: on a body it selects or
+ * carries it; on empty space it throws the picked body or, with nothing
+ * picked, slides the view. Two fingers pinch and slide; the wheel zooms
+ * about the cursor.
  */
 export class Input {
   private mode: Mode = 'none';
   private start = { x: 0, y: 0 };
   private last = { x: 0, y: 0 };
   private pressBody: Body | null = null;
-  private aimStart: THREE.Vector3 | null = null;
+  private aimStart: P3 | null = null;
   private aimHost: Body | null = null;
-  private aimVel: THREE.Vector3 | null = null;
+  private aimVel: P3 | null = null;
   private lastAim = 0;
   private pointers = new Map<number, { x: number; y: number }>();
-  private pinch = { d: 0, a: 0, mx: 0, my: 0 };
-  private spaceDown = false;
-  private handHist: { t: number; p: THREE.Vector3 }[] = [];
+  private pinch = { d: 0, mx: 0, my: 0 };
+  private handHist: { t: number; p: P3 }[] = [];
   /** iOS never fires dblclick for touch: double taps are found here */
   private lastTap = { t: 0, x: 0, y: 0, b: null as Body | null };
 
@@ -30,37 +30,47 @@ export class Input {
     window.addEventListener('pointermove', e => this.move(e));
     window.addEventListener('pointerup', e => this.up(e));
     window.addEventListener('pointercancel', e => this.up(e));
-    canvas.addEventListener('wheel', e => { e.preventDefault(); this.zoom(Math.exp(e.deltaY * 0.0012)); }, { passive: false });
+    canvas.addEventListener('wheel', e => { e.preventDefault(); this.zoomAt(Math.exp(-e.deltaY * 0.0015), e.offsetX, e.offsetY); }, { passive: false });
     canvas.addEventListener('dblclick', e => {
-      const b = this.app.bodies.pick(e.offsetX, e.offsetY);
+      const b = this.app.view.pick(e.offsetX, e.offsetY);
       if (b) { this.app.select(b); this.app.follow(b); }
     });
     canvas.addEventListener('contextmenu', e => e.preventDefault());
     window.addEventListener('keydown', e => this.key(e));
     // Safari's own pinch-zoom and double-tap-zoom would fight the view's
     for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(ev, e => e.preventDefault(), { passive: false } as AddEventListenerOptions);
-    document.addEventListener('dblclick', e => { if (e.target !== canvas) e.preventDefault(); }, { passive: false });
-    window.addEventListener('keyup', e => { if (e.code === 'Space') this.spaceDown = false; });
   }
 
-  private zoom(f: number) {
+  private local(e: PointerEvent) {
+    const r = this.canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+
+  /** zoom by factor f, keeping the world point under (x, y) where it is */
+  private zoomAt(f: number, x: number, y: number) {
     const v = this.app.view;
-    v.distGoal = Math.min(1e6, Math.max(1e-9, v.distGoal * f));
+    const before = v.unproject(x, y);
+    const s = Math.min(1e13, Math.max(1e-4, v.scale * f));
+    v.scale = v.scaleGoal = s;
+    const after = v.unproject(x, y);
+    this.app.pan.x += before.x - after.x;
+    this.app.pan.y += before.y - after.y;
+    v.cx += before.x - after.x;
+    v.cy += before.y - after.y;
   }
 
-  /** where a screen point meets the placement plane, in world coordinates */
-  private worldAt(x: number, y: number, zScene?: number): THREE.Vector3 | null {
-    const p = this.app.view.rayToPlane(x, y, zScene);
-    if (!p) return null;
-    const o = this.app.view.origin;
-    return p.add(new THREE.Vector3(o.x, o.y, o.z));
+  private panBy(dx: number, dy: number) {
+    const k = this.app.view.perCss;
+    this.app.pan.x -= dx * k;
+    this.app.pan.y += dy * k;
   }
 
   private down(e: PointerEvent) {
     this.canvas.setPointerCapture(e.pointerId);
-    this.pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
+    const p = this.local(e);
+    this.pointers.set(e.pointerId, p);
     if (this.pointers.size === 2) {
-      // second finger: abandon whatever the first was doing and pinch
+      // a second finger: whatever the first was doing becomes a pinch
       this.cancelAim();
       this.dropHeld();
       this.mode = 'touch2';
@@ -68,65 +78,44 @@ export class Input {
       return;
     }
     if (this.pointers.size > 2) return;
-    this.start = { x: e.offsetX, y: e.offsetY };
-    this.last = { ...this.start };
-    if (e.button === 2 || (e.button === 0 && e.altKey)) { this.mode = 'rotate'; return; }
-    if (e.button === 1 || (e.button === 0 && (e.shiftKey || this.spaceDown))) { this.mode = 'pan'; return; }
-    const hit = this.app.bodies.pick(e.offsetX, e.offsetY);
+    this.start = { ...p };
+    this.last = { ...p };
+    if (e.button === 1 || e.button === 2) { this.mode = 'pan'; return; }
+    const hit = this.app.view.pick(p.x, p.y);
     if (hit) { this.mode = 'press-body'; this.pressBody = hit; return; }
     if (this.app.armed) {
-      const p = this.worldAt(e.offsetX, e.offsetY);
-      if (p) {
-        this.mode = 'aim';
-        this.aimStart = p;
-        this.aimHost = this.app.hostAt(p);
-        this.aimVel = null;
-        return;
-      }
+      this.mode = 'aim';
+      this.aimStart = this.app.view.unproject(p.x, p.y);
+      this.aimHost = this.app.hostAt(this.aimStart);
+      this.aimVel = null;
+      return;
     }
-    this.mode = 'rotate';
+    this.mode = 'pan';
   }
 
   private move(e: PointerEvent) {
     if (!this.pointers.has(e.pointerId)) {
-      // hover feedback
-      if (e.target === this.canvas) {
-        const hit = this.app.bodies.pick(e.offsetX, e.offsetY);
-        this.canvas.classList.toggle('grab', !!hit);
-      }
+      if (e.target === this.canvas) this.canvas.classList.toggle('grab', !!this.app.view.pick(e.offsetX, e.offsetY));
       return;
     }
-    const rect = this.canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left, y = e.clientY - rect.top;
-    this.pointers.set(e.pointerId, { x, y });
-    const dx = x - this.last.x, dy = y - this.last.y;
-    this.last = { x, y };
-    const moved = Math.hypot(x - this.start.x, y - this.start.y);
-    const v = this.app.view;
+    const p = this.local(e);
+    this.pointers.set(e.pointerId, p);
+    const dx = p.x - this.last.x, dy = p.y - this.last.y;
+    this.last = { ...p };
+    const moved = Math.hypot(p.x - this.start.x, p.y - this.start.y);
     switch (this.mode) {
       case 'touch2': this.pinchMove(); break;
-      case 'rotate':
-        v.az -= dx * 0.006;
-        v.el = Math.max(-1.55, Math.min(1.55, v.el + dy * 0.006));
-        break;
       case 'pan': this.panBy(dx, dy); break;
-      case 'press-body':
-        if (moved > 6 && this.pressBody) this.grab(this.pressBody, x, y);
-        break;
-      case 'grab': this.carry(x, y); break;
+      case 'press-body': if (moved > 6 && this.pressBody) this.grab(this.pressBody, p.x, p.y); break;
+      case 'grab': this.carry(p.x, p.y); break;
       case 'aim': {
         if (!this.aimStart) break;
         if (moved < 6) { this.app.aim(null, null, null); this.aimVel = null; break; }
-        const zs = this.aimStart.z - v.origin.z;
-        const p = this.worldAt(x, y, zs);
-        if (!p) break;
-        const drag = p.clone().sub(this.aimStart);
+        const q = this.app.view.unproject(p.x, p.y);
+        const drag = { x: q.x - this.aimStart.x, y: q.y - this.aimStart.y, z: 0 };
         this.aimVel = this.app.throwVelocity(this.aimStart, drag, this.aimHost);
         const now = performance.now();
-        if (now - this.lastAim > 45) {
-          this.lastAim = now;
-          this.app.aim(this.aimStart, this.aimVel, this.aimHost);
-        }
+        if (now - this.lastAim > 45) { this.lastAim = now; this.app.aim(this.aimStart, this.aimVel, this.aimHost); }
         break;
       }
     }
@@ -137,25 +126,21 @@ export class Input {
     this.pointers.delete(e.pointerId);
     if (this.mode === 'touch2') {
       if (this.pointers.size === 0) this.mode = 'none';
-      else { this.mode = 'rotate'; const p = [...this.pointers.values()][0]; this.last = { ...p }; this.start = { x: -1e9, y: -1e9 }; }
+      else { this.mode = 'pan'; const q = [...this.pointers.values()][0]; this.last = { ...q }; this.start = { x: -1e9, y: -1e9 }; }
       return;
     }
     const moved = Math.hypot(this.last.x - this.start.x, this.last.y - this.start.y);
     switch (this.mode) {
       case 'press-body': {
         const b = this.pressBody;
-        const now = performance.now();
-        const lt = this.lastTap;
-        if (e.pointerType !== 'mouse' && b && lt.b === b && now - lt.t < 350 && Math.hypot(lt.x - this.start.x, lt.y - this.start.y) < 30) {
-          // double tap: follow it
+        const now = performance.now(), lt = this.lastTap;
+        if (b && lt.b === b && now - lt.t < 350 && Math.hypot(lt.x - this.start.x, lt.y - this.start.y) < 30) {
           this.app.select(b);
           this.app.follow(b);
           this.lastTap.b = null;
         } else {
-          this.app.select(this.app.selected === b ? null : b);
+          this.app.select(e.pointerType === 'mouse' && this.app.selected === b ? null : b);
           this.lastTap = { t: now, x: this.start.x, y: this.start.y, b };
-          // a single tap on a touch screen should not deselect what the second tap meant to follow
-          if (e.pointerType !== 'mouse' && this.app.selected !== b) this.app.select(b);
         }
         break;
       }
@@ -163,36 +148,22 @@ export class Input {
       case 'aim': {
         const p = this.aimStart, host = this.aimHost;
         if (p) {
-          let v: THREE.Vector3;
-          if (this.aimVel && moved >= 6) v = this.aimVel;
-          else v = this.app.flags.auto ? this.app.circularVelocity(p, host) : new THREE.Vector3(host?.vx ?? 0, host?.vy ?? 0, host?.vz ?? 0);
+          const v = this.aimVel && moved >= 6 ? this.aimVel
+            : this.app.flags.auto ? this.app.circularVelocity(p, host) : { x: host?.vx ?? 0, y: host?.vy ?? 0, z: host?.vz ?? 0 };
           this.app.place(p, v);
         }
         this.cancelAim();
         break;
       }
-      case 'rotate':
-        if (moved < 4 && e.button === 0 && this.app.selected) this.app.select(null);
+      case 'pan':
+        if (moved < 4 && this.app.selected && e.button === 0) this.app.select(null);
         break;
     }
     this.mode = 'none';
     this.pressBody = null;
   }
 
-  private cancelAim() {
-    this.aimStart = null;
-    this.aimVel = null;
-    this.app.aim(null, null, null);
-  }
-
-  private panBy(dx: number, dy: number) {
-    const v = this.app.view;
-    const pw = v.pixelWorld(v.dist);
-    const right = new THREE.Vector3().setFromMatrixColumn(v.camera.matrixWorld, 0);
-    const up = new THREE.Vector3().setFromMatrixColumn(v.camera.matrixWorld, 1);
-    const d = right.multiplyScalar(-dx * pw).add(up.multiplyScalar(dy * pw));
-    this.app.pan.x += d.x; this.app.pan.y += d.y; this.app.pan.z += d.z;
-  }
+  private cancelAim() { this.aimStart = null; this.aimVel = null; this.app.aim(null, null, null); }
 
   private grab(b: Body, x: number, y: number) {
     const host = this.app.hostOf(b);
@@ -200,8 +171,7 @@ export class Input {
     b.held = true;
     this.mode = 'grab';
     this.handHist = [];
-    const target = new THREE.Vector3(b.x - (host?.x ?? 0), b.y - (host?.y ?? 0), b.z - (host?.z ?? 0));
-    this.app.held = { b, target, vel: new THREE.Vector3(), last: target.clone(), t: performance.now(), host };
+    this.app.held = { b, target: { x: b.x - (host?.x ?? 0), y: b.y - (host?.y ?? 0), z: b.z - (host?.z ?? 0) }, vel: { x: 0, y: 0, z: 0 }, host };
     this.canvas.classList.add('grabbing');
     this.carry(x, y);
   }
@@ -209,26 +179,23 @@ export class Input {
   private carry(x: number, y: number) {
     const h = this.app.held;
     if (!h) return;
-    const v = this.app.view;
-    const zs = h.b.z - v.origin.z;
-    const p = this.worldAt(x, y, zs);
-    if (!p) return;
-    p.x -= h.host?.x ?? 0; p.y -= h.host?.y ?? 0; p.z -= h.host?.z ?? 0;
-    h.target.copy(p);
-    // the hand's speed over the last tenth of a second, converted to sim time
+    const w = this.app.view.unproject(x, y);
+    const p = { x: w.x - (h.host?.x ?? 0), y: w.y - (h.host?.y ?? 0), z: h.target.z };
+    h.target = p;
+    // the hand's speed over the last tenth of a second, in sim time
     const now = performance.now();
-    this.handHist.push({ t: now, p: p.clone() });
+    this.handHist.push({ t: now, p });
     while (this.handHist.length > 2 && now - this.handHist[0].t > 100) this.handHist.shift();
-    const a = this.handHist[0];
-    const dt = (now - a.t) / 1000;
-    if (dt > 0.008) h.vel.copy(p).sub(a.p).divideScalar(dt * this.app.warp);
+    const a = this.handHist[0], dt = (now - a.t) / 1000;
+    if (dt > 0.008) h.vel = { x: (p.x - a.p.x) / (dt * this.app.warp), y: (p.y - a.p.y) / (dt * this.app.warp), z: 0 };
   }
 
   private dropHeld() {
     const h = this.app.held;
     if (!h) return;
     const now = performance.now();
-    if (this.handHist.length && now - this.handHist[this.handHist.length - 1].t > 80) h.vel.set(0, 0, 0);
+    if (this.handHist.length && now - this.handHist[this.handHist.length - 1].t > 80) h.vel = { x: 0, y: 0, z: 0 };
+    h.b.setVel(h.vel.x + (h.host?.vx ?? 0), h.vel.y + (h.host?.vy ?? 0), h.vel.z + (h.host?.vz ?? 0));
     h.b.held = false;
     this.app.world.moved(h.b);
     this.app.held = null;
@@ -237,26 +204,27 @@ export class Input {
 
   private pinchStart() {
     const [a, b] = [...this.pointers.values()];
-    this.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), a: Math.atan2(b.y - a.y, b.x - a.x), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+    this.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
   }
 
   private pinchMove() {
     const [a, b] = [...this.pointers.values()];
-    const d = Math.hypot(a.x - b.x, a.y - b.y), ang = Math.atan2(b.y - a.y, b.x - a.x);
-    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-    if (this.pinch.d > 0 && d > 0) this.zoom(this.pinch.d / d);
-    this.app.view.az -= ang - this.pinch.a;
+    const d = Math.hypot(a.x - b.x, a.y - b.y), mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
     this.panBy(mx - this.pinch.mx, my - this.pinch.my);
-    this.pinch = { d, a: ang, mx, my };
+    if (this.pinch.d > 0 && d > 0) this.zoomAt(d / this.pinch.d, mx, my);
+    this.pinch = { d, mx, my };
   }
 
   private key(e: KeyboardEvent) {
-    if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'SELECT') return;
+    const tag = (e.target as HTMLElement)?.tagName;
+    if (tag === 'INPUT' || tag === 'SELECT') return;
     const app = this.app;
     switch (e.code) {
-      case 'Space': e.preventDefault(); if (!e.repeat) { this.spaceDown = true; app.paused = !app.paused; } break;
+      case 'Space': e.preventDefault(); if (!e.repeat) app.paused = !app.paused; break;
       case 'BracketLeft': app.warpLog = Math.max(-7.5, app.warpLog - 0.25); break;
       case 'BracketRight': app.warpLog = Math.min(4, app.warpLog + 0.25); break;
+      case 'Equal': case 'NumpadAdd': this.zoomAt(1.4, this.canvas.clientWidth / 2, this.canvas.clientHeight / 2); break;
+      case 'Minus': case 'NumpadSubtract': this.zoomAt(1 / 1.4, this.canvas.clientWidth / 2, this.canvas.clientHeight / 2); break;
       case 'KeyT': app.flags.trails = !app.flags.trails; break;
       case 'KeyO': app.flags.orbits = !app.flags.orbits; break;
       case 'KeyZ': app.flags.zones = !app.flags.zones; break;

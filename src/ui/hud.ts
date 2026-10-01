@@ -1,4 +1,4 @@
-import type { App, Flag } from '../app';
+import { iconOf, type App, type Flag } from '../app';
 import type { Style } from '../physics/body';
 import { CATALOG, SHELVES, type Shelf } from '../physics/catalog';
 import { PRESETS } from '../physics/presets';
@@ -25,7 +25,7 @@ export class Hud {
         star: e.cls === 'star' ? { m0: e.m, age: 0, phase: e.key === 'redgiant' || e.key === 'supergiant' || e.key === 'hypergiant' ? 'giant' as const : 'ms' as const, L: 1,
           teff: ({ protostar: 4300, reddwarf: 3200, kdwarf: 4500, sun: 5772, fstar: 6600, astar: 9900, bstar: 15000, ostar: 38000, bluesg: 12000,
             redgiant: 3400, supergiant: 3600, hypergiant: 3500, lbv: 25000 } as Record<string, number>)[e.key] ?? 5772, coreM: 0 } : undefined };
-      this.icons.set(e.key, app.icons.render(b));
+      this.icons.set(e.key, iconOf(b));
     }
     this.buildPresets();
     this.buildShelves();
@@ -199,8 +199,8 @@ export class Hud {
     if (b.heat > 0.05 && !b.star) rows.push(['Surface', b.heat > 0.4 ? 'molten' : 'cooling']);
     if (b.craters.length) rows.push([b.cls === 'gas' ? 'Impact scars' : 'Craters', String(b.craters.length)]);
     if (b.compact) {
-      const v = this.app.bodies.map.get(b);
-      if (v && v.accRate > 0) rows.push(['Feeding', `${sig(v.accRate)} M☉/yr · ${sig(v.accRate / (2.2e-8 * b.m))}× Eddington`]);
+      const rate = this.app.accRate(b);
+      if (rate > 0) rows.push(['Feeding', `${sig(rate)} M☉/yr · ${sig(rate / (2.2e-8 * b.m))}× Eddington`]);
     }
     if (b.sizeGuess) rows.push(['Note', 'mass estimated, not measured']);
     if (!b.source && !b.isParticle) rows.push(['Gravity', 'too small to pull on others']);
@@ -244,8 +244,8 @@ export class Hud {
 
   private forgeIcon() {
     const c = this.app.custom;
-    if (c.style === 'star') return this.app.icons.render({ look: { style: 'star', seed: c.seed, c1: 0, c2: 0 }, heat: 0, cls: 'star', tilt: 0, star: { m0: 1, age: 0, phase: 'ms', L: 1, teff: 5772 * Math.pow(this.app.customStarMass(), 0.55), coreM: 0 } });
-    return this.app.icons.render({ look: { style: c.style, seed: c.seed, c1: c.c1, c2: c.c2, atmo: c.style === 'terran' || c.style === 'ocean' ? 0x7ab0ff : undefined }, heat: c.style === 'lava' ? 0.8 : 0, cls: 'rock', tilt: 0.3 });
+    if (c.style === 'star') return iconOf({ look: { style: 'star', seed: c.seed, c1: 0, c2: 0 }, heat: 0, cls: 'star', tilt: 0, star: { m0: 1, age: 0, phase: 'ms', L: 1, teff: 5772 * Math.pow(this.app.customStarMass(), 0.55), coreM: 0 } });
+    return iconOf({ look: { style: c.style, seed: c.seed, c1: c.c1, c2: c.c2, atmo: c.style === 'terran' || c.style === 'ocean' ? 0x7ab0ff : undefined }, heat: c.style === 'lava' ? 0.8 : 0, cls: 'rock', tilt: 0.3 });
   }
 
   private updateForge() {

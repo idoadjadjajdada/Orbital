@@ -1,36 +1,42 @@
-import * as THREE from 'three';
 import { World } from './physics/world';
-import type { Body } from './physics/body';
+import type { Body, Look, Cls, StarState } from './physics/body';
 import { assignHosts, hostOfPoint } from './physics/analysis';
 import { buildPreset, PRESETS } from './physics/presets';
 import { makeBody, refreshRoche } from './physics/catalog';
-import { G, M_EARTH, schwarzschild, radiusFromDensity } from './physics/units';
+import { G, M_EARTH, radiusFromDensity } from './physics/units';
 import { predict } from './physics/predict';
 import { newStar, structure, teffOf } from './physics/stellar';
-import { View } from './render/view';
-import { BodyLayer } from './render/bodies';
-import { ParticleLayer } from './render/particles';
-import { Overlays } from './render/overlays';
-import { buildSky } from './render/sky';
-import { IconRenderer } from './render/icons';
 import { Body as BodyClass, type Style } from './physics/body';
+import { Renderer, PIX } from './pixel/renderer';
+import { bakeSprite } from './pixel/sprites';
+import { buildMap } from './pixel/surface';
 
 export type Flag = 'trails' | 'orbits' | 'zones' | 'labels' | 'auto';
-
 export interface CustomSpec { style: Style; massLog: number; rho: number; c1: number; c2: number; seed: number; }
+export interface P3 { x: number; y: number; z: number }
+
+/** A small pixel-art picture of a body, for the shelf and the inspector. */
+export function iconOf(b: { look: Look; heat: number; cls: Cls; star?: StarState; tilt: number }, d = 22): string {
+  const isWorld = b.cls !== 'star' && b.cls !== 'wd' && b.cls !== 'ns' && b.cls !== 'bh';
+  const sp = bakeSprite({
+    look: b.look, cls: b.cls, heat: b.heat, teff: b.star?.teff ?? 5772, giant: b.star?.phase === 'giant',
+    d, axis: [0, Math.sin(b.tilt * 0.5 + 0.5), Math.cos(b.tilt * 0.5 + 0.5)], spin: 0.6, light: [-1, 0.5, 0.6], lightCol: [1.15, 1.12, 1.08],
+    scars: [], time: 0, map: isWorld ? buildMap(b.look) : null,
+  });
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = sp.size;
+  cv.getContext('2d')!.putImageData(new ImageData(sp.data, sp.size, sp.size), 0, 0);
+  return cv.toDataURL();
+}
 
 export class App {
   world = new World();
-  view: View;
-  bodies: BodyLayer;
-  particles: ParticleLayer;
-  overlays: Overlays;
-  icons = new IconRenderer(96);
+  view: Renderer;
 
   hosts = new Map<Body, { host: Body | null; hill: number }>();
   selected: Body | null = null;
   focus: Body | null = null;
-  /** world offset of the view centre from the followed body (or from the origin of coordinates) */
+  /** world offset of the view centre from the followed body (or from the origin) */
   pan = { x: 0, y: 0, z: 0 };
 
   flags: Record<Flag, boolean> = { trails: true, orbits: true, zones: false, labels: true, auto: true };
@@ -41,33 +47,27 @@ export class App {
 
   /** measured sim-years per real second */
   rate = 0;
-  lastStep = 0;
   presetKey = 'solar';
   onSelect: (b: Body | null) => void = () => {};
   onToast: (msg: string) => void = () => {};
   onFrame: () => void = () => {};
 
-  // a body being carried by the pointer
-  held: { b: Body; target: THREE.Vector3; vel: THREE.Vector3; last: THREE.Vector3; t: number; host: Body | null } | null = null;
-
-  private lastFrame = performance.now();
-  private labelEls = new Map<Body, HTMLElement>();
-
-  constructor(canvas: HTMLCanvasElement, private labelRoot: HTMLElement) {
-    this.view = new View(canvas);
-    buildSky(this.view.sky);
-    this.bodies = new BodyLayer(this.view);
-    this.particles = new ParticleLayer(this.view);
-    this.overlays = new Overlays(this.view);
-    this.world.onRemove = b => this.removed(b);
-  }
-
-  get warp() { return Math.pow(10, this.warpLog); }
+  /** a body being carried by the pointer: where the hand is, relative to what it was near */
+  held: { b: Body; target: P3; vel: P3; host: Body | null } | null = null;
 
   /** bodies drawn as bodies: everything that pulls, and the small moons and machines that do not */
   visual: Body[] = [];
   private testHosts = new Map<Body, Body | null>();
   private frameNo = 0;
+  private lastFrame = performance.now();
+  private labelEls = new Map<Body, HTMLElement>();
+
+  constructor(canvas: HTMLCanvasElement, private labelRoot: HTMLElement) {
+    this.view = new Renderer(canvas);
+    this.world.onRemove = b => this.removed(b);
+  }
+
+  get warp() { return Math.pow(10, this.warpLog); }
 
   hostOf = (b: Body): Body | null => {
     const h = this.hosts.get(b);
@@ -83,11 +83,17 @@ export class App {
     return null;
   };
   hillOf = (b: Body) => this.hosts.get(b)?.hill ?? Infinity;
+  accRate = (b: Body) => this.view.accRate(b);
 
   /** world position of the view centre */
-  centre() {
+  centre(): P3 {
     const f = this.focus;
     return { x: (f ? f.x : 0) + this.pan.x, y: (f ? f.y : 0) + this.pan.y, z: (f ? f.z : 0) + this.pan.z };
+  }
+
+  /** zoom so that a radius `r` (AU) fills most of the shorter side of the screen */
+  fitRadius(r: number) {
+    this.view.scaleGoal = (Math.min(this.view.W, this.view.H) * 0.45) / r;
   }
 
   loadPreset(key: string) {
@@ -98,13 +104,12 @@ export class App {
     this.focus = null;
     buildPreset(key, this.world);
     this.hosts = assignHosts(this.world.sources);
-    this.overlays.clearTrails();
-    const f = this.world.sources.find(b => b.name === info.focus) ?? null;
-    this.focus = f;
+    this.view.clearTrails();
+    this.focus = this.world.sources.find(b => b.name === info.focus) ?? null;
     this.pan = { x: 0, y: 0, z: 0 };
-    this.view.glide = { x: 0, y: 0, z: 0 };
-    this.view.distGoal = this.view.dist = info.view * 2.2;
-    this.view.el = 0.75;
+    this.view.glide = { x: 0, y: 0 };
+    this.fitRadius(info.view);
+    this.view.scale = this.view.scaleGoal;
     this.warpLog = Math.log10(info.warp);
     this.paused = false;
   }
@@ -123,32 +128,28 @@ export class App {
     this.onSelect(b);
   }
 
-  /** Follow a body with the camera, gliding from wherever the view is now. */
+  /** Follow a body, gliding from wherever the view is now. */
   follow(b: Body | null) {
     const before = this.centre();
     this.focus = b;
     if (b) {
       this.pan = { x: 0, y: 0, z: 0 };
       const hill = this.hillOf(b);
-      const want = isFinite(hill) ? Math.max(hill * 2.5, b.r * 6) : Math.max(this.view.distGoal, b.r * 6);
-      if (this.view.distGoal > want * 4 || this.view.distGoal < b.r * 3) this.view.distGoal = want;
+      // close enough to see its moons, or the body itself if it has none
+      const want = isFinite(hill) ? Math.max(hill * 1.2, b.r * 4) : null;
+      if (want) this.fitRadius(want);
     } else this.pan = before;
     const after = this.centre();
     this.view.glide.x += before.x - after.x;
     this.view.glide.y += before.y - after.y;
-    this.view.glide.z += before.z - after.z;
   }
 
   private removed(b: Body) {
-    this.overlays.forget(b);
+    this.view.forget(b);
     const el = this.labelEls.get(b);
     if (el) { el.remove(); this.labelEls.delete(b); }
     if (this.selected === b) this.select(null);
-    if (this.focus === b) {
-      // keep looking at the same place
-      this.pan = { x: b.x, y: b.y, z: b.z };
-      this.focus = null;
-    }
+    if (this.focus === b) { this.pan = { x: b.x, y: b.y, z: b.z }; this.focus = null; }
     if (this.held?.b === b) this.held = null;
   }
 
@@ -165,9 +166,8 @@ export class App {
     if (this.armed !== 'custom') return makeBody(this.armed);
     const c = this.custom;
     if (c.style === 'star') {
-      const m = this.customStarMass();
       const b = makeBody('sun', c.seed, 'Custom star');
-      b.star = newStar(m, 0.1);
+      b.star = newStar(this.customStarMass(), 0.1);
       const st = structure(b.star);
       b.m = st.m; b.r = st.r; b.star.L = st.L; b.star.teff = teffOf(st.L, st.r);
       refreshRoche(b);
@@ -187,37 +187,36 @@ export class App {
   customStarMass() { return Math.pow(10, -1.1 + ((this.custom.massLog + 4) / 7.6) * 2.9); }
 
   /** velocity a thrown body gets for a drag of `drag` (world AU) starting at `p` near `host` */
-  throwVelocity(p: THREE.Vector3, drag: THREE.Vector3, host: Body | null) {
-    if (!host) return drag.clone().multiplyScalar(2 * Math.PI);
+  throwVelocity(p: P3, drag: P3, host: Body | null): P3 {
+    if (!host) return { x: drag.x * 2 * Math.PI, y: drag.y * 2 * Math.PI, z: 0 };
     const r = Math.max(1e-12, Math.hypot(p.x - host.x, p.y - host.y, p.z - host.z));
-    const vc = Math.sqrt((G * host.m) / r);
-    return new THREE.Vector3(host.vx, host.vy, host.vz).addScaledVector(drag, vc / r);
+    const k = Math.sqrt((G * host.m) / r) / r;
+    return { x: host.vx + drag.x * k, y: host.vy + drag.y * k, z: host.vz + drag.z * k };
   }
 
-  circularVelocity(p: THREE.Vector3, host: Body | null) {
-    if (!host) return new THREE.Vector3();
+  circularVelocity(p: P3, host: Body | null): P3 {
+    if (!host) return { x: 0, y: 0, z: 0 };
     const rx = p.x - host.x, ry = p.y - host.y;
     const r = Math.hypot(rx, ry, p.z - host.z) || 1e-12;
-    const vc = Math.sqrt((G * host.m) / r);
-    const t = new THREE.Vector3(-ry, rx, 0).normalize();
-    return new THREE.Vector3(host.vx, host.vy, host.vz).addScaledVector(t, vc);
+    const vc = Math.sqrt((G * host.m) / r), t = Math.hypot(rx, ry) || 1;
+    return { x: host.vx - (ry / t) * vc, y: host.vy + (rx / t) * vc, z: host.vz };
   }
 
-  hostAt(p: THREE.Vector3) {
+  hostAt(p: P3) {
     return this.world.sources.length ? hostOfPoint([p.x, p.y, p.z], null, this.world.sources, this.hosts) : null;
   }
 
-  aim(p: THREE.Vector3 | null, v: THREE.Vector3 | null, host: Body | null) {
-    if (!p || !v) { this.overlays.setAim(null, null); return; }
+  aim(p: P3 | null, v: P3 | null, host: Body | null) {
+    if (!p || !v) { this.view.setAim(null, null); return; }
     const probe = this.spawnArmed();
     if (!probe) return;
     probe.setPos(p.x, p.y, p.z);
     probe.setVel(v.x, v.y, v.z);
     const pr = predict(this.world.sources, probe, host, 8);
-    this.overlays.setAim(pr.points, pr.impact);
+    this.view.setAim(pr.points, pr.impact);
   }
 
-  place(p: THREE.Vector3, v: THREE.Vector3) {
+  place(p: P3, v: P3) {
     const b = this.spawnArmed();
     if (!b) return null;
     b.setPos(p.x, p.y, p.z);
@@ -229,32 +228,25 @@ export class App {
 
   frame() {
     const now = performance.now();
-    this.view.adapt(now - this.lastFrame);
     const dtReal = Math.min(0.1, (now - this.lastFrame) / 1000);
     this.lastFrame = now;
 
     if (this.held) {
-      const h = this.held;
-      const b = h.b;
-      // the body goes where the hand is, carried along with whatever it was near
-      const hx = h.host ? h.host.x : 0, hy = h.host ? h.host.y : 0, hz = h.host ? h.host.z : 0;
-      b.setPos(h.target.x + hx, h.target.y + hy, h.target.z + hz);
-      const hv = h.host ? [h.host.vx, h.host.vy, h.host.vz] : [0, 0, 0];
-      b.setVel(hv[0] + h.vel.x, hv[1] + h.vel.y, hv[2] + h.vel.z);
+      const { b, target, vel, host } = this.held;
+      b.setPos(target.x + (host?.x ?? 0), target.y + (host?.y ?? 0), target.z + (host?.z ?? 0));
+      b.setVel(vel.x + (host?.vx ?? 0), vel.y + (host?.vy ?? 0), vel.z + (host?.vz ?? 0));
       this.world.moved(b);
     }
 
     let got = 0;
     if (!this.paused) {
-      const req = this.warp * dtReal;
-      got = this.world.step(req, now + 11);
+      got = this.world.step(this.warp * dtReal, now + 11);
       const inst = dtReal > 0 ? got / dtReal : 0;
       this.rate = this.rate ? this.rate + (inst - this.rate) * Math.min(1, dtReal * 3) : inst;
     }
-    this.lastStep = got;
 
     for (const e of this.world.events) {
-      this.overlays.addFlash(e, now / 1000);
+      this.view.flash(e, now / 1000);
       const name = e.name ?? e.body?.name;
       const msg = {
         supernova: `${name ?? 'A star'} went supernova`,
@@ -273,72 +265,43 @@ export class App {
     this.hosts = assignHosts(this.world.sources);
     this.visual = this.world.bodies.filter(b => b.alive && (b.source || !b.isParticle));
     if (this.frameNo % 120 === 0) for (const b of this.testHosts.keys()) if (!b.alive) this.testHosts.delete(b);
-    this.bodies.sync(this.visual);
 
-    const c = this.centre();
-    this.view.origin = c;
-    this.view.updateCamera(dtReal);
-    this.bodies.updateLights(this.world.sources);
-    this.bodies.update(got, now / 1000, this.hostOf, this.world.time, dtReal);
-    const holes = this.world.sources.filter(b => b.cls === 'bh');
-    this.particles.update(this.world.bodies, this.world.sources.filter(b => b.compact), this.world.sources.filter(b => b.cls === 'star'));
-    this.overlays.update(this.visual, this.hostOf, this.hillOf, this.flags, this.selected,
-      b => this.bodies.map.get(b)?.hidden ?? false);
-    this.overlays.updateFlashes(now / 1000);
-    this.updateLens(holes);
+    this.view.setCentre(this.centre(), dtReal);
+    this.view.render({
+      bodies: this.world.bodies, visual: this.visual, sources: this.world.sources,
+      hostOf: this.hostOf, hillOf: this.hillOf, flags: this.flags, selected: this.selected, focus: this.focus,
+      dtSim: got, dtReal, timeReal: now / 1000, simTime: this.world.time,
+    });
     this.updateLabels();
     this.onFrame();
-    this.view.render();
-  }
-
-  private updateLens(holes: Body[]) {
-    const u = this.view.lens.uniforms;
-    const cam = this.view.camera;
-    const k = 1 / (2 * Math.tan((cam.fov * Math.PI) / 360));
-    const list: { uv: [number, number]; e2: number; sh: number }[] = [];
-    const v = new THREE.Vector3();
-    for (const h of holes) {
-      this.view.toScene(h, v);
-      const D = v.distanceTo(cam.position);
-      const p = this.view.project(v);
-      if (p.behind) continue;
-      const rs = schwarzschild(h.m);
-      const thetaE = Math.sqrt((2 * rs) / D) * k;
-      const shadow = ((2.6 * rs) / D) * k;
-      list.push({ uv: [p.x / this.view.width, 1 - p.y / this.view.height], e2: thetaE * thetaE, sh: shadow });
-    }
-    list.sort((a, b) => b.e2 - a.e2);
-    const n = Math.min(4, list.length);
-    for (let i = 0; i < n; i++) u.uHoles.value[i].set(list[i].uv[0], list[i].uv[1], list[i].e2, list[i].sh);
-    u.uN.value = n;
-    this.view.lens.enabled = n > 0;
   }
 
   private updateLabels() {
     const seen = new Set<Body>();
     if (this.flags.labels) {
       const placed: [number, number][] = [];
-      const vis = [...this.bodies.map.values()].filter(v => v.onScreen && !v.hidden && v.body.cls !== 'debris' && v.sx > -50 && v.sx < this.view.width + 50 && v.sy > -20 && v.sy < this.view.height + 20);
-      vis.sort((a, b) => (b.body === this.selected ? 1 : 0) - (a.body === this.selected ? 1 : 0) || b.body.m - a.body.m);
-      for (const v of vis) {
-        const x = v.sx + Math.max(4, v.spx) + 5, y = v.sy;
+      const Wc = this.view.W * PIX, Hc = this.view.H * PIX;
+      const vis = this.view.drawn.filter(d => !d.hidden && d.b.cls !== 'debris' && d.sx * PIX > -50 && d.sx * PIX < Wc + 50 && d.sy * PIX > -20 && d.sy * PIX < Hc + 20);
+      vis.sort((a, b) => (b.b === this.selected ? 1 : 0) - (a.b === this.selected ? 1 : 0) || b.b.m - a.b.m);
+      for (const d of vis) {
+        const x = (d.sx + d.r + 3) * PIX, y = d.sy * PIX;
         if (placed.some(([px, py]) => Math.abs(px - x) < 60 && Math.abs(py - y) < 13)) continue;
         placed.push([x, y]);
-        seen.add(v.body);
-        let el = this.labelEls.get(v.body);
+        seen.add(d.b);
+        let el = this.labelEls.get(d.b);
         if (!el) {
           el = document.createElement('div');
           el.className = 'lbl';
-          const b = v.body;
+          const b = d.b;
           el.addEventListener('click', () => this.select(b));
           el.addEventListener('dblclick', () => this.follow(b));
           this.labelRoot.appendChild(el);
-          this.labelEls.set(v.body, el);
+          this.labelEls.set(d.b, el);
         }
-        if (el.textContent !== v.body.name) el.textContent = v.body.name;
+        if (el.textContent !== d.b.name) el.textContent = d.b.name;
         el.style.left = `${x}px`;
         el.style.top = `${y}px`;
-        el.classList.toggle('sel', v.body === this.selected);
+        el.classList.toggle('sel', d.b === this.selected);
         el.style.display = '';
       }
     }
@@ -350,4 +313,3 @@ export class App {
     requestAnimationFrame(this.loop);
   };
 }
-

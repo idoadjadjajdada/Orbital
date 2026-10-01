@@ -57,11 +57,11 @@ try {
   ok('iPad: a system loads from the menu by touch', await t.evaluate(() => window.orbital.presetKey === 'saturn'));
   const cdp = await ipad.newCDPSession(t);
   const touch = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts.map((q, i) => ({ x: q[0], y: q[1], id: i })) });
-  const d0 = await t.evaluate(() => window.orbital.view.distGoal);
+  const d0 = await t.evaluate(() => window.orbital.view.scale);
   await touch('touchStart', [[500, 400], [700, 400]]);
   for (let k = 1; k <= 6; k++) await touch('touchMove', [[500 - 20 * k, 400], [700 + 20 * k, 400]]);
   await touch('touchEnd', []);
-  ok('iPad: pinching zooms', await t.evaluate(d => window.orbital.view.distGoal < d, d0));
+  ok('iPad: pinching zooms', await t.evaluate(d => window.orbital.view.scale > d, d0));
   ok('iPad: no errors', terrs.length === 0, terrs.join(' | '));
   await ipad.close();
 } finally {

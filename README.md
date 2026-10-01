@@ -14,9 +14,15 @@ npm run test:browser   # smoke test in Chromium, desktop and iPad, after a build
 python3 tools/fetch-moons.py   # refresh the moon table from JPL
 ```
 
-Runs in any current browser with WebGL2, iPad Safari included: touch to
-throw and select, double-tap to follow, pinch to zoom, two fingers to pan.
-Resolution adapts to the frame rate.
+Runs in any current browser, iPad Safari included: touch to throw and
+select, double-tap to follow, pinch to zoom, drag to slide the view.
+
+The view is a flat, top-down pixel-art map. The physics underneath is fully
+3D — tilted orbits, ring planes and moons on their planets' equators are all
+there, seen from above. Each body's surface is baked once into a map in its
+own turning frame and shaded every frame as a sphere lit from the real
+direction of its star, in a few dithered steps; rings are traced against
+their measured profiles and shadow the planet and are shadowed by it.
 
 ## Playing
 
@@ -26,9 +32,8 @@ Resolution adapts to the frame rate.
 | Tap space with a body picked | drop it into a circular orbit (**Auto-orbit**) or at rest |
 | Tap a body · double-tap | select · follow it with the camera |
 | Drag a body | pick it up; let go and it keeps your hand's speed |
-| Drag empty space / right-drag | turn the view |
-| Shift-drag, middle-drag, two fingers | pan |
-| Scroll / pinch | zoom |
+| Drag empty space, two fingers | slide the view |
+| Scroll / pinch / `+` `−` | zoom |
 | `Space` `[` `]` | pause · slower · faster |
 | `T` `O` `Z` `L` `A` | trails · orbits · zones · labels · auto-orbit |
 | `F` `Esc` `Del` `1`–`9` | follow · deselect · delete · pick from the shelf |
@@ -189,14 +194,15 @@ holes; and a rogue planet, ʻOumuamua, a primordial black hole and TON 618.
 - The 1PN term is the test-particle form, exact for periapsis advance; it does
   not include frame-dragging or the full Einstein–Infeld–Hoffmann terms.
 - Stellar evolution is single-star and parametric, not a stellar-structure code.
-- Gravitational lensing is drawn as a point lens in screen space; it bends the
-  whole image, including anything in front of the hole.
+- Gravitational lensing is drawn as a point lens on the finished image, as if
+  seen from a height equal to the view's width; it bends everything near the
+  hole, including what is in front of it.
 
 ## Layout
 
 ```
 src/physics/   integrator, forces, collisions, stars, presets — no DOM, fully tested
-src/render/    three.js scene, shaders, overlays
+src/pixel/     pixel-art renderer: surface maps, sprites, rings, particles, lensing
 src/physics/data/moons.ts   generated from JPL by tools/fetch-moons.py
 src/ui/        input, HUD, the belt histogram
 tests/         physics.test.ts (vitest), browser.mjs (Playwright smoke test)
