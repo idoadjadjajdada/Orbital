@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { Body, Style } from '../physics/body';
 import { blackbody } from '../physics/stellar';
 import { schwarzschild } from '../physics/units';
-import { BODY_VERT, PLANET_FRAG, STAR_FRAG, RING_VERT, RING_FRAG, ATMO_FRAG } from './shaders';
+import { BODY_VERT, PLANET_FRAG, STAR_FRAG, RING_VERT, RING_FRAG, ATMO_FRAG, JET_VERT, JET_FRAG } from './shaders';
 import type { View } from './view';
 
 const STYLE_ID: Record<Style, number> = {
@@ -86,10 +86,20 @@ export function planetMaterial(b: Pick<Body, 'look' | 'heat'>, ambient = 0.012) 
       uHeat: { value: b.heat },
       uTime: { value: 0 },
       uAmbient: { value: ambient },
+      uCraters: { value: Array.from({ length: 32 }, () => new THREE.Vector4()) },
+      uCraterHot: { value: new Array(32).fill(0) },
+      uNCraters: { value: 0 },
+      uRingKind: { value: 0 },
+      uRingN: { value: new THREE.Vector3(0, 0, 1) },
+      uCenter: { value: new THREE.Vector3() },
+      uRadius: { value: 1 },
+      uRingIn: { value: 0 }, uRingOut: { value: 0 }, uRingScale: { value: 1 },
       ...lights,
     },
   });
 }
+
+const RING_KIND = { saturn: 1, uranus: 2, neptune: 3, jupiter: 4 } as const;
 
 export function starMaterial(teff: number, giant: boolean, seed: number) {
   return new THREE.ShaderMaterial({
@@ -113,6 +123,11 @@ export class BodyVisual {
   ring?: THREE.Mesh;
   glow?: THREE.Sprite;
   beams?: THREE.Group;
+  jets?: THREE.Group;
+  /** smoothed accretion rate, M☉/yr, and the jet power it drives (0..1) */
+  accRate = 0;
+  jetPower = 0;
+  private craterLocal = new Map<object, THREE.Vector3>();
   spin = 0;
   style: Style;
   /** displayed radius this frame, scene units */
@@ -168,8 +183,10 @@ export class BodyVisual {
       const m = new THREE.ShaderMaterial({
         vertexShader: RING_VERT, fragmentShader: RING_FRAG, transparent: true, depthWrite: false, side: THREE.DoubleSide,
         uniforms: {
-          uColor: { value: col3(L.rings.color).convertSRGBToLinear() }, uOpacity: { value: L.rings.opacity },
-          uSeed: { value: (L.seed % 100) * 0.1 }, uPlanetPos: { value: new THREE.Vector3() }, uPlanetR: { value: 1 }, ...lights,
+          uColor: { value: col3(L.rings.color).convertSRGBToLinear() }, uOpacity: { value: L.rings.kind ? 1 : L.rings.opacity },
+          uSeed: { value: (L.seed % 100) * 0.1 }, uPlanetPos: { value: new THREE.Vector3() }, uPlanetR: { value: 1 },
+          uInner: { value: L.rings.inner }, uOuter: { value: L.rings.outer }, uKind: { value: L.rings.kind ? RING_KIND[L.rings.kind] : 0 },
+          ...lights,
         },
       });
       this.ring = new THREE.Mesh(g, m);
@@ -180,6 +197,23 @@ export class BodyVisual {
         map: glowTexture(), blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true, transparent: true,
       }));
       this.group.add(this.glow);
+    }
+    if (b.cls === 'bh' || b.cls === 'ns') {
+      // jets: two cones along the spin axis, set by what the hole is fed
+      this.jets = new THREE.Group();
+      const g = new THREE.CylinderGeometry(0.06, 0.0, 1, 24, 24, true);
+      g.translate(0, 0.5, 0);
+      const mat = new THREE.ShaderMaterial({
+        vertexShader: JET_VERT, fragmentShader: JET_FRAG, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+        uniforms: { uTime: { value: 0 }, uPower: { value: 0 }, uColor: { value: new THREE.Color(0.55, 0.7, 1.0) } },
+      });
+      for (const sgn of [1, -1]) {
+        const c = new THREE.Mesh(g, mat);
+        if (sgn < 0) c.rotation.x = Math.PI;
+        this.jets.add(c);
+      }
+      this.jets.visible = false;
+      this.group.add(this.jets);
     }
     if (L.pulsar) {
       this.beams = new THREE.Group();
@@ -203,6 +237,30 @@ export class BodyVisual {
   rebuildIfNeeded() {
     if (this.body.look.style === this.style) return false;
     return true;
+  }
+
+  /** Craters live in the body's own turning frame: fix each one there the first time it is seen. */
+  updateCraters(now: number) {
+    const b = this.body;
+    const mat = this.mesh.material as THREE.ShaderMaterial;
+    if (!mat.uniforms?.uCraters) return;
+    if (!b.craters.length) { mat.uniforms.uNCraters.value = 0; return; }
+    this.mesh.updateMatrixWorld();
+    const inv = new THREE.Quaternion();
+    this.mesh.getWorldQuaternion(inv).invert();
+    const live = new Set<object>(b.craters);
+    for (const k of this.craterLocal.keys()) if (!live.has(k)) this.craterLocal.delete(k);
+    const list = [...b.craters].sort((x, y) => y.a - x.a).slice(0, 32);
+    const gas = b.cls === 'gas';
+    list.forEach((c, i) => {
+      let d = this.craterLocal.get(c);
+      if (!d) { d = new THREE.Vector3(c.x, c.y, c.z).applyQuaternion(inv).normalize(); this.craterLocal.set(c, d); }
+      mat.uniforms.uCraters.value[i].set(d.x, d.y, d.z, c.a);
+      // fresh melt glows for a while; a scar in a giant's clouds is smeared out in weeks
+      const age = now - c.t;
+      mat.uniforms.uCraterHot.value[i] = gas ? Math.exp(-age / 0.08) : Math.exp(-age / Math.max(0.002, 3 * c.a));
+    });
+    mat.uniforms.uNCraters.value = list.length;
   }
 
   dispose() {
@@ -259,7 +317,7 @@ export class BodyLayer {
     lights.uNLights.value = n;
   }
 
-  update(dtSim: number, timeReal: number, hostOf: (b: Body) => Body | null) {
+  update(dtSim: number, timeReal: number, hostOf: (b: Body) => Body | null, simTime = 0, dtReal = 1 / 60) {
     const cam = this.view.camera.position;
     for (const v of this.map.values()) {
       const b = v.body;
@@ -296,6 +354,36 @@ export class BodyLayer {
         rm.uniforms.uPlanetPos.value.copy(v.scenePos);
         rm.uniforms.uPlanetR.value = v.rVis;
         v.ring.scale.setScalar(v.rVis);
+        if (mat.uniforms?.uRingKind && b.look.rings) {
+          mat.uniforms.uRingKind.value = rm.uniforms.uKind.value || 5;
+          mat.uniforms.uRingN.value.set(0, 0, 1).applyQuaternion(v.tilt.getWorldQuaternion(new THREE.Quaternion()));
+          mat.uniforms.uCenter.value.copy(v.scenePos);
+          mat.uniforms.uRadius.value = v.rVis;
+          mat.uniforms.uRingIn.value = b.look.rings.inner;
+          mat.uniforms.uRingOut.value = b.look.rings.outer;
+          mat.uniforms.uRingScale.value = rm.uniforms.uOpacity.value;
+        }
+      }
+      v.updateCraters(simTime);
+      if (v.jets) {
+        // what fell in this step, against the Eddington rate (2.2×10⁻⁸ M☉/yr per M☉ at 10% efficiency)
+        const inst = dtSim > 0 ? b.swallowed / dtSim : 0;
+        b.swallowed = 0;
+        v.accRate += (inst - v.accRate) * Math.min(1, dtReal * 1.5);
+        const edd = 2.2e-8 * b.m;
+        const want = v.accRate > 0 ? Math.max(0, Math.min(1, (Math.log10(v.accRate / edd) + 4) / 4)) : 0;
+        v.jetPower += (want - v.jetPower) * Math.min(1, dtReal * 2);
+        v.jets.visible = v.jetPower > 0.02;
+        if (v.jets.visible) {
+          const Ln = Math.hypot(b.lx, b.ly, b.lz);
+          const ax = Ln > 0 ? new THREE.Vector3(b.lx / Ln, b.ly / Ln, b.lz / Ln) : new THREE.Vector3(0, 0, 1);
+          v.jets.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), ax);
+          const len = Math.max(3000 * schwarzschild(b.m), 140 * pw) * (0.4 + v.jetPower);
+          v.jets.scale.set(len, len, len);
+          const jm = (v.jets.children[0] as THREE.Mesh).material as THREE.ShaderMaterial;
+          jm.uniforms.uTime.value = timeReal;
+          jm.uniforms.uPower.value = v.jetPower;
+        }
       }
       if (v.glow) {
         const L = b.star?.L ?? 0;

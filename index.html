@@ -3,6 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#000000" />
   <title>Orbital</title>
   <meta name="description" content="An n-body gravity sandbox at real scale: real masses, real distances, real physics." />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='5' fill='%23ffd27a'/%3E%3Cellipse cx='16' cy='16' rx='14' ry='6' fill='none' stroke='%239fb8ff' stroke-width='2' transform='rotate(-25 16 16)'/%3E%3C/svg%3E" />
@@ -52,7 +56,6 @@
     <dl id="iStats"></dl>
     <div class="row iact">
       <button class="chip" id="iFollow">Follow</button>
-      <button class="chip" id="iAge" hidden>Age to next stage</button>
       <button class="chip danger" id="iDelete">Delete</button>
     </div>
   </aside>
@@ -88,7 +91,7 @@
     <table>
       <tr><td>Pick a body below, then drag from space</td><td>throw it — the dotted line is its real future path</td></tr>
       <tr><td>Tap space with a body picked</td><td>drop it into a circular orbit (Auto-orbit) or at rest</td></tr>
-      <tr><td>Tap a body</td><td>select it · double-tap to follow it</td></tr>
+      <tr><td>Tap a body</td><td>select it · double-tap (or Follow) to ride along with it</td></tr>
       <tr><td>Drag a body</td><td>pick it up; let go and it keeps your hand's speed</td></tr>
       <tr><td>Drag empty space / right-drag</td><td>turn the view</td></tr>
       <tr><td>Shift-drag, middle-drag, two fingers</td><td>pan</td></tr>
@@ -97,7 +100,7 @@
       <tr><td><kbd>T</kbd> <kbd>O</kbd> <kbd>Z</kbd> <kbd>L</kbd> <kbd>A</kbd></td><td>trails · orbits · zones · labels · auto-orbit</td></tr>
       <tr><td><kbd>F</kbd> <kbd>Esc</kbd> <kbd>Del</kbd> <kbd>1</kbd>–<kbd>9</kbd></td><td>follow · deselect · delete · pick from shelf</td></tr>
     </table>
-    <p>Everything is at real scale. Bodies are drawn at their true size once you are close enough, and never smaller than a few pixels.</p>
+    <p>Everything is at real scale and real time. Bodies are drawn at their true size once you are close enough, and never smaller than a few pixels. Nothing is skipped: rings settle, discs drain and stars die only as fast as the clock runs.</p>
   </div>
 
   <div class="toasts" id="toasts"></div>

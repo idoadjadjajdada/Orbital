@@ -4,9 +4,9 @@ import type { Body } from './physics/body';
 import { assignHosts, hostOfPoint } from './physics/analysis';
 import { buildPreset, PRESETS } from './physics/presets';
 import { makeBody, refreshRoche } from './physics/catalog';
-import { G, M_EARTH, fmtDuration, schwarzschild, radiusFromDensity } from './physics/units';
+import { G, M_EARTH, schwarzschild, radiusFromDensity } from './physics/units';
 import { predict } from './physics/predict';
-import { newStar, structure, teffOf, timeToNextStage } from './physics/stellar';
+import { newStar, structure, teffOf } from './physics/stellar';
 import { View } from './render/view';
 import { BodyLayer } from './render/bodies';
 import { ParticleLayer } from './render/particles';
@@ -64,10 +64,22 @@ export class App {
 
   get warp() { return Math.pow(10, this.warpLog); }
 
+  /** bodies drawn as bodies: everything that pulls, and the small moons and machines that do not */
+  visual: Body[] = [];
+  private testHosts = new Map<Body, Body | null>();
+  private frameNo = 0;
+
   hostOf = (b: Body): Body | null => {
     const h = this.hosts.get(b);
     if (h) return h.host;
-    if (!b.source) return hostOfPoint([b.x, b.y, b.z], [b.vx, b.vy, b.vz], this.world.sources, this.hosts);
+    if (!b.source) {
+      let t = this.testHosts.get(b);
+      if (t === undefined || (b.id + this.frameNo) % 16 === 0) {
+        t = hostOfPoint([b.x, b.y, b.z], [b.vx, b.vy, b.vz], this.world.sources, this.hosts);
+        this.testHosts.set(b, t);
+      }
+      return t;
+    }
     return null;
   };
   hillOf = (b: Body) => this.hosts.get(b)?.hill ?? Infinity;
@@ -147,16 +159,6 @@ export class App {
     this.world.structural();
   }
 
-  ageSelected() {
-    const b = this.selected;
-    if (!b?.star) return;
-    const dt = timeToNextStage(b.star);
-    if (!isFinite(dt)) return;
-    // stop just short, so the transition itself is something you watch
-    b.star.age += Math.max(0, dt * 0.9995 - 50);
-    this.onToast(`${b.name} aged ${fmtDuration(dt)} — a skip in its clock, not a physical process`);
-  }
-
   /** A new body from the armed catalogue entry or the forge. */
   spawnArmed(): Body | null {
     if (!this.armed) return null;
@@ -227,6 +229,7 @@ export class App {
 
   frame() {
     const now = performance.now();
+    this.view.adapt(now - this.lastFrame);
     const dtReal = Math.min(0.1, (now - this.lastFrame) / 1000);
     this.lastFrame = now;
 
@@ -260,23 +263,26 @@ export class App {
         collapse: `${name ?? 'A core'} collapsed into a black hole`,
         nebula: `${name ?? 'A giant'} shed its envelope as a planetary nebula`,
         disrupt: name ?? 'Torn apart by tides',
-        impact: 'Catastrophic impact', merge: name ?? 'Merger', graze: 'Hit-and-run', swallow: 'Swallowed',
+        impact: 'Catastrophic impact', merge: name ?? 'Merger', crater: '', graze: 'Hit-and-run', swallow: 'Swallowed',
       }[e.kind];
       if (msg && (e.energy > 0.3 || e.kind !== 'merge')) this.onToast(msg);
     }
     this.world.events.length = 0;
 
+    this.frameNo++;
     this.hosts = assignHosts(this.world.sources);
-    this.bodies.sync(this.world.sources);
+    this.visual = this.world.bodies.filter(b => b.alive && (b.source || !b.isParticle));
+    if (this.frameNo % 120 === 0) for (const b of this.testHosts.keys()) if (!b.alive) this.testHosts.delete(b);
+    this.bodies.sync(this.visual);
 
     const c = this.centre();
     this.view.origin = c;
     this.view.updateCamera(dtReal);
     this.bodies.updateLights(this.world.sources);
-    this.bodies.update(got, now / 1000, this.hostOf);
+    this.bodies.update(got, now / 1000, this.hostOf, this.world.time, dtReal);
     const holes = this.world.sources.filter(b => b.cls === 'bh');
-    this.particles.update(this.world.bodies, holes);
-    this.overlays.update(this.world.sources, this.hostOf, this.hillOf, this.flags, this.selected,
+    this.particles.update(this.world.bodies, this.world.sources.filter(b => b.compact), this.world.sources.filter(b => b.cls === 'star'));
+    this.overlays.update(this.visual, this.hostOf, this.hillOf, this.flags, this.selected,
       b => this.bodies.map.get(b)?.hidden ?? false);
     this.overlays.updateFlashes(now / 1000);
     this.updateLens(holes);

@@ -22,6 +22,8 @@ export class Input {
   private pinch = { d: 0, a: 0, mx: 0, my: 0 };
   private spaceDown = false;
   private handHist: { t: number; p: THREE.Vector3 }[] = [];
+  /** iOS never fires dblclick for touch: double taps are found here */
+  private lastTap = { t: 0, x: 0, y: 0, b: null as Body | null };
 
   constructor(private app: App, private canvas: HTMLCanvasElement) {
     canvas.addEventListener('pointerdown', e => this.down(e));
@@ -35,6 +37,9 @@ export class Input {
     });
     canvas.addEventListener('contextmenu', e => e.preventDefault());
     window.addEventListener('keydown', e => this.key(e));
+    // Safari's own pinch-zoom and double-tap-zoom would fight the view's
+    for (const ev of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(ev, e => e.preventDefault(), { passive: false } as AddEventListenerOptions);
+    document.addEventListener('dblclick', e => { if (e.target !== canvas) e.preventDefault(); }, { passive: false });
     window.addEventListener('keyup', e => { if (e.code === 'Space') this.spaceDown = false; });
   }
 
@@ -139,7 +144,19 @@ export class Input {
     switch (this.mode) {
       case 'press-body': {
         const b = this.pressBody;
-        this.app.select(this.app.selected === b ? null : b);
+        const now = performance.now();
+        const lt = this.lastTap;
+        if (e.pointerType !== 'mouse' && b && lt.b === b && now - lt.t < 350 && Math.hypot(lt.x - this.start.x, lt.y - this.start.y) < 30) {
+          // double tap: follow it
+          this.app.select(b);
+          this.app.follow(b);
+          this.lastTap.b = null;
+        } else {
+          this.app.select(this.app.selected === b ? null : b);
+          this.lastTap = { t: now, x: this.start.x, y: this.start.y, b };
+          // a single tap on a touch screen should not deselect what the second tap meant to follow
+          if (e.pointerType !== 'mouse' && this.app.selected !== b) this.app.select(b);
+        }
         break;
       }
       case 'grab': this.dropHeld(); break;
