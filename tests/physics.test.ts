@@ -202,7 +202,7 @@ describe('tides', () => {
     run(w, 1e-4, 1e-6);
     expect(comet.alive).toBe(false);
     expect(w.particleCount).toBeGreaterThan(50);
-    const total = w.bodies.reduce((s, b) => s + b.m, 0);
+    const total = w.bodies.reduce((s, b) => s + (b.alive ? b.m : 0), 0);
     expect(total / m0).toBeCloseTo(1, 12);
   });
 });
@@ -360,7 +360,8 @@ describe('events', () => {
     expect(w.sources.find(b => b.name === 'Theia')).toBeUndefined();
     const orbiting = w.bodies.filter(b => b !== E && b.name !== 'Sun' && b.alive);
     expect(orbiting.length).toBeGreaterThan(10);
-    const m1 = w.bodies.reduce((s, b) => s + b.m, 0);
+    // bodies merged away in the last step are only swept out at the start of the next
+    const m1 = w.bodies.reduce((s, b) => s + (b.alive ? b.m : 0), 0);
     expect(Math.abs(m1 / m0 - 1)).toBeLessThan(1e-9);
   });
 
