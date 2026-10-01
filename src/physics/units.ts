@@ -40,9 +40,10 @@ export function fmtMass(m: number): string {
   return `${(m * MSUN_KG).toExponential(2)} kg`;
 }
 
-export function fmtLength(r: number): string {
-  if (r >= 0.05) return `${sig(r)} AU`;
-  if (r >= 0.5 * R_SUN) return `${sig(r / R_SUN)} R☉`;
+/** A distance in AU, km or m; `solar` prefers solar radii for star-sized things. */
+export function fmtLength(r: number, solar = false): string {
+  if (solar && r >= 0.5 * R_SUN && r < 2) return `${sig(r / R_SUN)} R☉`;
+  if (r >= 0.01) return `${sig(r)} AU`;
   if (r * AU_M >= 1e3) return `${sig(r / KM)} km`;
   return `${sig(r * AU_M)} m`;
 }

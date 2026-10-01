@@ -1,597 +1,135 @@
 # Orbital
 
-An n-body gravity sandbox that runs in one HTML file. Fling worlds into orbit
-and let the maths do the rest — slingshots, capture, decaying orbits,
-collisions that merge. No goals, no progression, nothing to grind.
+An n-body gravity sandbox at real scale. The masses, distances, radii and
+lifetimes are the real ones, gravity is integrated without fudge factors, and
+what happens when things collide, pass too close or run out of fuel follows
+published physics rather than tuned effects.
 
-Open `index.html`. That's the whole install.
+```
+npm install
+npm run dev        # http://localhost:5173
+npm test           # physics tests (vitest)
+npm run build      # static site in dist/
+npm run test:browser   # smoke test in Chromium, after a build
+```
 
 ## Playing
 
 | | |
 |---|---|
-| Drag from empty space | fling a new body; the dotted line is where it will actually go |
-| Tap empty space | with **Auto-orbit** on, drops the body straight into a circular orbit |
-| Tap a body | select it — see its mass, speed, what it orbits and its period |
-| **Drag** on, then drag a body | pick it up and move it; let go and it carries the speed your hand had |
-| Tap a body again, `Esc`, or the panel's ✕ | put it down — three ways out of a selection |
-| Tap nothing with something selected | also puts it down, instead of dropping a world |
+| Pick a body on the shelf, drag from space | throw it — the dotted line is its real future path, integrated with the rest of the system |
+| Tap space with a body picked | drop it into a circular orbit (**Auto-orbit**) or at rest |
+| Tap a body · double-tap | select · follow it with the camera |
+| Drag a body | pick it up; let go and it keeps your hand's speed |
+| Drag empty space / right-drag | turn the view |
+| Shift-drag, middle-drag, two fingers | pan |
 | Scroll / pinch | zoom |
-| Two-finger drag, middle-drag, or space+drag | pan |
-| Tap the lit world in the picker | put it out. With nothing lit, an empty press places nothing |
-| Tap a shelf in the picker | Small · Worlds · Giants · Stars · Remnants |
-| `1`–`9` | pick a body off the shelf on show, or the same one again to put it out |
-| `Space` `C` `T` `D` `F` `G` `O` `Z` `A` | pause · clear · trails · drag · fit · forge · orbits · zones · aging |
+| `Space` `[` `]` | pause · slower · faster |
+| `T` `O` `Z` `L` `A` | trails · orbits · zones · labels · auto-orbit |
+| `F` `Esc` `Del` `1`–`9` | follow · deselect · delete · pick from the shelf |
 
-Built for desktop and iPad: one finger draws and flings, two fingers pinch and
-pan, and a mouse wheel zooms about the cursor.
+The clock says what it is actually doing. If the integrator cannot keep up
+with the speed you asked for — a moon on a two-day orbit needs thousands of
+steps a year — the readout shows the rate it is really achieving. Accuracy is
+never traded for speed.
 
-## What it does
+## The physics
 
-**The clock tells you what you are watching**, not what the slider is set to.
-A multiplier is a number about the sim; what a year costs is the thing worth
-knowing. Every system declares its own scale by naming one orbit in it whose
-real period is known, so the readout is honest in a system that is neither ours
-nor at our distances — and the unit steps down as you slow the clock, through
-years, months, days and hours, because 0.003 yr/s is a true statement nobody
-can read. The top of the track buys about a year a second in our system; the
-same setting in TRAPPIST-1 buys about five days, because its worlds go round
-in days.
+**Units.** AU, Julian years, solar masses; G is the Gaussian constant, so GM☉
+is exact. Nothing is rescaled: Jupiter is 1/1047 of the Sun, the Moon is
+384,400 km from the Earth, a neutron star is 24 km across.
 
-**Every stable orbit can be outlined** — the ellipse it is going to keep,
-drawn before it has been round even once. A trail is where a world has been;
-this is where it is going, and the two together are what make a resonance
-legible: three moons whose rings sit still while the moons move is the whole
-of the Laplace resonance in one picture, and you would otherwise have to sit
-and count laps to see it. It is the orbit the two-body problem says it has, so
-it is exactly right for a planet round a star and only nearly right for
-anything being pulled hard by a third thing — where the ellipse visibly drifts,
-the orbit really is being perturbed. Nothing is drawn where there is no orbit:
-escaping, near-radial, a periapsis underneath the host's own surface, or a body
-heavier than the thing it is supposedly going round all disqualify it, and each
-of those is a case where an ellipse would be a claim about to break.
+**Gravity** is integrated with a fourth-order Hermite predictor–corrector on
+individual block time steps (Makino & Aarseth 1992), with the corrector iterated
+to near time-symmetry (Kokubo, Yoshinaga & Makino 1998). Every body takes its
+own power-of-two step from its own acceleration and derivatives, so Io steps
+thousands of times a year while Neptune steps a few times, and an asteroid belt
+never pays for the moons. There is no softening. Energy is conserved to about
+1e-9 per orbit on circular orbits and better than 1e-6 over thirty orbits at
+e = 0.95.
 
-**A tide does more than pull things apart.** The bulge one raises is carried a
-little past the line to whatever raised it, and a pull on an offset bulge is a
-torque — one that only ever runs toward turning once per orbit. Every large
-moon in our system has already lost that argument, which is why we have only
-ever seen one face of ours. The turn it loses is friction inside a body, so it
-comes out as heat.
+**Relativity.** The leading post-Newtonian correction is a 1/r³ potential term
+(Nobili & Roxburgh 1986) that reproduces the periapsis advance
+6πGM/(c²a(1−e²)) — Mercury's 43″ a century, S2's 12′ an orbit. Compact objects
+lose orbital energy to gravitational waves at the Peters (1964) rate, so two
+black holes spiral together on the timescale the formula predicts and merge,
+radiating ~5% of their mass.
 
-And locking is not the end of it. A locked body turns at one steady rate while
-its orbital rate changes round an eccentric orbit, so it is flexed twice a lap
-and can never stop. **That is why Io is molten**, and it is why Io is molten
-here: the Laplace resonance will not let it circularise, so the flexing has
-nowhere to stop. Ganymede, further out, cools. Take the other two moons away
-and Io goes cold — nothing about it is painted on.
+**Collisions** are resolved by regime (Leinhardt & Stewart 2012): a slow
+impact merges, a grazing one is a hit-and-run in which both survive, and a
+violent one leaves a largest remnant given by the universal law, with the rest
+thrown out above escape speed. Debris worth more than a percent of the remnant
+is spawned as self-gravitating fragments that pull each other and can re-form
+moons; lighter debris is a swarm of test particles. Anything that hits a star
+or a compact object is swallowed; anything inside three Schwarzschild radii of
+a black hole has no stable orbit left and falls in.
 
-**Stars run out.** Brightness goes as about M^3.5 and the fuel only goes as M,
-so the time a star lasts goes as M^-2.5: one twice the Sun's mass is eleven
-times as bright and lasts a fifth as long, and the heavy ones are the ones that
-die while you are watching. A star that reaches the end of its hydrogen swells
-into a red giant at exactly the mass it always had — anything close enough is
-then simply inside it — drifts its envelope off as a planetary nebula, and
-leaves the core that was holding it up.
+**Tides.** A body inside the Roche limit of something much heavier — 2.44 for
+fluid bodies, ~1.5 for rubble — comes apart, and the pieces keep the spin and
+orbit it had. The stream that follows is the tidal tail, not a drawing of one;
+a star at Sgr A* becomes a tidal disruption event the same way.
 
-How much of itself it leaves is not a constant. The heavier it was, the more of
-it goes, which is why nothing that dies this way arrives anywhere near the
-Chandrasekhar limit and a white dwarf has to be fed by something else to get
-there.
+**Stars** follow fitted relations for mass, luminosity, radius and lifetime
+(L ∝ M⁴ near a solar mass, lifetime ∝ M/L, the Sun calibrated to 0.7 L☉ at
+birth and 1 L☉ at 4.6 Gyr), then a giant branch that swells and sheds its
+envelope as a dust-driven wind. Below 8 M☉ they leave a white dwarf on the
+Kalirai initial–final mass relation and a planetary nebula; up to 25 M☉ a
+core-collapse supernova leaves a kicked neutron star; above that a black hole,
+directly and quietly above 40 M☉. A white dwarf fed past 1.38 M☉ detonates and
+leaves nothing; a neutron star past 2.3 M☉ collapses. Starlight pushes on gas
+and dust, which is why a comet's tail points away from its star.
 
-Stellar time is compressed and that is the one number here doing it. Ten
-billion years would be 10^13 sim-seconds: at the fastest this clock runs you
-would wait three centuries for one star to finish. At the top of the speed
-track a Sun lasts about a minute and a half instead; at ordinary speeds nothing
-measurable happens to it, which is the point.
+## Real scale, honestly
 
-**The habitable zone follows from the brightness**, so it moves outward as a
-star ages and jumps when one swells. A world can be handed a habitable zone and
-have it taken away again. Selecting anything says how much light is falling on
-it, in units of what Earth gets — Jupiter reads 0.04, which is what Jupiter
-gets.
+At true scale the Earth is 1/23,000 of an AU across — less than a pixel from
+anywhere you can see its orbit. Bodies are drawn at their **true size** when
+you are close enough and never smaller than a few pixels; a moon is hidden
+while its dot would sit on top of its planet. Nothing else is scaled.
 
-**A star can feed another one.** Swell one until it fills its own side of the
-surface where the pull of the pair changes hands, and it stops owning its outer
-layers. What leaves does so through the point between them and does not fall
-straight in — it carries the orbital motion of the star it left, so it misses,
-swings round, and winds into a disc.
+Real timescales come with real consequences:
 
-What the thing on the receiving end does about that depends on what it is.
-A white dwarf piles hydrogen on its surface until the bottom of the pile fuses,
-and then the layer goes all at once: a **nova**, which throws off roughly what
-it took on and leaves the star otherwise unchanged, ready to do it again. Feed
-it past Chandrasekhar and it does something else entirely. A white dwarf is not
-a core sitting inside a star, it is the whole object and it is made of fuel, so
-it does not collapse — it detonates, all of it, and leaves **nothing at all
-behind**. That is the real difference between the two kinds of supernova, and
-the collapse already here is the other one.
+- **Collisions are rare.** Planets are tiny targets. The aim line marks an
+  impact when the path you are drawing hits something.
+- **Stars live for billions of years.** The catalogue's dying giant and red
+  supergiant are placed near the end of their lives so the end is something
+  you can watch, and **Age to next stage** skips a star's clock forward. That
+  is a jump in its age, not a physical process, and it says so.
+- **Kirkwood gaps take ~10⁴–10⁵ years to open**, and only in semi-major axis —
+  a top-down view of the belt never shows them. The Kirkwood system adds a
+  histogram of the belt by semi-major axis with Jupiter's resonances marked.
+  At the ~30 yr/s a laptop manages, expect several minutes of running.
 
-**Orbits leak.** Two things going round each other radiate gravitational waves
-and the orbit pays for them. It is hopeless for anything ordinary — Earth's
-orbit loses about a proton's width a day — but it goes as 1/r^5, so for two
-dense things in a close orbit it stops being hopeless and becomes the only
-thing happening. It runs away at the end, because losing the orbit makes it
-tighter and a tighter orbit loses it faster.
+## Systems
 
-**And the ellipse does not quite close.** There is a further pull going as
-1/r^4, and what it does to a bound orbit is walk the whole thing slowly round.
-Mercury does it by 43 arcseconds a century and it took general relativity to
-say why. With the orbit outlines on you can watch it happen.
+- **Solar system** — the eight planets and Pluto at their J2000 elements
+  (Standish), Ceres, Vesta, 600 belt asteroids, and eleven moons on their real
+  orbits, tilted with their planets' equators. Triton goes backwards.
+- **TRAPPIST-1** — seven planets with Agol et al. (2021) masses, radii and
+  periods round a 0.09 M☉ dwarf. The semi-major axes come from the periods.
+- **Galilean moons** — Io, Europa and Ganymede set in the Laplace resonance
+  (λ_I − 3λ_E + 2λ_G = 180°), Callisto outside it.
+- **Kirkwood gaps** — the Sun, Mars, Jupiter, Saturn and 3,000 asteroids.
+- **Sagittarius A\*** — 4.15 million suns, S2 and five neighbours on their
+  published orbits, and a Sun-like star on a plunging orbit.
+- **Black hole merger** — two 30 M☉ holes about forty minutes from merging.
 
-**Zones** shows the rest of the invisible scaffolding: the habitable band round
-every star, the five Lagrange points of whatever is selected, its Hill sphere —
-how far out something can sit and still belong to it rather than to whatever it
-is going round — and the barycentre it and its host actually turn about. That
-last one is usually inside the larger body, which is why it looks like the
-small one is doing all the moving.
+## Limits
 
-**Five places hold station** with any pair. Three sit on the line through both
-and none of those are stable. The other two sit sixty degrees ahead and behind,
-making an equilateral triangle with the pair, and those genuinely hold: nudge
-something out of one and the Coriolis term of the rotating frame curls it back.
-Jupiter has kept two crowds of asteroids parked in its for the age of the solar
-system, and it keeps them here too — they are put in the right place with the
-right speed and nothing pins them there afterwards.
+- Test particles (belt asteroids, light debris, winds, ejecta) feel gravity but
+  exert none inside a step; their pull on the bodies they left is applied as a
+  split kick each frame, so momentum holds to second order.
+- Fragments are the smallest thing resolved: when they meet they stick.
+- The 1PN term is the test-particle form, exact for periapsis advance; it does
+  not include frame-dragging or the full Einstein–Infeld–Hoffmann terms.
+- Stellar evolution is single-star and parametric, not a stellar-structure code.
+- Gravitational lensing is drawn as a point lens in screen space; it bends the
+  whole image, including anything in front of the hole.
 
-**A star pushes as well as pulling.** Light carries momentum, and both the
-push and the pull fall off as 1/r^2 — so the ratio between them does not depend
-on distance at all. It depends only on how much surface a grain has for its
-weight, which is why it matters enormously for dust and not at all for worlds.
-Fine gas here feels about half the star's gravity back as a shove; rock
-fragments barely notice.
+## Layout
 
-That is what makes a comet's tail a tail. Nothing draws it. A comet near a star
-boils, the gas leaves, and the light that freed it then pushes it — so the tail
-points away from the star rather than backwards along the path the comet is
-travelling, which is the thing about comets that looks wrong until you know
-why. Sit one on a long orbit and it loses a little every pass, and eventually
-it does not come back.
-
-**And starlight takes atmospheres off.** Whether a world keeps its air is a
-race between two speeds that have nothing to do with each other: how fast
-starlight has the top of the atmosphere moving, and how fast it would have to
-move to leave. That is why the outcome is so lopsided — a small world close in
-loses everything and a big one further out loses nothing.
-
-Park a **hot Jupiter** close to a bright star and watch it go. It is a runaway:
-losing the envelope shrinks the planet, a smaller planet holds on less well, so
-it goes faster. What is left at the end is not a smaller giant. It is the core
-it was built around, bare and still hot — which is a different object, and one
-already in the roster under its own name. Nothing routes that transition by
-hand; a giant that has lost three quarters of itself simply is a stripped core.
-
-**A black hole's disc has an inner edge**, and it is not the horizon. Inside
-about three times it the effective potential stops having a minimum, so there
-is no stable circular orbit left to sit in — matter there stops going round and
-starts falling. Nothing is pulled harder; what is taken away is the sideways
-part of the motion, which was the part holding it up. It is the reason a real
-disc is a ring with a hole in the middle rather than a smear running all the
-way in, and putting it in roughly sextupled how fast a hole here feeds.
-
-Four systems ship with it, and two of them are about resonance.
-
-**TRAPPIST-1** is seven Earth-sized worlds round an M8 red dwarf, the whole
-system packed inside a fifth of Mercury's orbit — so it cannot be drawn at our
-distance scale, and it is not: planet b is pinned at 150 units and the rest
-scale by the real ratios between their semi-major axes. That last part is why
-the resonance does not have to be arranged. Under one dominant mass Kepler's
-third law ties period to distance, so real distance ratios hand back real
-period ratios, and the chain — 8:5, 5:3, 3:2, 3:2, 4:3, 3:2 down the line —
-falls out of the geometry instead of being imposed on it.
-
-**The Galilean moons** are the same trick and the more famous result: Io,
-Europa and Ganymede come out locked 1:2:4, and Callisto pointedly does not.
-That resonance is also why Io is molten and is drawn that way — it can never
-settle into a circular orbit, because the other two keep pulling it back out of
-one, so Jupiter flexes it twice an orbit and the friction has to go somewhere.
-
-**Kirkwood gaps** is the belt on its own with Jupiter and nothing else. Nothing
-is carved: the belt is laid down smooth, and gaps open at the radii where an
-asteroid goes round three times for Jupiter's once — and twice, and five times
-for two — because at those radii Jupiter keeps arriving at the same point in
-the orbit and the nudges add up instead of cancelling. It wants a long run at a
-high clock, and then they are simply there. The other planets are left out
-because they carve their own and it stops being clear which gap belongs to what.
-
-**Solar system** loads ours. Distances are to scale — every orbit is the real
-semi-major axis, started at its own perihelion with the perihelion speed, so
-the eccentricities are real too and Mercury's 0.21 is plainly visible. The
-eight planets carry their true masses and true sizes *relative to each other*
-(Jupiter is 11.2 Earths across because it is, and 318 Earths heavy because it
-is), the main belt sits between Mars and Jupiter where Jupiter never let a
-planet finish forming, and thirteen moons go round in the real order and the
-real directions. Triton still goes backwards. Saturn, Uranus, Jupiter and
-Neptune all have their rings, made of debris inside the Roche distance, which
-is the whole reason they are rings and not moons.
-
-Three things are not to scale and cannot be, so they are at least honest about
-which way they are wrong. **Sizes**: to scale, Earth would be a sixtieth of a
-world unit — smaller than one pixel at any zoom on offer — so bodies are drawn
-about eighty times too large, every ratio between them intact. **The Sun's
-mass**: ours is 333,000 Earths and anything past 4,200 units collapses under
-itself here, so the Sun is 3,000 and the planets are lifted twenty-fold against
-it. The price is that Jupiter pulls the Sun round a circle about a quarter the
-width of Mercury's orbit rather than a hundredth, which you can sit and watch
-it do. **Moon orbits**: a moon has to sit well inside its planet's Hill sphere,
-and the Hill sphere is set by the real distances while the planet is drawn
-eighty times too wide — so where our Moon sits sixty Earths out, this one sits
-at two, at the same fraction of the Hill radius.
-
-Twenty-eight kinds of thing on five shelves. **Small**: planetesimals,
-asteroids, comets, moons and dwarf planets. **Worlds**: rock, ice and molten,
-an iron world two thirds metal by weight, an ocean world, a super-Earth, a
-carbon world with diamond under the crust, and the bare core of a gas giant
-that parked too close to its star and lost the gas. **Giants**: gas and ice,
-a hot Jupiter puffed to twice its width by the heat, and a brown dwarf that
-never quite lit. **Stars**: a protostar still falling together, dwarf stars,
-stars, a red giant puffed to a hundred times its width at a thousandth of its
-density, and a blue supergiant. **Remnants**: white dwarfs carrying most of a
-star inside an Earth, neutron stars, pulsars, magnetars, black holes and a
-supermassive one.
-
-The blue supergiant is deliberately parked just under the mass where a star
-here collapses. Placing one is not the event — it is a loaded gun. Feed it a
-moon and it goes off.
-
-Worlds are pixel art, generated rather than drawn: every body gets a sprite
-baked from value noise, shaded against a sphere normal, coloured from a ramp.
-Rocky worlds grow continents and craters; gas giants get latitude bands warped
-by turbulence and the odd storm; stars granulate and darken toward the limb.
-The **Forge** panel puts that under your control — composition, palette, size
-and density, with a live preview. Density and size decide mass, and mass is the
-only thing gravity actually reads.
-
-Two worlds meeting mostly do not merge and mostly do not explode. Past about
-thirty degrees off centre they **clip** each other: the pixels that overlapped
-are scraped off, both survive, both get deflected, and the bigger one picks up
-most of what it tore loose on the way past.
-
-**Two worlds meeting is never resolved in one frame**, however gently they
-arrive. Both **go liquid** —
-every pixel of both worlds, molten, still carrying the speed it came in with —
-and from there it is only motes: the two of them drive through each other, mix,
-knock about, lose the motion to those collisions, and their own gravity gathers
-what is left.
-
-It does not become a world again for a long while, and not because anything is
-waiting on a clock. Three things have to be true at once: the sloshing has to
-have died down, gravity has to have pulled the thing round, and it has to have
-gone **cold enough to be solid**. Magma is not a planet. So what you watch is a
-lopsided glowing cloud being drawn in, rounding off, darkening from the skin
-inward — and only then does a world appear, wearing a colour that is neither of
-the two that went in and still faintly warm.
-
-Hit it off centre and the melt comes out spinning: it goes cold while it is
-still a two-to-one lozenge, and it is held there as particles until gravity has
-finished the job. Two gas giants do the same but skip the cooling — gas has no
-melting point, so a gas world re-forms as soon as gravity has gathered it.
-
-How much of it goes liquid is the impact energy against what binding the pair
-together is worth — but there is a floor under that, and the floor is not
-padding. Assembling one body out of two releases gravitational energy whether
-they were moving to begin with or not, and rock is a poor place to put it. So
-even a slow touch leaves a magma ocean rather than a seam, and whatever ends up
-moving faster than the pair can hold on to is simply gone.
-
-Only a stone is caught rather than mixed: below about a twenty-fifth of what it
-hits, an impactor is accretion, and at speed it breaks up against the surface
-instead. And a star swallows anything much smaller without ceasing to be one.
-
-Below that it just merges, and a small fast projectile against a big world
-still shatters and throws molten debris.
-
-**Gas is drawn as a density field**, not as a heap of translucent squares.
-Every mote lays down a soft puff of optical depth, and what you see is how much
-of it is stacked along the line of sight — thin edges wispy, deep cores solid.
-Nothing about the shading is drawn; it is where the gas actually is.
-
-Nothing holds itself up forever. Feed a star past about 4,200 and it goes
-**supernova** — a blast front, a shell thrown off that becomes the nebula, and
-a neutron star left behind. Every nebula gets its own colour, rolled once per
-collapse, and it is still hanging there minutes later. Its shape is not rolled
-at all: it comes out of where the shell happened to be thrown and what gravity
-does to it afterwards. Feed anything past about 13,000 and it collapses
-into a **black hole**. The Forge sliders reach far enough to build something
-that collapses the moment you place it.
-
-**Anything heavy raises a tide.** A star pulls a close planet out of round, a
-gas giant does it to something passing, and a dense enough thing close enough
-takes a world apart entirely. What makes black holes look special is only that
-they pack the mass into no radius, so you can get near enough for it to matter.
-A body sitting in a tidal field is drawn into a prolate figure pointed at
-whatever is pulling on it, and how far from round it gets is the same number
-that decides whether it survives at all.
-
-Two things decide whether it survives. Small bodies have **strength** —
-cohesion falls off against surface gravity as 1/r², so a moon holds together
-where a world would not, which is why there is rubble sitting inside limits
-that would shred a fluid body. And coming apart **takes time**: about the
-body's own free-fall time, so a world parked inside the limit comes apart while
-one that only passes through the same depth is gone before it can flow.
-
-A black hole is not a black circle. It has an **event horizon** — a real edge,
-past which the picture simply stops — and around it the sky is visibly wrong.
-Light that would have gone past is pulled around, so what you see beside one is
-the view from somewhere else, stretched: a world behind it appears about half
-again further out than it is, and the patch directly behind is smeared all the
-way round into a **photon ring**, which is the brightest thing in the frame.
-None of that is painted on. The pass reads the picture that has already been
-drawn and resamples it, so whatever is really behind the hole is what gets
-bent — a star field, a nebula, or a world in mid-collision.
-
-Feed one and it **lights up and answers back**. Material that finds a close
-orbit grinds into a disc, and a disc is the brightest thing in a galaxy for a
-reason: material at one radius goes round faster than material just outside it,
-and rubbing the two together is what takes the orbit apart. The heat is what it
-pays with, so the disc glows *and* drains inward, which is the only reason
-anything in one ever reaches the middle. And not all of what arrives goes in —
-a share of it is flung back out along the axis as a pair of narrow **jets**,
-taken out of what the hole just swallowed, so the books still balance.
-
-A star that collapses keeps its angular momentum, and the core it lands on is a
-fraction of the width the star was. Whatever slow turn it had comes out
-enormously faster: a **pulsar**, sweeping a beam from each pole.
-
-Get too close and you are **spaghettified**. Past the Roche limit a
-world stops being a body at all: it is replaced, once, by rubble sampled
-straight out of its own sprite — one mote per pixel, in place, at the speed it
-was going — so the instant it happens looks like nothing happened. From then
-on it is only motes, with their own gravity pulling them together, their own
-contacts holding them apart, and the hole pulling harder on the near side than
-the far one.
-
-Nothing about the shape it takes is drawn. Whether it ends up a teardrop, a
-bar that pinches in the middle, one lump trailing a tail, or a string of beads
-that each settle back into little worlds is not a case anybody handles — it is
-what those three forces do to a few thousand particles.
-
-Heavy impacts and collapses send out a **shockwave** that shoves whatever it
-overtakes, debris and worlds alike.
-
-That debris then has to end up somewhere:
-
-- **Inside the Roche distance** tides never let it clump, so it grinds itself
-  circular and stays a **ring**.
-- **Outside it**, fragments sharing a patch of sky and a velocity pull together
-  into a real body — an **asteroid**, a **moon** or a **dwarf planet**,
-  depending on how much rubble found each other.
-- Or it falls back in, adding its mass to whatever swept it up.
-
-## How it works
-
-- **Two numbers in here are chosen rather than derived, and both are the
-  price of being watchable.** The speed of light is one: at its true value
-  Mercury's perihelion moves five ten-millionths of a radian an orbit and you
-  would never see it, so it is set where the effect is real and the rate is
-  legible — about a degree an orbit. Stellar lifetimes are the other. Every
-  other constant here is either measured or falls out of one that is.
-- **Tidal heating is squared in the tide**, because the real rate falls off far
-  faster with distance than the stress alone does, and that steepness is the
-  whole point of it: it is what separates Io, which never cools, from Europa a
-  hundred units further out, which does. A shallower law heats both the same
-  and says nothing about either.
-- **Escaping has to mean escaping.** Gas released below a world's own escape
-  speed falls straight back and is swallowed again, so the world loses nothing
-  at all however long it is left. That is exactly what this did until it was
-  measured against a number rather than eyeballed — a hot Jupiter sat at 86% of
-  its mass forever. It now leaves above escape speed and from the lit side,
-  which is the side the energy arrived on.
-- **Radiation pressure is a property of the grain, not the place.** Push and
-  pull share the same 1/r^2, so what decides the ratio is surface against
-  weight. Rubble bound into a clump or ground into a ring is not dust any more
-  and is not treated as any.
-- **The Roche lobe uses Eggleton's fit** — within a percent over every mass
-  ratio that ever comes up, and one line instead of a root-find.
-- **The white dwarf limit sits just under the collapse limit**, and the two are
-  near each other for a real reason: it is the same piece of physics. Which one
-  is crossed first is what decides whether something leaves a neutron star or
-  leaves nothing.
-- **The relativistic term is radial**, so it torques nothing and angular
-  momentum still holds exactly. It is skipped entirely beyond a cutoff, which
-  is nearly everywhere, and that guard is why it costs nothing.
-- **Gravitational-wave losses are taken out of both bodies** in the proportions
-  that leave the total momentum alone, rather than out of the orbit as a
-  bookkeeping entry.
-- **The clock's ceiling is a substep budget, not a number.** Fast-forward used
-  to stop at 60x because the substep count was capped at 36: past that the
-  substep grew instead of the count, and a circular orbit started spiralling.
-  It can be raised a long way because only bodies are integrated per substep —
-  the sixty thousand motes step once a frame however many substeps run — so the
-  cost is n² over a few dozen things rather than over the sky. It is still a
-  budget: a scene holding hundreds of bodies gets proportionally fewer, so the
-  integrator's frame cost stays bounded whatever is in it. That is what buys
-  the extra sixteen-fold and puts a year a second inside reach.
-- **A year is derived, never written down.** It is the period of a circular
-  orbit at one AU around the Sun the preset actually builds, so retuning the
-  distance scale or the Sun's mass moves the readout with it instead of leaving
-  it quietly lying. Systems built at another scale carry their own, worked out
-  the same way from one orbit whose real period is known.
-- **The outlined orbit comes out of the state vector**, not out of a fit to the
-  trail: energy gives the semi-major axis, and the eccentricity vector gives
-  both the shape and the direction of periapsis, which is the one thing a
-  scalar eccentricity cannot tell you and the ellipse has to be turned by. The
-  host sits at a focus, so the ellipse's centre is offset from it by *ae* back
-  along that direction.
-- **Integrator.** Velocity Verlet, which is symplectic — orbits keep their
-  shape over long runs instead of spiralling the way plain Euler makes them.
-  Accelerations carry between steps, so gravity is evaluated once per step.
-- **Softening.** Forces use `1/(r² + ε²)^1.5`, so a close pass produces a
-  slingshot rather than a division by zero.
-- **Collisions** merge, conserving momentum and mass. Radius follows from the
-  combined mass, so a star that eats a hundred moons visibly grows.
-- **Prediction.** While you aim, a massless probe is integrated through the
-  frozen field a few hundred steps ahead and drawn. It is the difference
-  between a gravity toy and a gravity guessing game.
-- **Trails** are sampled by distance travelled, not per frame, so they look the
-  same at every speed setting instead of vanishing when you slow down.
-- **Pixels.** The whole sim is drawn into a buffer a few times smaller than the
-  window and blown up with nearest-neighbour. That is what makes it pixel art,
-  and it is also why debris is cheap to draw.
-- **Debris**, up to 200,000 motes, set by the Debris slider. Getting there was
-  mostly a rendering problem rather than a physics one: a `fillRect` per mote
-  cost more than the entire gravity step, so the motes are now accumulated by
-  hand into a `Uint8ClampedArray` — which saturates at 255, so additive
-  blending falls out for free — and blitted in one `drawImage`. Drawing
-  200,000 of them now costs about a millisecond. Gravity on debris is the
-  remaining cost, and it is capped: below the top handful of bodies by mass,
-  nothing measurably pulls on a mote, so a busy sky only ever evaluates six
-  sources per particle.
-- **Opacity** is `1-exp(-kd)` on the column density — Beer-Lambert, the same
-  law that decides how thick a real cloud looks. Depth is then banded into a
-  handful of steps: rendered continuously a cloud comes out as soft round
-  blobs, which is the one thing this is not allowed to look like, and stepping
-  it gives the flat shaded bands that read as pixel art. It is the density
-  doing the shading either way.
-- **Hit-and-run.** The impact parameter — how far the line one body is
-  travelling along misses the other's centre by — decides the whole outcome,
-  and it is measured off the approach rather than off the overlap, which is
-  nearly zero at the instant they first touch. What gets scraped off is the
-  sprite pixels that would have been inside the other body at closest
-  approach. They leave at the speed their own world was going, so momentum
-  takes care of itself, and they are ordinary debris afterwards — which is why
-  the other body sweeps up so much of it.
-- **Light bending** is done on the frame rather than to the objects in it. Each
-  hole resamples a disc of the already-drawn buffer, sampling from further in
-  than it writes, with a deflection going as 1/r — the real weak-field falloff.
-  Sampling the other way pulls images inward, which is the wrong sign and looks
-  like a drain rather than a lens. Nearest-neighbour, so the bend stays as
-  chunky as everything else.
-- **Nothing pops.** A world turning to rubble leaves its own sprite behind for a
-  third of a second, drifting with what it became; a cloud turning back into a
-  world keeps its motes, weightless and no longer part of anything, to fall the
-  last of the way in. Both are cross-fades over things that were never
-  instantaneous underneath.
-- **A body's class and colour are inherited, not guessed.** What a settled cloud
-  becomes is read off the roster's own masses, so a world that gains a moon is
-  not demoted a class for having grown. Its palette is scored by matching every
-  mote against each candidate ramp — in chromaticity, because shading drags half
-  of any world's pixels toward grey and matching raw colour made Barren a trap
-  that swallowed everything — weighted by mass, and fenced by composition, so a
-  dwarf planet can no longer come back wearing a star's colours.
-- **Mass is conserved exactly**, through every collision, collapse and
-  crumble. Motes carry their own mass, so a mote count chosen for how it looks
-  no longer decides how much matter exists — which is what the shatter and the
-  supernova shell were both quietly doing, one creating 10% and the other
-  losing most of a star.
-- **Momentum is conserved too**, which took finding four places it was not.
-  A body swallowing a mote took its mass and left its motion behind. A clump
-  formed from rubble took the mean velocity of its pieces rather than the
-  mass-weighted one, and pieces do not all weigh the same. A ring grinding
-  itself circular traded momentum with nobody. And cohesion is a field, so a
-  cloud that is not round pushes on itself — the net of it is measured each step
-  and handed back, which is the statement that nothing pulls on itself. A
-  collision no longer throws a blast front either: the pieces it throws *are*
-  the blast, and a wave shoving things as well counted it twice. Exact without
-  rubble in play; about a part in a thousand with a cloud sloshing.
-- **Contacts are inelastic**, and that is what makes a collision a merge. A
-  positional pass that only separates overlapping motes stores no energy and
-  loses none, so two clouds driven together slide straight through and out the
-  far side. Rock arriving at rock keeps almost none of its approach; the
-  impulse can only ever reduce one, never create one, so no timestep can make
-  it blow up.
-- **Settling** is what turns a cloud back into a world, and it has three
-  conditions, none of them timed. Its own gravity has to beat the motion inside
-  it; spin does not count — a cloud turning as a whole is already a body, and
-  taking the bulk rotation out first is the difference between an off-centre
-  hit re-forming and never settling at all, and it keeps the turn it gathered
-  with. Its rock has to be **below the melting point**, measured over the rock
-  only, since gas has no melting point and a gas world is not waiting on one.
-  And it has to be **round**, measured as the ratio of the principal axes of
-  the mass it is made of — but only where gravity is the thing deciding its
-  shape. Under a real tide the equilibrium figure is prolate, not a sphere, so
-  holding out for one would mean nothing near a hole ever pulled itself back
-  together.
-- **Heat leaves through the surface.** A mote packed in among five or six
-  others is not the surface, and holds its heat about twice as long as one out
-  on the skin — so a melt darkens from the outside in with the glow still
-  showing through it, and the middle is the last part to go solid. The
-  neighbour count falls out of the contact pass, which is already visiting
-  every touching pair.
-- **A held world is out of the integrator's hands, not out of the sim.** While
-  you are dragging one it is skipped by the position and velocity update, so it
-  stops falling — but it still pulls on everything else from wherever you are
-  holding it, and it still collides. What it carries away is put on the same
-  scale a fling is: the clock does not run at hand speed, so a cursor's true
-  world velocity is nonsense as an orbital one, and a lazy sweep across the
-  screen would otherwise be a thousand units a second.
-- **The picker can hold nothing.** It always had one of its worlds lit, which
-  meant every press on empty sky put a world there whether you wanted one or
-  not — and with a tool in hand, that is precisely the press you were trying to
-  make. Tapping the lit one puts it out, and with nothing lit an empty press
-  does nothing at all. Opening the forge lights it again, since opening the
-  forge is asking to build something.
-- **A tool press is not a selection.** With Drag on, pressing a world picks it
-  up and leaves the inspector exactly as it was: selecting is its own thing, and
-  a tool reaching for a world does not also get to decide what you are looking
-  at. Anything added later gets the same deal — and nothing selected is ever a
-  state you are stuck in, since a second tap, `Esc`, the ✕, or a tap on empty
-  sky all put it down.
-- **Nothing is drawn smaller than two buffer pixels.** A planet is a very small
-  thing a very long way from the next one: pull back far enough to see two
-  orbits at once and every world in the sky is a hundredth of a pixel, which is
-  true and useless. Below the floor the picture stops being to scale rather than
-  the sim stopping being right — which is what every planetarium ever written
-  does.
-- **Circular velocity accounts for the softening.** The force law is
-  `1/(r²+ε²)^1.5`, so the speed that balances it is `√(GM)·r/(r²+ε²)^0.75`, not
-  `√(GM/r)`. Far out the two agree to nothing; close in they do not, and the
-  textbook one launches a moon a quarter too fast — enough to strip it off its
-  planet inside two years.
-- **Both forge sliders are logarithmic.** A linear density track spends nine
-  tenths of itself between rock and slightly denser rock and still cannot reach
-  a neutron star; on a log track every doubling costs the same distance, so one
-  sweep covers a snowball to degenerate matter.
-- **Melting** is decided by energy, not speed: the impact carries this much per
-  unit mass, holding the pair together costs about this much. Two equal worlds
-  meeting at the speed they would fall together at come in at a quarter of the
-  threshold, so a touch merges; it takes about two and a half times that to
-  liquefy them.
-- **Molten rock takes its hue from its temperature** and shows what it is made
-  of as light and dark, rather than being tinted towards orange — rock and
-  orange have nearly the same green in them, so tinting turns everything to
-  sand and you lose the two worlds folded into the melt. Rubble draws opaque;
-  only loose debris is additive, or a packed melt saturates to a white smear.
-- **Rubble** holds itself together with the monopole term — every mote toward
-  its own cloud's centre of mass — which is what dominates for a roughly round
-  blob and costs one pass instead of the n² every pair would. The clouds are
-  re-split by spatial connectivity a few times a second, so when one pulls
-  into two, each half starts holding itself together separately. That is what
-  lets a stretched world pinch off a bead instead of smearing into one endless
-  string.
-- **Contacts**, because gravity alone is not enough: a cold self-gravitating
-  cloud falls straight in on itself. That is real physics and completely wrong
-  for a pile of rock, which is held up by its pieces touching. So overlapping
-  motes are pushed apart — by moving them rather than by applying a force. A
-  spring stiff enough to hold a world up would explode the first time the clock
-  ran at sixty times; a positional pass cannot, whatever dt is. It loses energy
-  doing it, which is also what a pile of gravel does. A body is always drawn
-  round, because anything being pulled out of shape is not a body any more.
-- **Ring damping** eases a fragment's whole velocity toward the circular one for
-  its radius. Damping only the radial part looks right and is not: it just makes
-  the current radius an apsis and leaves the speed mismatch that made the orbit
-  elliptical in the first place. The test measures eccentricity, and caught it.
-
-## Tests
-
-```sh
-npm install
-npx playwright install chromium
-npm test
 ```
-
-Drives the real page in Chromium. The two that matter most are physical rather
-than behavioural: a circular orbit must stay circular over a simulated minute,
-and total energy must not drift. Both would catch an integrator regression that
-no amount of clicking around would reveal.
-
-`window.orbital` is a small scripting hook — `list()`, `add()`, `step(dt)`,
-`energy()`, `preset()`, `rate()`, `yearUnit()`, `orbit(id)`, `aging()`,
-`flux(x,y)`, `lagrange(id)`.
-
-Two of the physical tests are worth knowing about before reading a red line as
-a regression. The hit-and-run graze and the black-hole jet count are both
-stochastic, and both sit close enough to their thresholds that a single run can
-fall either side without anything having changed. Re-run before investigating. The tests drive the sim through it with an exact `dt`
-so results do not depend on machine speed. The ones about picking a world up go
-the other way and put a real cursor on the real canvas, because what is under
-test there is what a hand does.
+src/physics/   integrator, forces, collisions, stars, presets — no DOM, fully tested
+src/render/    three.js scene, shaders, overlays
+src/ui/        input, HUD, the belt histogram
+tests/         physics.test.ts (vitest), browser.mjs (Playwright smoke test)
+```

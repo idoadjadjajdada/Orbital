@@ -40,6 +40,9 @@ export class Hermite {
 
   /** corrector passes per step; 2 makes the scheme nearly time-symmetric */
   iterations = 2;
+  /** Test particles pull on nothing, so their errors never feed back into the
+   *  system: they take one corrector pass and a looser step criterion. */
+  etaParticle = 0.02;
 
   gr = true;
   gw = true;
@@ -187,14 +190,14 @@ export class Hermite {
     for (let it = 0; it < this.iterations; it++) {
       const last = it === this.iterations - 1;
       for (const b of group) {
-        if (!b.alive) continue;
+        if (!b.alive || (it > 0 && !b.source)) continue;
         this.hStep = (tn - b.t) * this.tick;
-        this.evalForce(b, live && last);
+        this.evalForce(b, live && (last || !b.source));
         b.nax = this.fa[0]; b.nay = this.fa[1]; b.naz = this.fa[2];
         b.njx = this.fj[0]; b.njy = this.fj[1]; b.njz = this.fj[2];
         b.ncross = this.cross;
       }
-      for (const b of group) if (b.alive) this.correct(b, (tn - b.t) * this.tick);
+      for (const b of group) if (b.alive && (it === 0 || b.source)) this.correct(b, (tn - b.t) * this.tick);
     }
     for (const b of group) this.commit(b, tn, live);
   }
@@ -238,7 +241,7 @@ export class Hermite {
     if (!live && h < 0.25 * b.dtWant) return;
     const A = Math.hypot(b.ax, b.ay, b.az), J = Math.hypot(b.jx, b.jy, b.jz);
     const den = J * R + S * S;
-    let dt = den > 0 ? Math.sqrt(this.eta * (A * S + J * J) / den) : Infinity;
+    let dt = den > 0 ? Math.sqrt((b.source ? this.eta : this.etaParticle) * (A * S + J * J) / den) : Infinity;
     if (!(dt > 0)) dt = Infinity;
     b.dtWant = Math.min(dt, this.etaCross * Math.sqrt(b.ncross));
   }

@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <title>Orbital</title>
+  <meta name="description" content="An n-body gravity sandbox at real scale: real masses, real distances, real physics." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='5' fill='%23ffd27a'/%3E%3Cellipse cx='16' cy='16' rx='14' ry='6' fill='none' stroke='%239fb8ff' stroke-width='2' transform='rotate(-25 16 16)'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="./src/style.css" />
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="labels"></div>
+
+  <header class="hud top-left">
+    <div class="brand">Orbital</div>
+    <div class="clock">
+      <div class="elapsed" id="elapsed">0 yr</div>
+      <div class="rate"><span id="rate">—</span><span class="lag" id="lag"></span></div>
+    </div>
+    <div class="row">
+      <button class="icon" id="pause" title="Pause (Space)">❚❚</button>
+      <input type="range" id="warp" min="-7.5" max="4" step="0.01" value="-0.6" aria-label="Clock speed" />
+    </div>
+  </header>
+
+  <nav class="hud top-right">
+    <div class="row">
+      <button class="chip" id="presetBtn">Systems ▾</button>
+      <button class="chip" id="clear" title="Clear (C)">Clear</button>
+      <button class="chip icon" id="helpBtn" title="Controls">?</button>
+    </div>
+    <div class="row toggles">
+      <button class="chip tog on" data-flag="trails" title="T">Trails</button>
+      <button class="chip tog on" data-flag="orbits" title="O">Orbits</button>
+      <button class="chip tog" data-flag="zones" title="Z">Zones</button>
+      <button class="chip tog on" data-flag="labels" title="L">Labels</button>
+      <button class="chip tog on" data-flag="auto" title="A">Auto-orbit</button>
+    </div>
+    <div class="menu" id="presetMenu" hidden></div>
+  </nav>
+
+  <aside class="hud inspector" id="inspector" hidden>
+    <div class="ihead">
+      <img id="iIcon" alt="" />
+      <div>
+        <div class="iname" id="iName">—</div>
+        <div class="ikind" id="iKind">—</div>
+      </div>
+      <button class="icon close" id="iClose" title="Deselect (Esc)">✕</button>
+    </div>
+    <dl id="iStats"></dl>
+    <div class="row iact">
+      <button class="chip" id="iFollow">Follow</button>
+      <button class="chip" id="iAge" hidden>Age to next stage</button>
+      <button class="chip danger" id="iDelete">Delete</button>
+    </div>
+  </aside>
+
+  <footer class="hud bottom">
+    <div class="shelves" id="shelves"></div>
+    <div class="cards" id="cards"></div>
+  </footer>
+
+  <div class="hud forge" id="forge" hidden>
+    <div class="fhead">Forge <button class="icon close" id="fClose">✕</button></div>
+    <div class="fbody">
+      <img id="fPrev" alt="" />
+      <div class="fcontrols">
+        <label>Kind
+          <select id="fStyle">
+            <option value="terran">Rocky, oceans</option><option value="rocky">Rocky</option><option value="barren">Barren</option>
+            <option value="desert">Desert</option><option value="ocean">Ocean world</option><option value="ice">Ice</option>
+            <option value="lava">Molten</option><option value="iron">Iron</option><option value="carbon">Carbon</option>
+            <option value="gas">Gas giant</option><option value="icegiant">Ice giant</option><option value="star">Star</option>
+          </select>
+        </label>
+        <label>Mass <span id="fMassV"></span><input type="range" id="fMass" min="-4" max="3.6" step="0.01" value="0" /></label>
+        <label>Density <span id="fRhoV"></span><input type="range" id="fRho" min="0.3" max="12" step="0.05" value="5.5" /></label>
+        <div class="row"><label class="col">Colour <input type="color" id="fC1" value="#1d4f8c" /></label><label class="col">and <input type="color" id="fC2" value="#4f8a3c" /></label></div>
+        <div class="row"><button class="chip" id="fSeed">New pattern</button><button class="chip on" id="fUse">Place this</button></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="hud help" id="help" hidden>
+    <div class="fhead">Controls <button class="icon close" id="hClose">✕</button></div>
+    <table>
+      <tr><td>Pick a body below, then drag from space</td><td>throw it — the dotted line is its real future path</td></tr>
+      <tr><td>Tap space with a body picked</td><td>drop it into a circular orbit (Auto-orbit) or at rest</td></tr>
+      <tr><td>Tap a body</td><td>select it · double-tap to follow it</td></tr>
+      <tr><td>Drag a body</td><td>pick it up; let go and it keeps your hand's speed</td></tr>
+      <tr><td>Drag empty space / right-drag</td><td>turn the view</td></tr>
+      <tr><td>Shift-drag, middle-drag, two fingers</td><td>pan</td></tr>
+      <tr><td>Scroll / pinch</td><td>zoom</td></tr>
+      <tr><td><kbd>Space</kbd> <kbd>[</kbd> <kbd>]</kbd></td><td>pause · slower · faster</td></tr>
+      <tr><td><kbd>T</kbd> <kbd>O</kbd> <kbd>Z</kbd> <kbd>L</kbd> <kbd>A</kbd></td><td>trails · orbits · zones · labels · auto-orbit</td></tr>
+      <tr><td><kbd>F</kbd> <kbd>Esc</kbd> <kbd>Del</kbd> <kbd>1</kbd>–<kbd>9</kbd></td><td>follow · deselect · delete · pick from shelf</td></tr>
+    </table>
+    <p>Everything is at real scale. Bodies are drawn at their true size once you are close enough, and never smaller than a few pixels.</p>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+  <div class="stats" id="stats"></div>
+
+  <script type="module" src="./src/main.ts"></script>
+</body>
+</html>

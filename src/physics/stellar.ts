@@ -77,12 +77,15 @@ export function structure(s: StarState): { r: number; L: number; m: number; phas
     const f = Math.min(1, -s.age / preMSLife(m0));
     return { r: R0 * (1 + 2.5 * f), L: L0 * (1 + 4 * f), m: m0, phase: 'proto' };
   }
+  // The mass–luminosity relation describes stars partway through their lives:
+  // a star starts dimmer and smaller and brightens as helium builds up in its
+  // core. Calibrated on the Sun: 0.7 L☉ / 0.89 R☉ at birth, 1 / 1 at 4.6 Gyr.
   if (s.age <= tms) {
     const f = s.age / tms;
-    return { r: R0 * (1 + 0.6 * f), L: L0 * (1 + 1.2 * f), m: m0, phase: 'ms' };
+    return { r: R0 * (0.89 + 0.24 * f + 0.47 * f ** 3), L: L0 * (0.7 + 0.65 * f + 0.45 * f ** 3), m: m0, phase: 'ms' };
   }
   const g = Math.min(1, (s.age - tms) / giantLife(m0));
-  const Rend = R0 * 1.6, Lend = L0 * 2.2;
+  const Rend = R0 * 1.6, Lend = L0 * 1.8;
   const Rmax = giantRmax(m0);
   const Ltip = Math.max(Lend * 1.5, 3000 * m0 ** 1.5);
   const mEnd = preDeathMass(m0);
@@ -131,7 +134,14 @@ export function evolve(b: Body, dt: number): { shed: number; ev: StarEvent } {
 }
 
 /** Turn a body into a compact remnant in place. */
+const REMNANT_NAME = { wd: 'White dwarf', ns: 'Neutron star', bh: 'Black hole' };
+
 export function becomeRemnant(b: Body, cls: 'wd' | 'ns' | 'bh', m: number) {
+  if (b.cls !== cls) {
+    // a catalogue name described the star; a named star keeps its name
+    const generic = b.cls === 'star' || b.cls === 'wd' || b.cls === 'ns' ? /^(Red supergiant|Dying giant|O-type star|A-type star|Sun-like|Red dwarf|Protostar|Custom star|White dwarf|Neutron star|Pulsar)$/.test(b.name) : false;
+    b.name = generic ? REMNANT_NAME[cls] : `${b.name} (${REMNANT_NAME[cls].toLowerCase()})`;
+  }
   b.cls = cls;
   b.m = m;
   b.look = { ...b.look, style: cls };

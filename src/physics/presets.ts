@@ -20,7 +20,7 @@ export const PRESETS: PresetInfo[] = [
   { key: 'solar', name: 'Solar system', blurb: 'Every planet at its J2000 position, 13 moons, the main belt.', warp: 0.25, view: 6, focus: 'Sun' },
   { key: 'trappist', name: 'TRAPPIST-1', blurb: 'Seven Earths round an ultracool dwarf, chained in resonance.', warp: 0.02, view: 0.08, focus: 'TRAPPIST-1' },
   { key: 'galilean', name: 'Galilean moons', blurb: 'Io, Europa and Ganymede locked 1:2:4 — the Laplace resonance.', warp: 0.05, view: 0.03, focus: 'Jupiter' },
-  { key: 'kirkwood', name: 'Kirkwood gaps', blurb: '3,000 asteroids, Jupiter and Saturn. Gaps open where the periods resonate.', warp: 200, view: 6, focus: 'Sun' },
+  { key: 'kirkwood', name: 'Kirkwood gaps', blurb: '3,000 asteroids, Jupiter and Saturn. Gaps open where the periods resonate.', warp: 30, view: 6, focus: 'Sun' },
   { key: 'sgra', name: 'Sagittarius A*', blurb: 'Four million suns, the S-stars, and a star on its way in.', warp: 0.02, view: 200, focus: 'Sgr A*' },
   { key: 'merger', name: 'Black hole merger', blurb: 'Two 30-sun black holes, minutes from merging.', warp: 2e-6, view: 3e-4, focus: 'BH A' },
 ];

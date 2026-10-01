@@ -1,5 +1,5 @@
 import { Body, type Cls } from './body';
-import { G, C, KMS, GCC, radiusFromDensity, schwarzschild } from './units';
+import { G, C, KMS, GCC, radiusFromDensity, schwarzschild, fmtMass } from './units';
 import { becomeRemnant, msLife, M_TOV, remnantMass, structure, newStar, teffOf } from './stellar';
 import { refreshRoche } from './catalog';
 import type { World } from './world';
@@ -12,6 +12,8 @@ export interface SimEvent {
   energy: number;   // 0..1, how big a deal it is
   t: number;        // sim time
   body?: Body;
+  /** the name of whatever it happened to, as it was called at the time */
+  name?: string;
 }
 
 const rnd = Math.random;
@@ -173,7 +175,8 @@ export function collide(w: World, a: Body, b: Body) {
       T.m -= lost;
       if (T.cls !== 'bh' && P.cls === 'bh') becomeRemnant(T, 'bh', T.m);
       if (T.cls === 'ns' && T.m > M_TOV) becomeRemnant(T, 'bh', T.m);
-      ev('merge', Math.max(T.r * 50, 1e-4), lost > 0 ? 1 : 0.5);
+      w.emit({ kind: 'merge', x: cx, y: cy, z: cz, size: Math.max(T.r * 50, 1e-4), energy: lost > 0 ? 1 : 0.5, t: w.time,
+        name: lost > 0 ? `Black holes merged — ${fmtMass(lost)} left as gravitational waves` : 'Compact objects merged' });
     }
     if (T.cls === 'bh') T.r = schwarzschild(T.m);
     w.massChanged(T);
@@ -320,7 +323,7 @@ export function disrupt(w: World, b: Body, by: Body) {
     heat: gas ? 0.9 : 0.3, color, omega });
   w.kill(b);
   w.structural();
-  w.emit({ kind: 'disrupt', x: b.x, y: b.y, z: b.z, size: b.r * 4, energy: 0.6, t: w.time, body: by });
+  w.emit({ kind: 'disrupt', x: b.x, y: b.y, z: b.z, size: b.r * 4, energy: 0.6, t: w.time, body: by, name: `${b.name} was torn apart by ${by.name}` });
 }
 
 const VSN = 5000 * KMS, VIA = 10000 * KMS;
@@ -328,8 +331,9 @@ const VSN = 5000 * KMS, VIA = 10000 * KMS;
 /** End of a star's life. */
 export function starDeath(w: World, b: Body, ev: 'wd' | 'sn' | 'collapse' | 'ia' | 'ns-collapse') {
   const s = b.star!;
+  const name = b.name;
   const at = (kind: Parameters<World['emit']>[0]['kind'], size: number, energy: number) =>
-    w.emit({ kind, x: b.x, y: b.y, z: b.z, size, energy, t: w.time, body: b });
+    w.emit({ kind, x: b.x, y: b.y, z: b.z, size, energy, t: w.time, body: b, name });
   if (ev === 'wd') {
     const core = s.coreM;
     const env = b.m - core;

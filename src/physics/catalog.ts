@@ -51,13 +51,13 @@ export const CATALOG: Entry[] = [
   { key: 'lava', name: 'Molten world', shelf: 'Worlds', cls: 'rock', m: 1.5 * M_EARTH, rho: 5.6, day: 1 * DAY,
     look: look('lava', 0x1c0e0c, 0xff6a1a), blurb: 'A rock world close enough to its star to stay liquid on top.' },
   { key: 'iron', name: 'Iron world', shelf: 'Worlds', cls: 'rock', m: 0.4 * M_EARTH, rho: 8.0, day: 58 * DAY,
-    look: look('iron', 0x403c3a, 0x8a8480), blurb: 'Two thirds metal: what is left when a mantle is blasted off.' },
+    look: look('iron', 0x6a6460, 0xb4aea8), blurb: 'Two thirds metal: what is left when a mantle is blasted off.' },
   { key: 'superearth', name: 'Super-Earth', shelf: 'Worlds', cls: 'rock', m: 5 * M_EARTH, r: 1.6 * R_EARTH, day: 18 * HOUR, tilt: 12,
     look: look('rocky', 0x6a5a48, 0x9aa070, { atmo: 0xb0c8e8 }), blurb: 'Five Earths at 1.6 Earth widths: the commonest kind of planet we find.' },
   { key: 'carbon', name: 'Carbon world', shelf: 'Worlds', cls: 'rock', m: 3 * M_EARTH, rho: 5.0, day: 26 * HOUR,
-    look: look('carbon', 0x15141a, 0x4a4450), blurb: 'Graphite and carbide crust with diamond underneath.' },
+    look: look('carbon', 0x34323c, 0x8a8496), blurb: 'Graphite and carbide crust with diamond underneath.' },
   { key: 'core', name: 'Stripped core', shelf: 'Worlds', cls: 'rock', m: 10 * M_EARTH, rho: 7.5, day: 1 * DAY,
-    look: look('iron', 0x3a2420, 0xb05a30), blurb: 'The heavy heart of a giant that lost its gas to its star.' },
+    look: look('iron', 0x5a3a30, 0xc06a3a), blurb: 'The heavy heart of a giant that lost its gas to its star.' },
 
   // ---- Giants ----
   { key: 'jupiter', name: 'Gas giant', shelf: 'Giants', cls: 'gas', m: M_JUP, r: R_JUP, day: 9.93 * HOUR, tilt: 3.1,
