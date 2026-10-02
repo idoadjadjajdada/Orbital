@@ -71,7 +71,15 @@ true scale. Mouse: click to capture it and look around; `W` `A` `S` `D` fly,
 `Space` / `C` up and down, `Q` / `E` roll, `Shift` boost tenfold, the wheel or
 `+` `−` set the throttle; click selects what is under the crosshair and `T`
 flies you to it. Touch: a stick to fly, drag to look, tap to select, buttons
-for up, down, boost, throttle, *Go to*, overdrive, jump, map and view. You ride with whatever pulls on you
+for up, down, boost, throttle, *Go to*, overdrive, jump, map and view. A
+controller (Xbox layout, through the browser's Gamepad API — iPad included):
+left stick flies, right stick looks, the triggers go down and up, the bumpers
+roll, clicking the left stick boosts; A selects under the crosshair, B flies to
+it, X overdrive, Y jump, View the map (there A goes, Y jumps, B closes), the
+d-pad steps through nearby bodies (◀ ▶) and sets the throttle (▲ ▼), clicking
+the right stick changes the view, Menu goes back to the map. On the map the
+left stick pans, the triggers zoom, the d-pad picks bodies, A follows, B lets
+go, X pauses, the bumpers change the speed of time and Menu steps into 3D. You ride with whatever pulls on you
 hardest, so worlds do not race away at tens of km/s, and your cruising speed
 is half your height above the nearest surface per second, so the same stick
 skims a moon or crosses a system. The clock runs at one second a second, as it

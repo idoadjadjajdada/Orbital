@@ -132,6 +132,36 @@ try {
   await page.keyboard.press('KeyO');
   await page.keyboard.press('KeyZ');
   ok('Z switches to the cockpit', await page.evaluate(() => window.orbital.v3.ship.view === 'cockpit'));
+  // a controller, faked through the Gamepad API
+  await page.evaluate(() => {
+    const btn = () => Array.from({ length: 17 }, () => ({ pressed: false, value: 0 }));
+    window.__pad = { id: 'Test pad (STANDARD GAMEPAD)', connected: true, mapping: 'standard', axes: [0, -1, 0, 0], buttons: btn() };
+    navigator.getGamepads = () => [window.__pad];
+  });
+  const q0 = await page.evaluate(() => window.orbital.v3.where());
+  await page.waitForTimeout(800);
+  ok('the controller left stick flies', await page.evaluate(p => { const q = window.orbital.v3.where(); return window.orbital.pad.connected && Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) > 0; }, q0));
+  await page.evaluate(() => { window.__pad.axes = [0, 0, 0, 0]; window.__pad.buttons[8].pressed = true; });
+  await page.waitForTimeout(200);
+  await page.evaluate(() => { window.__pad.buttons[8].pressed = false; });
+  ok('the controller View button opens the map', await page.evaluate(() => document.querySelector('.radar3').classList.contains('big')));
+  await page.evaluate(() => { window.__pad.buttons[1].pressed = true; });
+  await page.waitForTimeout(200);
+  await page.evaluate(() => { window.__pad.buttons[1].pressed = false; window.__pad.buttons[15].pressed = true; });
+  await page.waitForTimeout(200);
+  await page.evaluate(() => { window.__pad.buttons[15].pressed = false; });
+  ok('B closes the map and the d-pad picks a target', await page.evaluate(() => !document.querySelector('.radar3').classList.contains('big') && !!window.orbital.selected));
+  await page.evaluate(() => { window.__pad.buttons[9].pressed = true; });
+  await page.waitForTimeout(400);
+  await page.evaluate(() => { window.__pad.buttons[9].pressed = false; });
+  ok('Menu goes back to the 2D map', await page.evaluate(() => !window.orbital.mode3d));
+  await page.evaluate(() => { const v = window.orbital.view; window.__s0 = v.scale; window.__pad.buttons[7].value = 1; window.__pad.buttons[7].pressed = true; });
+  await page.waitForTimeout(500);
+  await page.evaluate(() => { window.__pad.buttons[7].value = 0; window.__pad.buttons[7].pressed = false; window.__pad.buttons[9].pressed = true; });
+  ok('RT zooms the 2D map in', await page.evaluate(() => window.orbital.view.scale > window.__s0 * 1.5));
+  await page.waitForTimeout(400);
+  await page.evaluate(() => { window.__pad.buttons[9].pressed = false; window.__pad.connected = false; });
+  ok('Menu steps back into 3D', await page.evaluate(() => window.orbital.mode3d));
   await page.keyboard.press('KeyV');
   await page.waitForTimeout(300);
   ok('V goes back to the map', await page.evaluate(() => !window.orbital.mode3d && document.getElementById('c3').hidden));

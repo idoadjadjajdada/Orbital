@@ -14,6 +14,7 @@ import { predict } from './physics/predict';
 import { Renderer, PIX } from './pixel/renderer';
 import { bakeSprite } from './pixel/sprites';
 import { buildMap } from './pixel/surface';
+import { Pad, BTN } from './ui/gamepad';
 
 export type Flag = 'trails' | 'orbits' | 'zones' | 'labels' | 'auto';
 export type Tool = 'hand' | 'ruler' | 'push' | 'bombard' | 'erase';
@@ -112,6 +113,9 @@ export class App {
   private frameNo = 0;
   private lastFrame = performance.now();
   private labelEls = new Map<Body, HTMLElement>();
+
+  /** a game controller, if one is plugged in */
+  readonly pad = new Pad((name, on) => this.onToast(on ? `${name} connected` : `${name} disconnected`));
 
   constructor(canvas: HTMLCanvasElement, private labelRoot: HTMLElement) {
     this.view = new Renderer(canvas);
@@ -402,6 +406,10 @@ export class App {
     const dtReal = Math.min(0.1, (now - this.lastFrame) / 1000);
     this.lastFrame = now;
 
+    this.pad.poll();
+    if (this.pad.connected && this.pad.hit(BTN.MENU)) void this.toggle3D();
+    if (this.pad.connected && !this.mode3d) this.padMap(dtReal);
+
     if (this.held) {
       const { b, target, vel, host } = this.held;
       b.setPos(target.x + (host?.x ?? 0), target.y + (host?.y ?? 0), target.z + (host?.z ?? 0));
@@ -452,6 +460,41 @@ export class App {
     });
     this.updateLabels();
     this.onFrame();
+  }
+
+  /**
+   * The controller on the map: left stick pans, the triggers (or the right
+   * stick) zoom, the d-pad steps through bodies nearest the centre, A follows
+   * the selection, B lets go, X pauses, the bumpers change the speed of time,
+   * Menu steps into 3D.
+   */
+  private padMap(dt: number) {
+    const p = this.pad, v = this.view;
+    const k = v.perCss * 700 * dt;
+    if (p.ls[0] || p.ls[1]) {
+      if (this.focus) { this.pan = this.centre(); this.focus = null; }
+      this.pan.x += p.ls[0] * k;
+      this.pan.y -= p.ls[1] * k;
+    }
+    const z = (p.rt - p.lt) * 2.5 - p.rs[1] * 2.5;
+    if (z) v.scale = v.scaleGoal = Math.min(1e13, Math.max(1e-4, v.scale * Math.exp(z * dt)));
+    if (p.hit(BTN.RIGHT)) this.cycle(1, this.centre());
+    if (p.hit(BTN.LEFT)) this.cycle(-1, this.centre());
+    if (p.hit(BTN.A) && this.selected) this.follow(this.selected);
+    if (p.hit(BTN.B)) { if (this.focus) this.follow(null); else this.select(null); }
+    if (p.hit(BTN.X)) this.paused = !this.paused;
+    if (p.hit(BTN.LB)) this.warpLog = Math.max(-7.5, this.warpLog - 0.5);
+    if (p.hit(BTN.RB)) this.warpLog = Math.min(4, this.warpLog + 0.5);
+  }
+
+  /** select the next (or previous) body, in order of distance from a point */
+  cycle(dir: number, from: P3) {
+    const list = this.visual.filter(b => b.source || b.look.craft)
+      .map(b => ({ b, d: (b.x - from.x) ** 2 + (b.y - from.y) ** 2 + (b.z - from.z) ** 2 }))
+      .sort((a, c) => a.d - c.d).map(x => x.b);
+    if (!list.length) return;
+    const i = this.selected ? list.indexOf(this.selected) : -1;
+    this.select(list[i < 0 ? (dir > 0 ? 0 : list.length - 1) : (i + dir + list.length) % list.length]);
   }
 
   /** what the tools draw on top: the ruler, the push arrow, the eraser */

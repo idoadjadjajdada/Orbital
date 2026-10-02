@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { View3D } from './view3d';
 import type { V3 } from '../pixel/sprites';
+import { BTN } from '../ui/gamepad';
 
 /**
  * Flying controls for the 3D view, mapped for keyboard and mouse and for touch.
@@ -9,6 +10,14 @@ import type { V3 } from '../pixel/sprites';
  * C (or R and F) up and down, Q and E to roll, Shift to boost tenfold, the
  * wheel or + and − to set the throttle. Click with the mouse captured selects
  * what is under the crosshair; T flies to the selection; V goes back to the map.
+ *
+ * Controller (Xbox layout): left stick flies, right stick looks, the
+ * triggers go up and down, the bumpers roll, clicking the left stick boosts
+ * until it is let go. A selects what is under the crosshair, B flies to it,
+ * X overdrive, Y jump, View the map (where A goes and Y jumps to the
+ * selection and B closes it), the d-pad steps through nearby bodies (left,
+ * right) and sets the throttle (up, down), clicking the right stick changes
+ * the view, Menu goes back to the map.
  *
  * Touch: a stick on the left moves, dragging anywhere else looks, a tap selects,
  * and buttons on the right go up, down, boost, change the throttle and fly to
@@ -20,10 +29,13 @@ export class Controls3D {
   private stick = { x: 0, y: 0, id: -1, cx: 0, cy: 0 };
   private look = { id: -1, x: 0, y: 0, moved: 0 };
   private hold = { up: false, down: false, boost: false };
+  /** boost latched on by clicking the left stick, until the stick is let go */
+  private padBoost = false;
   readonly root: HTMLElement;
   private hudEl: HTMLElement;
   private knob: HTMLElement;
   private flashEl: HTMLElement;
+  private hintEl: HTMLElement;
 
   constructor(private v: View3D) {
     this.root = document.createElement('div');
@@ -32,7 +44,7 @@ export class Controls3D {
     this.root.innerHTML = `
       <div class="xhair"></div>
       <div class="hud3" id="hud3"></div>
-      <div class="hint3">Click to look · WASD fly · Space / C up, down · Q / E roll · Shift boost · Wheel throttle · Click selects · T go · O overdrive · J jump · M map · Z view · V back</div>
+      <div class="hint3">${KEYS_HINT}</div>
       <div class="flash3" id="flash3"></div>
       <div class="stick3" id="stick3"><div class="knob3" id="knob3"></div></div>
       <div class="btns3">
@@ -45,6 +57,7 @@ export class Controls3D {
     this.hudEl = this.root.querySelector('#hud3')!;
     this.knob = this.root.querySelector('#knob3')!;
     this.flashEl = this.root.querySelector('#flash3')!;
+    this.hintEl = this.root.querySelector('.hint3')!;
     const stick = this.root.querySelector('#stick3') as HTMLElement;
 
     window.addEventListener('keydown', e => this.key(e, true));
@@ -177,24 +190,48 @@ export class Controls3D {
   moving() {
     const k = this.keys;
     return k.has('KeyW') || k.has('KeyS') || k.has('KeyA') || k.has('KeyD') || k.has('Space') || k.has('KeyC') || k.has('KeyR') || k.has('KeyF')
-      || this.stick.id >= 0 || this.hold.up || this.hold.down;
+      || this.stick.id >= 0 || this.hold.up || this.hold.down
+      || !!(this.app().pad.ls[0] || this.app().pad.ls[1] || this.app().pad.lt || this.app().pad.rt);
   }
 
   update(dt: number) {
-    const k = this.keys;
-    const roll = (k.has('KeyQ') ? 1 : 0) - (k.has('KeyE') ? 1 : 0);
+    const k = this.keys, p = this.app().pad;
+    const roll = (k.has('KeyQ') || p.on(BTN.LB) ? 1 : 0) - (k.has('KeyE') || p.on(BTN.RB) ? 1 : 0);
     if (roll) this.turn(0, 0, roll * dt * 1.4);
+    if (p.connected) this.padUpdate(dt);
+  }
+
+  private padUpdate(dt: number) {
+    const p = this.app().pad, v = this.v, r = v.radar;
+    if (p.rs[0] || p.rs[1]) this.turn(-p.rs[0] * 2.4 * dt, -p.rs[1] * 1.8 * dt, 0);
+    if (p.hit(BTN.LS)) this.padBoost = !this.padBoost;
+    if (!p.ls[0] && !p.ls[1]) this.padBoost = false;
+    const sel = this.app().selected;
+    if (p.hit(BTN.A)) {
+      if (r.big) { if (sel && sel.alive) v.goTo(sel); r.toggle(false); }
+      else this.app().select(v.pick());
+    }
+    if (p.hit(BTN.B)) { if (r.big) r.toggle(false); else this.goSelected(); }
+    if (p.hit(BTN.X)) this.command('od');
+    if (p.hit(BTN.Y)) { this.command('jump'); if (r.big) r.toggle(false); }
+    if (p.hit(BTN.VIEW)) this.command('map');
+    if (p.hit(BTN.RS)) this.command('view');
+    if (p.hit(BTN.UP)) this.throttle = clamp(this.throttle * 2, 1e-3, 1e3);
+    if (p.hit(BTN.DOWN)) this.throttle = clamp(this.throttle / 2, 1e-3, 1e3);
+    const P = v.where(), at = { x: P[0], y: P[1], z: P[2] };
+    if (p.hit(BTN.RIGHT)) this.app().cycle(1, at);
+    if (p.hit(BTN.LEFT)) this.app().cycle(-1, at);
   }
 
   /** the velocity the pilot is asking for, world frame, m/s */
   thrust(speed: number): V3 {
-    const k = this.keys;
-    let f = (k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0) - this.stick.y;
-    let s = (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0) + this.stick.x;
-    let u = (k.has('Space') || k.has('KeyR') || this.hold.up ? 1 : 0) - (k.has('KeyC') || k.has('KeyF') || this.hold.down ? 1 : 0);
+    const k = this.keys, p = this.app().pad;
+    let f = (k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0) - this.stick.y - p.ls[1];
+    let s = (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0) + this.stick.x + p.ls[0];
+    let u = (k.has('Space') || k.has('KeyR') || this.hold.up ? 1 : 0) - (k.has('KeyC') || k.has('KeyF') || this.hold.down ? 1 : 0) + p.rt - p.lt;
     const l = Math.hypot(f, s, u);
     if (l > 1) { f /= l; s /= l; u /= l; }
-    const boost = k.has('ShiftLeft') || k.has('ShiftRight') || this.hold.boost ? 10 : 1;
+    const boost = k.has('ShiftLeft') || k.has('ShiftRight') || this.hold.boost || this.padBoost ? 10 : 1;
     const q = this.v.camera.quaternion;
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q), right = new THREE.Vector3(1, 0, 0).applyQuaternion(q), up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
     const v = fwd.multiplyScalar(f).add(right.multiplyScalar(s)).add(up.multiplyScalar(u)).multiplyScalar(speed * boost);
@@ -207,10 +244,19 @@ export class Controls3D {
     const html = `<b>${r.speed}</b> <span>throttle ${t}</span><div class="drv">${r.drive}</div><div class="jmp">jump ${bar}</div>`
       + `${r.near ? `<div>near ${r.near}</div>` : ''}${r.target ? `<div class="tgt">◎ ${r.target}</div>` : ''}${r.riding ? `<div class="dim">moving with ${r.riding}</div>` : ''}`;
     if (this.hudEl.innerHTML !== html) this.hudEl.innerHTML = html;
+    const pad = this.app().pad.connected;
+    if (this.hintEl.dataset.pad !== String(pad)) {
+      this.hintEl.dataset.pad = String(pad);
+      this.hintEl.textContent = pad
+        ? 'L stick fly · R stick look · LT / RT down, up · LB / RB roll · L3 boost · A select · B go · X overdrive · Y jump · View map · D-pad ◀▶ targets, ▲▼ throttle · R3 view · Menu back'
+        : KEYS_HINT;
+    }
     const o = Math.min(1, r.flash).toFixed(2);
     if (this.flashEl.style.opacity !== o) this.flashEl.style.opacity = o;
     for (const b of this.root.querySelectorAll<HTMLElement>('[data-b="od"]')) b.classList.toggle('on', this.v.ship.od);
   }
 }
+
+const KEYS_HINT = 'Click to look · WASD fly · Space / C up, down · Q / E roll · Shift boost · Wheel throttle · Click selects · T go · O overdrive · J jump · M map · Z view · V back';
 
 const clamp = (x: number, a: number, b: number) => Math.max(a, Math.min(b, x));
