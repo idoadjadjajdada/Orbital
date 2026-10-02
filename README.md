@@ -155,18 +155,21 @@ where its orbit's angular momentum settles it: a(1−e²) inside or outside the
 limit.
 
 **A Moon from a giant impact.** The Theia graze leaves about 2% of the mass
-in orbit (Canup 2004) with its surface density falling as r^−1.5, half inside
-the Roche limit as a ring of small pieces and half outside as self-gravitating
-clumps. A third of it starts as rock vapour, which does not gravitate here but
-drags on the clumps until it condenses, about a year, damping their
-eccentricities on the timescale of Tanaka & Ward (2004). Clumps that meet
-slowly inside their mutual Hill sphere are merged — the gravitational
-aggregation rule of N-body lunar-accretion studies — because in a disc that
-thick with debris the encounter is damped before they can separate. Roughly
-half the disc falls back onto the Earth, as Ida et al. (1997) found; the rest
-gathers into a Moon of the order of a lunar mass within a few weeks, though
-like the real process it is chaotic, and some runs end with two moons or a
-smaller one.
+in orbit (Canup 2004), surface density falling as r^−1.5. Inside the Roche
+limit it is a ring of 500 small pieces that collide and settle. Outside it,
+as the impact simulations find, it is a few intact clumps of Theia's mantle,
+the largest holding about half (Canup & Asphaug 2001). A third of the disc
+starts as rock vapour turning in the impact's plane; it does not gravitate
+here, but it drags on the clumps until it condenses, about a year, damping
+their eccentricities on the timescale of Tanaka & Ward (2004). Clumps that
+meet slowly inside their mutual Hill sphere merge — the gravitational
+aggregation rule of N-body lunar-accretion studies — and the merged Earth
+takes the recoil of the uneven disc, keeping momentum exact. The process is
+chaotic, as the real one was: in nine test runs at the preset's own clock,
+eight left a moon or two moons totalling about a lunar mass (largest single
+moons 0.6 to 1.4 lunar masses) within a few weeks, at four to eight Earth
+radii; one scattered its clumps and left only fragments. Roughly half the
+disc falls back onto the Earth, as Ida et al. (1997) found.
 
 **Accretion discs and jets.** Gas round a white dwarf, neutron star or black
 hole is an α-disc (Shakura & Sunyaev, α = 0.1): the same collisions settle it,
