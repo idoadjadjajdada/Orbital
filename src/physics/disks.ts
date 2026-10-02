@@ -55,8 +55,7 @@ export class DiskPhysics {
     const srcs = w.sources;
     if (!srcs.length) return false;
     for (const p of w.bodies) {
-      // only the swarm: moonlets that pull are bodies, not clouds of metre-sized grains
-      if (!p.alive || !p.isParticle || p.source) continue;
+      if (!p.alive || !p.isParticle) continue;
       // who it goes round changes slowly; refresh an eighth of the swarm each frame
       let h = this.hostOf.get(p);
       if (h === undefined || (p.id + this.frame) % 8 === 0 || (h && !h.alive)) {
@@ -129,7 +128,7 @@ export class DiskPhysics {
     const nPhi = Math.max(6, Math.min(64, Math.floor(n / (nR * 6))));
     const sigK = 3 / (4 * GRAIN_RHO * GRAIN) / (AU_M * AU_M) * MSUN_KG; // AU² of grain cross-section per M☉
     const GM = G * host.m;
-    interface Col { m: number; vol: number; sig: number; R: number; gas: number; mvR: number; mvz: number; L: number; Lk: number; idx: number[] }
+    interface Col { src: number; m: number; vol: number; sig: number; R: number; gas: number; mvR: number; mvz: number; L: number; Lk: number; idx: number[] }
     const cells = new Map<number, Col>();
     for (let k = 0; k < n; k++) {
       const R = loc[k * 6];
@@ -139,8 +138,11 @@ export class DiskPhysics {
       const ip = Math.floor(((Math.atan2(loc[k * 6 + 2], loc[k * 6 + 1]) + Math.PI) / (2 * Math.PI)) * nPhi) % nPhi;
       const key = (ir + 100000) * 128 + ip;
       let c = cells.get(key);
-      if (!c) cells.set(key, (c = { m: 0, vol: 0, sig: 0, R: 0, gas: 0, mvR: 0, mvz: 0, L: 0, Lk: 0, idx: [] }));
-      c.m += p.m; c.vol += p.m / p.dens; c.sig += p.m * sigK; c.R += p.m * R;
+      if (!c) cells.set(key, (c = { src: 0, m: 0, vol: 0, sig: 0, R: 0, gas: 0, mvR: 0, mvz: 0, L: 0, Lk: 0, idx: [] }));
+      // a moonlet shares momentum with the debris it ploughs through, but it is one
+      // body, not a cloud of metre-sized grains: it adds nothing to the optical depth
+      c.m += p.m; c.vol += p.m / p.dens; c.R += p.m * R;
+      if (!p.source) c.sig += p.m * sigK; else c.src++;
       c.mvR += p.m * loc[k * 6 + 3]; c.mvz += p.m * loc[k * 6 + 5];
       c.L += p.m * R * loc[k * 6 + 4];
       c.Lk += p.m * R * Math.sqrt(GM / R);
@@ -214,7 +216,8 @@ export class DiskPhysics {
       // ...and only if the patch's orbit stays outside it: a clump whose periapsis
       // dips inside will be torn apart again on its next pass, so it never forms
       let rpOk = false;
-      if (cl.gas === 0 && cl.list.length >= 4 && R > aRoche) {
+      // (a patch holding a moonlet already has its clump: moonlets merge by gather())
+      if (cl.gas === 0 && c.src === 0 && cl.list.length >= 4 && R > aRoche) {
         const vR = c.mvR / c.m, vP = c.L / c.m / R, vZ = c.mvz / c.m;
         const eps = (vR * vR + vP * vP + vZ * vZ) / 2 - GM / R;
         if (eps < 0) {
@@ -236,7 +239,7 @@ export class DiskPhysics {
           let x = 0, y = 0, z = 0;
           for (const p of cl.list) { x += p.m * p.x; y += p.m * p.y; z += p.m * p.z; w.kill(p); }
           const b = new Body({ name: 'moonlet', kind: 'fragment', cls: 'debris', m: c.m, r: rClump,
-            look: { style: 'barren', seed: Math.floor(Math.random() * 1e6), c1: 0x6a625a, c2: 0x9a9088 }, source: c.m > 1e-13, spin: 0 });
+            look: { style: 'barren', seed: Math.floor(Math.random() * 1e6), c1: 0x6a625a, c2: 0x9a9088 }, source: c.m > Math.max(1e-13, 1e-4 * host.m), spin: 0 });
           b.setPos(x / c.m, y / c.m, z / c.m);
           b.setVel(ux, uy, uz);
           b.heat = 0.4;
