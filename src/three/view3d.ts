@@ -1,13 +1,16 @@
 import * as THREE from 'three';
 import type { App } from '../app';
 import type { Body } from '../physics/body';
-import { AU_M, C, schwarzschild, fmtLength, sig } from '../physics/units';
+import { AU_M, schwarzschild, fmtLength, sig } from '../physics/units';
 import { buildMap, paintCrater, ringTau, type SurfaceMap } from '../pixel/surface';
 import { bodyFrame, starRGB, type V3 } from '../pixel/sprites';
 import { bodyAxis, tintOf } from '../pixel/renderer';
 import { Controls3D } from './controls';
-import { Ship, CRUISE, OD_MAX } from './ship';
+import { Ship, CRUISE, OD_MAX, C_MS, JUMP_CHARGE, JUMP_REFILL, MOUTH_R, MOUTH_AHEAD, EXIT_T, type Mover, type Worm } from './ship';
+import { HELM_EYE, CHASE_EYE, SCOPE_EYE, HATCH_OUT, HATCH_IN, COUCH_EYE, type StationId } from './hull';
+import { mouthMesh, tickMouth } from './wormhole';
 import { Radar, fmtTime } from './radar';
+import { NavMap } from './navmap';
 
 /**
  * The sandbox seen from inside it, at true scale. The scene is laid out in
@@ -17,9 +20,12 @@ import { Radar, fmtTime } from './radar';
  * the 10²⁰ range of distances. It renders at half resolution with nearest
  * filtering and a few lighting steps, to keep the pixel-art look.
  *
- * The viewer is a free-flying body: it rides along with whatever pulls on it
+ * The ship is a free-flying body: it rides along with whatever pulls on it
  * hardest, so worlds do not race away at tens of km/s, and flies at a speed
- * that scales with its height above the nearest surface.
+ * that scales with its height above the nearest surface. The viewer is
+ * separate from it: at the helm, on foot inside it (wherever it is going,
+ * wormholes included), at its telescope, or outside it in a suit, which
+ * rides along the same way.
  */
 
 interface Obj { group: THREE.Group; kind: 'world' | 'star' | 'hole' | 'white' | 'worm' | 'craft'; map?: SurfaceMap; tex?: THREE.DataTexture; seen: Set<object>; mat?: THREE.ShaderMaterial; jet?: THREE.Group; style?: string }
@@ -94,6 +100,14 @@ void main() {
   gl_FragColor = vec4(col * (0.25 + 0.75 * lightCol), a);
 }`;
 
+
+export type Mode = 'pilot' | 'walk' | 'eva' | 'scope';
+
+const UP = new THREE.Vector3(0, 1, 0);
+const YR = 365.25 * 86400;
+/** the closest the ship comes to a surface, m: it is 55 m long */
+const SHIP_CLEAR = 60;
+
 export class View3D {
   readonly canvas: HTMLCanvasElement;
   private renderer: THREE.WebGLRenderer;
@@ -106,18 +120,38 @@ export class View3D {
   private glowTex: THREE.Texture;
   private sphere = new THREE.SphereGeometry(1, 48, 24);
   private labels: HTMLElement;
-  private labelEls = new Map<Body, HTMLElement>();
+  private labelEls = new Map<Body | string, HTMLElement>();
   controls: Controls3D;
   ship: Ship;
   radar: Radar;
+  nav: NavMap;
   active = false;
   /** overdrive switched on by the autopilot, to switch off on arrival */
   private autoOd = false;
 
-  /** where the viewer is: an offset (AU) from the body it rides with, a velocity (m/s) relative to it, and which way it faces */
-  pilot = { anchor: null as Body | null, off: [0, 0, 0] as V3, vel: [0, 0, 0] as V3 };
-  /** flying to a body: it, and how close to stop */
-  travel: { b: Body; stop: number } | null = null;
+  /**
+   * where you are: at the helm flying the ship, on foot inside it, outside
+   * it in a suit, or at the telescope
+   */
+  mode: Mode = 'pilot';
+  /** on foot: where you stand on the deck (ship coordinates, m), which way you face, how high you have jumped, and the seat you are in */
+  foot = { p: new THREE.Vector3(1, 0, -20), yaw: 0, pitch: 0, y: 0, vy: 0, seat: null as null | { eye: THREE.Vector3; yaw: number } };
+  /** outside: the suit, which moves on its own, and which way it faces */
+  suit = { nav: { anchor: null, off: [0, 0, 0], vel: [0, 0, 0] } as Mover, quat: new THREE.Quaternion() };
+  /** the telescope: where it points (world) and its field of view, degrees */
+  scope = { quat: new THREE.Quaternion(), fov: 8, track: false };
+  /** what you can do right now where you are looking, if anything */
+  prompt: { label: string; act: () => void } | null = null;
+  /** the ship flying itself somewhere: to a body, or to a point (the suit), and how close to stop */
+  travel: { b: Body | null; at?: () => V3; stop: number; name: string } | null = null;
+  /** worlds the ship has been to, for the shelf in the commons */
+  private visited: Body[] = [];
+  private trophyKey = '';
+  /** what the viewer's position is measured from, and the offset from it (m, world axes) */
+  private base!: Mover;
+  private eye = new THREE.Vector3();
+  private screenT = 0;
+  private shake = 0;
 
   constructor(readonly app: App) {
     this.canvas = document.createElement('canvas');
@@ -126,7 +160,7 @@ export class View3D {
     document.body.insertBefore(this.canvas, document.body.firstChild?.nextSibling ?? null);
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: false, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(0.5);
-    this.camera = new THREE.PerspectiveCamera(70, 1, 0.5, 1e19);
+    this.camera = new THREE.PerspectiveCamera(70, 1, 0.05, 1e19);
     this.camera.up.set(0, 0, 1);
     this.glowTex = glowTexture();
     this.sky = starField();
@@ -141,20 +175,34 @@ export class View3D {
     this.labels.id = 'labels3';
     this.labels.hidden = true;
     document.body.appendChild(this.labels);
+    this.ship = new Ship(this.scene, this.glowTex);
+    this.scene.add(this.camera);
+    this.base = this.ship.nav;
     this.controls = new Controls3D(this);
-    this.ship = new Ship(this.camera, this.scene, this.glowTex);
     this.radar = new Radar({
       camera: this.camera,
       where: () => this.where(),
       bodies: () => this.app.visual,
       selected: () => this.app.selected,
-      select: b => this.app.select(b),
-      go: b => { this.app.select(b); this.goTo(b); },
-      jump: b => { this.app.select(b); this.jumpTo(b); },
-      canJump: () => this.ship.ready(),
-      eta: d => this.eta(d),
+      open: () => this.openMap(),
     });
     this.controls.root.appendChild(this.radar.el);
+    this.nav = new NavMap({
+      bodies: () => this.app.visual,
+      hostOf: b => this.app.hostOf(b),
+      selected: () => this.app.selected,
+      select: b => this.app.select(b),
+      ship: () => { const f = new THREE.Vector3(0, 0, -1).applyQuaternion(this.ship.quat); return { p: posOf(this.ship.nav), fwd: [f.x, f.y, f.z] }; },
+      suit: () => (this.mode === 'eva' ? posOf(this.suit.nav) : null),
+      go: b => this.goTo(b),
+      jump: b => this.jumpTo(b),
+      jumpBlock: () => this.jumpBlock(),
+      goBlock: () => this.goBlock(),
+      eta: d => this.eta(d),
+      pad: this.app.pad,
+      onClose: () => this.controls.mapClosed(),
+    });
+    this.controls.root.appendChild(this.nav.el);
     window.addEventListener('resize', () => this.resize());
     this.resize();
   }
@@ -166,7 +214,7 @@ export class View3D {
     this.camera.updateProjectionMatrix();
   }
 
-  /** Step into the sandbox beside the selected body (or the followed one, or the heaviest). */
+  /** Step into the sandbox at the helm, beside the selected body (or the followed one, or the heaviest). */
   enter() {
     this.active = true;
     this.canvas.hidden = false;
@@ -174,25 +222,60 @@ export class View3D {
     this.controls.show(true);
     const a = this.app;
     const b = a.selected ?? a.focus ?? [...a.world.sources].sort((p, q) => q.m - p.m)[0] ?? null;
-    this.pilot.anchor = b;
-    this.pilot.vel = [0, 0, 0];
+    const sh = this.ship;
+    sh.nav.anchor = b;
+    sh.nav.vel = [0, 0, 0];
     this.travel = null;
-    this.ship.jump = null;
-    this.ship.od = false;
-    this.ship.odLevel = 0;
+    sh.worm = null;
+    sh.od = false;
+    sh.odLevel = 0;
+    sh.view = 'chase';
+    this.mode = 'pilot';
+    this.foot.seat = null;
     if (b) {
       const d = Math.max(b.r * 4, 2e-7);
-      this.pilot.off = [d * 0.8, -d * 0.55, d * 0.25];
-      this.camera.position.set(0, 0, 0);
-      this.camera.lookAt(-this.pilot.off[0], -this.pilot.off[1], -this.pilot.off[2]);
-    } else this.pilot.off = [0, 0, 0];
+      sh.nav.off = [d * 0.8, -d * 0.55, d * 0.25];
+      lookAlong(sh.quat, [-sh.nav.off[0], -sh.nav.off[1], -sh.nav.off[2]]);
+    } else sh.nav.off = [0, 0, 0];
     this.resize();
+    this.warm();
+  }
+
+  /**
+   * draw the wormhole once, into a single pixel, so its shaders are compiled
+   * and ready (some drivers only finish the job at the first draw) and the
+   * first transit does not stall on them
+   */
+  private warmed = false;
+  private warm() {
+    if (this.warmed) return;
+    this.warmed = true;
+    const sh = this.ship, r = this.renderer;
+    for (const m of [sh.mouthIn, sh.mouthOut]) { m.visible = true; m.position.set(0, 0, -1000); m.scale.setScalar(100); }
+    sh.tunnel.visible = true;
+    const cam = this.camera, g = sh.hull.group;
+    // the ship behind the camera, with the tunnel (which is part of it) still round it
+    const was = g.position.clone();
+    g.position.set(0, 0, 1000);
+    cam.position.set(0, 0, 0);
+    r.setScissorTest(true);
+    // the middle pixel: looking ahead it is the mouth, looking aside the tunnel's wall
+    r.setScissor(Math.floor(window.innerWidth / 2), Math.floor(window.innerHeight / 2), 1, 1);
+    for (const yaw of [0, Math.PI / 2]) {
+      cam.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+      cam.updateMatrixWorld();
+      r.render(this.scene, cam);
+    }
+    r.setScissorTest(false);
+    g.position.copy(was);
+    sh.mouthIn.visible = sh.mouthOut.visible = sh.tunnel.visible = false;
   }
 
   exit() {
     this.active = false;
     this.canvas.hidden = true;
     this.labels.hidden = true;
+    this.nav.show(false);
     this.controls.show(false);
     for (const el of this.labelEls.values()) el.remove();
     this.labelEls.clear();
@@ -201,13 +284,12 @@ export class View3D {
 
   /** the viewer's position in the simulation, AU */
   where(): V3 {
-    const a = this.pilot.anchor;
-    return [(a?.x ?? 0) + this.pilot.off[0], (a?.y ?? 0) + this.pilot.off[1], (a?.z ?? 0) + this.pilot.off[2]];
+    const p = posOf(this.base);
+    return [p[0] + this.eye.x / AU_M, p[1] + this.eye.y / AU_M, p[2] + this.eye.z / AU_M];
   }
 
-  /** the body nearest the viewer, and the height above its surface (m) */
-  nearest(): { b: Body | null; alt: number } {
-    const p = this.where();
+  /** the body nearest a point (the viewer, by default), and the height above its surface (m) */
+  nearest(p: V3 = this.where()): { b: Body | null; alt: number } {
     let best: Body | null = null, alt = Infinity;
     for (const b of this.app.visual) {
       const d = (Math.hypot(b.x - p[0], b.y - p[1], b.z - p[2]) - this.visR(b)) * AU_M;
@@ -216,54 +298,187 @@ export class View3D {
     return { b: best, alt };
   }
 
-  /** what the viewer rides with: whatever pulls hardest where it is */
-  private pickAnchor() {
-    const p = this.where();
+  /** ride with whatever pulls hardest where a mover is */
+  private pickAnchor(m: Mover) {
+    if (m.anchor && !m.anchor.alive) m.anchor = null;
+    const p = posOf(m);
     let best: Body | null = null, g = 0;
     for (const s of this.app.world.sources) {
       const d2 = (s.x - p[0]) ** 2 + (s.y - p[1]) ** 2 + (s.z - p[2]) ** 2;
       const a = s.m / Math.max(d2, s.r * s.r);
       if (a > g) { g = a; best = s; }
     }
-    const old = this.pilot.anchor;
-    if (best && best !== old) {
-      // keep the viewer where it is and how it moves through space
-      const v = this.pilot.vel;
-      if (old && old.alive) for (let k = 0; k < 3; k++) v[k] += ([old.vx, old.vy, old.vz][k] - [best.vx, best.vy, best.vz][k]) * AU_M / (365.25 * 86400);
-      this.pilot.off = [p[0] - best.x, p[1] - best.y, p[2] - best.z];
-      this.pilot.anchor = best;
-    }
+    if (best && best !== m.anchor) rebase(m, best);
   }
 
   private visR(b: Body) { return b.cls === 'bh' && !b.look.wormhole && !b.look.white ? 2.6 * schwarzschild(b.m) : b.r; }
+  private stopFor(b: Body) { return Math.max(this.visR(b) * 3, b.look.craft ? 2e-9 : 2e-8); }
 
-  /** go to a body: fly there and stop a few radii out */
+  // ---------------------------------------------------------------- commands
+  /** why the ship cannot fly somewhere now, or '' */
+  goBlock() {
+    if (this.mode === 'eva') return 'Board the ship first: it holds station while you are outside';
+    if (this.ship.worm) return 'Not during a wormhole transit';
+    return '';
+  }
+
+  /** why the wormhole drive cannot open a way now, or '' */
+  jumpBlock() {
+    const sh = this.ship;
+    if (this.mode === 'eva') return 'Board the ship first: it holds station while you are outside';
+    if (sh.worm) return 'A transit is under way';
+    if (sh.charge < 1) return `The wormhole drive is recharging: ${Math.ceil((1 - sh.charge) * JUMP_REFILL)} s`;
+    return '';
+  }
+
+  /** fly to a body and stop a few radii out; a wormhole's mouth, fly on in */
   goTo(b: Body) {
-    const stop = Math.max(this.visR(b) * 3, b.look.craft ? 1e-9 : 2e-8);
-    this.travel = { b, stop };
+    const why = this.goBlock();
+    if (why) { this.app.onToast(why); return; }
+    this.travel = { b, stop: b.look.wormhole ? 0 : this.stopFor(b), name: b.name };
+  }
+
+  /** open a wormhole to a body; the same again while it charges calls it off */
+  jumpTo(b: Body) {
+    const sh = this.ship;
+    if (sh.worm?.phase === 'charge' && !sh.worm.natural) { sh.worm = null; this.app.onToast('Wormhole called off'); return; }
+    const why = this.jumpBlock();
+    if (why) { this.app.onToast(why); return; }
+    if (!b.alive) return;
+    const f = new THREE.Vector3(0, 0, -MOUTH_AHEAD / AU_M).applyQuaternion(sh.quat);
+    const n = sh.nav;
+    sh.worm = { phase: 'charge', t: 0, to: b, dur: 6, natural: false, mouth: { anchor: n.anchor, off: [n.off[0] + f.x, n.off[1] + f.y, n.off[2] + f.z], vel: [0, 0, 0] } };
+    sh.od = false;
+    this.autoOd = false;
+    this.travel = null;
+    this.app.onToast(`Opening a wormhole to ${b.name}`);
+  }
+
+  /** the ship comes to you, outside */
+  callShip() {
+    if (this.mode !== 'eva') return;
+    if (relM(this.suit.nav, this.ship.nav).length() < 45) { this.app.onToast('The ship is right here: the airlock is marked'); return; }
+    this.travel = { b: null, at: () => posOf(this.suit.nav), stop: 30 / AU_M, name: 'you' };
+    this.app.onToast('The ship is on its way to you');
+  }
+
+  openMap() {
+    this.nav.show(true);
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
+
+  /** get up from the helm, beside the chair */
+  leaveHelm() {
+    this.mode = 'walk';
+    this.foot.p.set(1, 0, -20);
+    this.foot.yaw = 0; this.foot.pitch = -0.1;
+    this.foot.seat = null;
+  }
+
+  /** use a station on board */
+  use(id: StationId) {
+    const sh = this.ship, toast = (m: string) => this.app.onToast(m);
+    switch (id) {
+      case 'helm': this.mode = 'pilot'; sh.view = 'cockpit'; break;
+      case 'nav': this.openMap(); break;
+      case 'scope': {
+        this.mode = 'scope';
+        const sel = this.app.selected;
+        this.scope.fov = 8;
+        this.scope.track = !!sel;
+        if (sel && sel.alive) this.aimScope(sel);
+        else this.scope.quat.copy(sh.quat).multiply(new THREE.Quaternion().setFromAxisAngle(UP, -Math.PI / 2));
+        break;
+      }
+      case 'airlock': this.stepOut(); break;
+      case 'couch': this.foot.seat = { eye: COUCH_EYE.clone(), yaw: Math.PI / 2 }; this.foot.yaw = Math.PI / 2; this.foot.pitch = 0; break;
+      case 'coffee': toast(['Coffee. It tastes of recycled air.', 'Coffee, black. The machine hums approvingly.', 'You make a coffee and watch it swirl in the artificial gravity.'][Math.floor(Math.random() * 3)]); break;
+      case 'shelf': toast(this.visited.length ? `Souvenirs: ${this.visited.map(b => b.name).join(', ')}` : 'An empty shelf. Fly close to a world to bring back a globe of it.'); break;
+      case 'reactor': {
+        const w = sh.worm;
+        toast(`Reactor nominal · overdrive ${sh.od ? `on, ${(sh.odLevel * 100).toFixed(0)}%` : 'off'} · wormhole drive ${w ? `in transit to ${w.to.name}` : sh.charge >= 1 ? 'charged' : `recharging, ${Math.ceil((1 - sh.charge) * JUMP_REFILL)} s`}`);
+        break;
+      }
+    }
+  }
+
+  /** out of the airlock, in a suit; the ship stops and holds station */
+  stepOut() {
+    const sh = this.ship;
+    if (sh.worm) { this.app.onToast('Not in the middle of a wormhole transit'); return; }
+    this.travel = null;
+    sh.od = false;
+    this.autoOd = false;
+    sh.nav.vel = [0, 0, 0];
+    const o = HATCH_OUT.clone().applyQuaternion(sh.quat);
+    this.suit.nav = { anchor: sh.nav.anchor, off: [sh.nav.off[0] + o.x / AU_M, sh.nav.off[1] + o.y / AU_M, sh.nav.off[2] + o.z / AU_M], vel: [0, 0, 0] };
+    this.suit.quat.copy(sh.quat).multiply(new THREE.Quaternion().setFromAxisAngle(UP, Math.PI / 2));
+    this.mode = 'eva';
+    this.app.onToast('Outside. The ship holds station; G (or X) calls it to you');
+  }
+
+  /** back in through the airlock */
+  board() {
+    this.mode = 'walk';
+    this.foot.p.copy(HATCH_IN);
+    this.foot.yaw = -Math.PI / 2; this.foot.pitch = 0;
+    this.foot.seat = null;
+    this.ship.boardable = false;
+  }
+
+  /** leave the telescope, standing beside it */
+  leaveScope() {
+    this.mode = 'walk';
+    this.foot.p.set(4.1, 0, 1.75);
+    this.foot.yaw = -Math.PI / 2; this.foot.pitch = 0;
+  }
+
+  aimScope(b: Body) {
+    const P = this.where();
+    lookAlong(this.scope.quat, [b.x - P[0], b.y - P[1], b.z - P[2]]);
+  }
+
+  /** turn the view, about its own axes (radians): the ship at the helm, your head on foot, the suit outside */
+  turn(yaw: number, pitch: number, roll: number) {
+    const rot = (q: THREE.Quaternion) => {
+      const t = new THREE.Quaternion();
+      t.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw); q.multiply(t);
+      t.setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitch); q.multiply(t);
+      t.setFromAxisAngle(new THREE.Vector3(0, 0, 1), roll); q.multiply(t);
+      q.normalize();
+    };
+    if (this.mode === 'pilot') { if (!this.ship.worm || this.ship.worm.phase === 'charge') rot(this.ship.quat); }
+    else if (this.mode === 'eva') rot(this.suit.quat);
+    else if (this.mode === 'scope') { const k = this.scope.fov / 70; yaw *= k; pitch *= k; roll = 0; rot(this.scope.quat); this.scope.track = false; }
+    else {
+      this.foot.yaw += yaw;
+      this.foot.pitch = Math.max(-1.45, Math.min(1.45, this.foot.pitch + pitch));
+    }
   }
 
   // ---------------------------------------------------------------- frame
   frame(dtReal: number) {
     if (!this.active) return;
-    const app = this.app;
-    if (this.pilot.anchor && !this.pilot.anchor.alive) this.pilot.anchor = null;
-    this.pickAnchor();
+    const app = this.app, sh = this.ship;
+    if (!sh.worm || sh.worm.phase !== 'tunnel') this.pickAnchor(sh.nav);
+    if (this.mode === 'eva') this.pickAnchor(this.suit.nav);
     this.controls.update(dtReal);
-    const arrive = this.ship.update(dtReal);
-    if (arrive) this.arrive(arrive);
-    this.fly(dtReal);
+    sh.update(dtReal);
+    if (sh.worm) this.wormStep(dtReal); else this.fly(dtReal);
+    if (this.mode === 'walk') this.walk(dtReal);
+    if (this.mode === 'eva') this.spacewalk(dtReal);
+    this.place();
     const P = this.where();
     const cam = this.camera;
-    cam.position.set(0, 0, 0);
     cam.updateMatrixWorld();
+    const tunnel = sh.worm?.phase === 'tunnel';
 
     // light: the star that lights each body best
     const stars = app.world.sources.filter(s => (s.cls === 'star' || s.cls === 'wd') && (s.star?.L ?? 0) > 0);
     const seen = new Set<Body>();
     const tanPx = Math.tan((cam.fov * Math.PI) / 360) / (window.innerHeight / 4);
     const mk: number[] = [], mc: number[] = [];
-    for (const b of app.visual) {
+    if (!tunnel) for (const b of app.visual) {
       const rel: V3 = [(b.x - P[0]) * AU_M, (b.y - P[1]) * AU_M, (b.z - P[2]) * AU_M];
       const dist = Math.hypot(rel[0], rel[1], rel[2]);
       const R = this.visR(b) * AU_M;
@@ -274,7 +489,7 @@ export class View3D {
         mk.push(rel[0], rel[1], rel[2]);
         mc.push(t[0], t[1], t[2]);
       }
-      const glowy = b.cls === 'star' || b.cls === 'wd' || b.cls === 'ns' || b.look.white;
+      const glowy = b.cls === 'star' || b.cls === 'wd' || b.cls === 'ns' || b.look.white || b.look.wormhole;
       if (angPx < 0.6 && !glowy && !b.feed) continue;
       seen.add(b);
       let o = this.objs.get(b);
@@ -288,10 +503,11 @@ export class View3D {
       if (!seen.has(b)) o.group.visible = false;
     }
     setPoints(this.markers, mk, mc);
+    this.sky.visible = !tunnel;
 
     // particles: gas and debris
     const pp: number[] = [], pc: number[] = [];
-    for (const p of app.world.bodies) {
+    if (!tunnel) for (const p of app.world.bodies) {
       if (!p.alive || p.source || !p.isParticle) continue;
       pp.push((p.x - P[0]) * AU_M, (p.y - P[1]) * AU_M, (p.z - P[2]) * AU_M);
       const c = p.look.c1, h = p.heat;
@@ -302,81 +518,297 @@ export class View3D {
 
     // the light on the hull: the star that shines brightest here
     let sun: THREE.Vector3 | null = null, best = 0;
-    for (const s of stars) {
+    if (!tunnel) for (const s of stars) {
       const d2 = (s.x - P[0]) ** 2 + (s.y - P[1]) ** 2 + (s.z - P[2]) ** 2;
       if ((s.star?.L ?? 0) / d2 > best) { best = (s.star?.L ?? 0) / d2; sun = new THREE.Vector3(P[0] - s.x, P[1] - s.y, P[2] - s.z).normalize(); }
     }
-    this.ship.draw(dtReal, cam, this.pilot.vel, sun);
-    this.renderer.render(this.scene, cam);
-    this.drawLabels(P);
+    this.mouths();
+    this.cabin(dtReal);
+    sh.draw(dtReal, cam, sh.nav.vel, sun, sh.hull.group.position, this.mode === 'pilot', tunnel);
+    if (this.mode === 'scope') { cam.fov = this.scope.fov; cam.updateProjectionMatrix(); }
+    else if (this.mode !== 'pilot' && cam.fov !== 75) { cam.fov = 75; cam.updateProjectionMatrix(); }
+    // the map covers the view: leave the last frame up rather than draw what nobody can see
+    if (!this.nav.open) this.renderer.render(this.scene, cam);
+    this.drawLabels(P, tunnel || this.nav.open);
     this.radar.draw();
+    this.nav.draw(dtReal);
     this.controls.hud(this.readout());
   }
 
-  /** move the viewer: input from the controls, or the autopilot */
-  private fly(dt: number) {
-    const v = this.pilot.vel;
-    const t = this.travel;
-    if (t && t.b.alive) {
-      if (t.b !== this.pilot.anchor && t.b.source) {
-        // ride with the target from now on
-        const p = this.where(), old = this.pilot.anchor;
-        if (old) for (let k = 0; k < 3; k++) v[k] += ([old.vx, old.vy, old.vz][k] - [t.b.vx, t.b.vy, t.b.vz][k]) * AU_M / (365.25 * 86400);
-        this.pilot.anchor = t.b;
-        this.pilot.off = [p[0] - t.b.x, p[1] - t.b.y, p[2] - t.b.z];
+  /** where the viewer is and which way it looks, and where the ship is drawn from there */
+  private place() {
+    const sh = this.ship, sq = sh.quat, cam = this.camera, f = this.foot;
+    let local: THREE.Vector3 | null = null;
+    if (this.mode === 'eva') {
+      this.base = this.suit.nav;
+      this.eye.set(0, 0, 0);
+      cam.quaternion.copy(this.suit.quat);
+    } else {
+      this.base = sh.nav;
+      if (this.mode === 'pilot') {
+        local = sh.view === 'cockpit' ? HELM_EYE : CHASE_EYE;
+        cam.quaternion.copy(sq);
+        if (sh.view === 'chase') cam.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.13));
+      } else if (this.mode === 'scope') {
+        local = SCOPE_EYE;
+        if (this.scope.track && this.app.selected?.alive) this.aimScope(this.app.selected);
+        cam.quaternion.copy(this.scope.quat);
+      } else {
+        local = f.seat ? f.seat.eye : new THREE.Vector3(f.p.x, 1.65 + f.y, f.p.z);
+        cam.quaternion.copy(sq).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(f.pitch, f.yaw, 0, 'YXZ')));
       }
-      const p = this.where();
-      const d: V3 = [t.b.x - p[0], t.b.y - p[1], t.b.z - p[2]];
-      const dist = Math.hypot(d[0], d[1], d[2]);
+      this.eye.copy(local).applyQuaternion(sq);
+    }
+    // a shudder going into the throat
+    const w = sh.worm;
+    this.shake = w && (w.phase === 'enter' || w.phase === 'tunnel' && w.t < 0.6) ? 0.006 : w?.phase === 'tunnel' ? 0.0015 : 0;
+    if (this.shake && this.mode !== 'scope') cam.quaternion.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler((Math.random() - 0.5) * this.shake, (Math.random() - 0.5) * this.shake, 0)));
+    cam.position.set(0, 0, 0);
+    const g = sh.hull.group;
+    g.position.copy(relM(sh.nav, this.base)).sub(this.eye);
+    g.quaternion.copy(sq);
+    g.visible = this.mode !== 'scope';
+  }
+
+  /** the wormhole mouths, where they are */
+  private mouths() {
+    const w = this.ship.worm, sh = this.ship;
+    const inOn = !!w && !w.natural && (w.phase === 'charge' || w.phase === 'enter');
+    const outOn = !!w && !w.natural && w.phase === 'exit';
+    sh.mouthIn.visible = inOn;
+    sh.mouthOut.visible = outOn;
+    if (!w || (!inOn && !outOn)) return;
+    const m = inOn ? sh.mouthIn : sh.mouthOut;
+    m.position.copy(relM(w.mouth, this.base)).sub(this.eye);
+    const open = w.phase === 'charge' ? Math.min(1, w.t / JUMP_CHARGE) : w.phase === 'exit' ? 1 - w.t / EXIT_T : 1;
+    m.scale.setScalar(Math.max(0.01, MOUTH_R * Math.sqrt(open)));
+    m.rotation.z += 0.01;
+  }
+
+  /** the inside of the ship: the bridge screen, the hologram, the souvenirs, what you can use */
+  private cabin(dt: number) {
+    const sh = this.ship, h = sh.hull;
+    // what is in reach
+    this.prompt = null;
+    sh.boardable = false;
+    if (this.mode === 'walk') {
+      const f = this.foot;
+      if (f.seat) this.prompt = { label: 'Stand up', act: () => { f.seat = null; } };
+      else {
+        const eye = new THREE.Vector3(f.p.x, 1.65 + f.y, f.p.z);
+        const dir = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(f.pitch, f.yaw, 0, 'YXZ'));
+        const s = h.facing(eye, dir);
+        if (s) this.prompt = { label: s.label, act: () => this.use(s.id) };
+      }
+    } else if (this.mode === 'eva') {
+      const loc = relM(this.suit.nav, sh.nav).applyQuaternion(sh.quat.clone().invert());
+      if (loc.distanceTo(HATCH_OUT) < 7) { this.prompt = { label: 'Board the ship', act: () => this.board() }; sh.boardable = true; }
+    }
+
+    // the console, a few times a second
+    this.screenT -= dt;
+    if (this.screenT <= 0) {
+      this.screenT = 0.25;
+      const r = this.readout();
+      h.drawScreen(['HELM', `SPD ${r.speed}`, r.drive.toUpperCase(), r.target ? `TGT ${r.target}` : 'TGT none', `WRM ${'#'.repeat(Math.floor(sh.charge * 12)).padEnd(12, '.')}`]);
+    }
+
+    // the hologram: what is round the ship, on a log scale, in the ship's frame
+    const S = posOf(sh.nav), inv = sh.quat.clone().invert();
+    const near = this.app.visual.filter(b => b.source || b === this.app.selected)
+      .map(b => ({ b, v: new THREE.Vector3((b.x - S[0]) * AU_M, (b.y - S[1]) * AU_M, (b.z - S[2]) * AU_M) }))
+      .map(x => ({ ...x, d: x.v.length() })).filter(x => x.d > 0).sort((a, c) => a.d - c.d).slice(0, 40);
+    if (near.length) {
+      const lo = Math.log10(Math.max(1e3, near[0].d / 3)), hi = Math.max(lo + 1, Math.log10(near[near.length - 1].d * 1.2));
+      const pos: number[] = [0, 0, 0], col: number[] = [0.5, 0.9, 1];
+      for (const { b, v, d } of near) {
+        const r = (0.85 * (Math.log10(d) - lo)) / (hi - lo);
+        v.applyQuaternion(inv).multiplyScalar(r / d);
+        pos.push(v.x, v.y, v.z);
+        const t = b === this.app.selected ? [1, 0.88, 0.45] : tintOf(b);
+        col.push(t[0], t[1], t[2]);
+      }
+      h.setHolo(pos, col);
+    }
+
+    // souvenirs: a world gets onto the shelf once the ship has been within a few radii of it
+    const { b, alt } = this.nearest(S);
+    const world = b && b.source && !['star', 'wd', 'ns', 'bh'].includes(b.cls) && !b.look.craft;
+    if (b && world && alt < 3 * b.r * AU_M && !this.visited.includes(b)) {
+      this.visited.push(b);
+      if (this.visited.length > 8) this.visited.shift();
+      this.app.onToast(`${b.name} is on the shelf in the commons now`);
+    }
+    const key = this.visited.map(v => v.id).join();
+    if (key !== this.trophyKey) {
+      this.trophyKey = key;
+      h.setTrophies(this.visited.map(v => mapTexture(buildMap(v.look))));
+    }
+  }
+
+  /** the ship under its own power: the autopilot, the pilot, or holding station when nobody is at the helm */
+  private fly(dt: number) {
+    const sh = this.ship, n = sh.nav, v = n.vel;
+    const t = this.travel;
+    const tb = t?.b;
+    if (t && (!tb || tb.alive)) {
+      if (tb && tb !== n.anchor && tb.source) rebase(n, tb);
+      const p = posOf(n), q: V3 = tb ? [tb.x, tb.y, tb.z] : t.at!();
+      const d: V3 = [q[0] - p[0], q[1] - p[1], q[2] - p[2]];
+      const dist = Math.hypot(d[0], d[1], d[2]) || 1e-30;
       const gap = dist - t.stop;
       // overdrive for anything more than a few seconds away on the ordinary drive
-      if (gap * AU_M > 5 * CRUISE && !this.ship.od) { this.ship.od = true; this.autoOd = true; }
-      if (this.autoOd && gap * AU_M < CRUISE) { this.ship.od = false; this.autoOd = false; }
+      if (gap * AU_M > 5 * CRUISE && !sh.od) { sh.od = true; this.autoOd = true; }
+      if (this.autoOd && gap * AU_M < CRUISE) { sh.od = false; this.autoOd = false; }
       // close the gap exponentially, no faster than the drive allows
-      const want = gap > 0 ? Math.min((gap * AU_M) / 1.2, this.ship.cap(this.nearest().alt)) : 0;
-      this.ship.thrust = gap > 0 ? 1 : 0;
+      const want = gap > 0 ? Math.min((gap * AU_M) / 1.2, sh.cap(this.nearest(p).alt)) : 0;
+      sh.thrust = gap > 0 ? 1 : 0;
       for (let k = 0; k < 3; k++) v[k] += ((d[k] / dist) * want - v[k]) * Math.min(1, dt * 3);
-      // turn to face it
-      const target = new THREE.Vector3(d[0], d[1], d[2]).normalize();
-      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
-      const q = new THREE.Quaternion().setFromUnitVectors(fwd, target);
-      this.camera.quaternion.premultiply(new THREE.Quaternion().slerp(q, Math.min(1, dt * 3)));
-      if (gap < t.stop * 0.05 || this.controls.moving()) {
+      turnTo(sh.quat, d, dt * 3);
+      if (gap < t.stop * 0.05 + 5 / AU_M || (this.mode === 'pilot' && this.controls.moving())) {
         this.travel = null;
-        if (gap < t.stop * 0.05) v.fill(0);
-        if (this.autoOd) { this.ship.od = false; this.autoOd = false; }
+        if (gap < t.stop * 0.05 + 5 / AU_M) v.fill(0);
+        if (this.autoOd) { sh.od = false; this.autoOd = false; }
       }
     } else {
       this.travel = null;
-      if (this.autoOd) { this.ship.od = false; this.autoOd = false; }
+      if (this.autoOd) { sh.od = false; this.autoOd = false; }
       const sp = this.speed();
-      const want = this.controls.thrust(sp);
-      this.ship.thrust = Math.min(1, Math.hypot(want[0], want[1], want[2]) / sp);
+      const want = this.mode === 'pilot' ? this.controls.thrust(sp, sh.quat) : [0, 0, 0];
+      sh.thrust = Math.min(1, Math.hypot(want[0], want[1], want[2]) / sp);
       for (let k = 0; k < 3; k++) v[k] += (want[k] - v[k]) * Math.min(1, dt * 4);
     }
-    for (let k = 0; k < 3; k++) this.pilot.off[k] += (v[k] * dt) / AU_M;
-    // into a wormhole's throat, and out of the other mouth
-    let n = this.nearest();
-    if (n.b && n.b.look.wormhole && n.alt < 0.5 * this.visR(n.b) * AU_M) {
-      const out = this.app.world.bodies.find(q => q.id === n.b!.partnerId && q.alive);
-      if (out) {
-        const p = this.where(), b = n.b;
-        const d: V3 = [p[0] - b.x, p[1] - b.y, p[2] - b.z];
-        const dl = Math.hypot(d[0], d[1], d[2]) || 1;
-        this.place(out, [(d[0] / dl) * out.r * 1.8, (d[1] / dl) * out.r * 1.8, (d[2] / dl) * out.r * 1.8], false);
-        this.ship.flash = 1;
-        n = this.nearest();
-      }
+    for (let k = 0; k < 3; k++) n.off[k] += (v[k] * dt) / AU_M;
+    // into a wormhole's mouth in the sandbox, and out of the other
+    const near = this.nearest(posOf(n));
+    if (near.b && near.b.look.wormhole && near.alt < 0.5 * this.visR(near.b) * AU_M) {
+      const out = this.app.world.bodies.find(q => q.id === near.b!.partnerId && q.alive);
+      if (out) { this.throughNatural(near.b, out); return; }
     }
-    // never inside anything
-    if (n.b && n.alt < 2) {
-      const p = this.where(), b = n.b;
-      const d: V3 = [p[0] - b.x, p[1] - b.y, p[2] - b.z];
-      const dl = Math.hypot(d[0], d[1], d[2]) || 1;
-      const R = this.visR(b) + 2 / AU_M;
-      this.pilot.off = [b.x + (d[0] / dl) * R - (this.pilot.anchor?.x ?? 0), b.y + (d[1] / dl) * R - (this.pilot.anchor?.y ?? 0), b.z + (d[2] / dl) * R - (this.pilot.anchor?.z ?? 0)];
-      const vin = (v[0] * d[0] + v[1] * d[1] + v[2] * d[2]) / dl;
-      if (vin < 0) for (let k = 0; k < 3; k++) v[k] -= (vin * d[k]) / dl;
+    this.clear(n, SHIP_CLEAR);
+  }
+
+  /** never inside anything: keep a mover `gap` m above the nearest surface */
+  private clear(m: Mover, gap: number) {
+    const p = posOf(m);
+    const { b, alt } = this.nearest(p);
+    if (!b || alt >= gap) return;
+    const d: V3 = [p[0] - b.x, p[1] - b.y, p[2] - b.z];
+    const dl = Math.hypot(d[0], d[1], d[2]) || 1;
+    const R = this.visR(b) + gap / AU_M;
+    const a = m.anchor;
+    m.off = [b.x + (d[0] / dl) * R - (a?.x ?? 0), b.y + (d[1] / dl) * R - (a?.y ?? 0), b.z + (d[2] / dl) * R - (a?.z ?? 0)];
+    const v = m.vel, vin = (v[0] * d[0] + v[1] * d[1] + v[2] * d[2]) / dl;
+    if (vin < 0) for (let k = 0; k < 3; k++) v[k] -= (vin * d[k]) / dl;
+  }
+
+  /** a wormhole transit, stage by stage */
+  private wormStep(dt: number) {
+    const sh = this.ship, w = sh.worm!, n = sh.nav, v = n.vel;
+    w.t += dt;
+    sh.thrust = 0.3;
+    if (!w.to.alive && (w.phase === 'charge' || w.phase === 'enter')) { sh.worm = null; this.app.onToast('The far end of the wormhole is gone'); return; }
+    if (w.phase === 'charge') {
+      // brake, with the mouth opening just ahead wherever the ship is
+      for (let k = 0; k < 3; k++) v[k] -= v[k] * Math.min(1, dt * 3);
+      const f = new THREE.Vector3(0, 0, -MOUTH_AHEAD / AU_M).applyQuaternion(sh.quat);
+      w.mouth = { anchor: n.anchor, off: [n.off[0] + f.x + (v[0] * dt) / AU_M, n.off[1] + f.y + (v[1] * dt) / AU_M, n.off[2] + f.z + (v[2] * dt) / AU_M], vel: [0, 0, 0] };
+      if (w.t >= JUMP_CHARGE) { w.phase = 'enter'; w.t = 0; v.fill(0); }
+    } else if (w.phase === 'enter') {
+      const rel = relM(w.mouth, n), d = rel.length();
+      const sp = 40 + 500 * w.t;
+      sh.thrust = 1;
+      v[0] = (rel.x / d) * sp; v[1] = (rel.y / d) * sp; v[2] = (rel.z / d) * sp;
+      turnTo(sh.quat, [rel.x, rel.y, rel.z], dt * 4);
+      if (d < MOUTH_R * 0.4 || w.t > 6) this.intoThroat(w);
+    } else if (w.phase === 'tunnel') {
+      v.fill(0);
+      if (w.t >= w.dur) {
+        w.phase = 'exit'; w.t = 0;
+        sh.flash = 0.9;
+        if (w.natural) { if (w.keep) n.vel = [...w.keep]; sh.worm = null; this.app.onToast(`Out of the wormhole by ${w.to.name}`); }
+      }
+    } else {
+      const f = new THREE.Vector3(0, 0, -1).applyQuaternion(sh.quat);
+      const sp = ((2 * MOUTH_AHEAD) / EXIT_T) * Math.max(0, 1 - w.t / EXIT_T);
+      v[0] = f.x * sp; v[1] = f.y * sp; v[2] = f.z * sp;
+      if (w.t >= EXIT_T) { sh.worm = null; v.fill(0); this.app.onToast(`Arrived at ${w.to.name}`); }
+    }
+    for (let k = 0; k < 3; k++) n.off[k] += (v[k] * dt) / AU_M;
+  }
+
+  /** through the mouth: the ship is carried to the far mouth, a little way out from the destination, facing it */
+  private intoThroat(w: Worm) {
+    const sh = this.ship, b = w.to;
+    const S = posOf(sh.nav);
+    let dir: V3 = [S[0] - b.x, S[1] - b.y, S[2] - b.z];
+    const dl = Math.hypot(dir[0], dir[1], dir[2]);
+    dir = dl > 0 ? [dir[0] / dl, dir[1] / dl, dir[2] / dl] : [1, 0, 0];
+    const far = (this.stopFor(b) + MOUTH_AHEAD / AU_M);
+    const n = sh.nav;
+    const old = n.anchor;
+    n.anchor = b.source ? b : old;
+    const a = n.anchor;
+    n.off = [b.x + dir[0] * far - (a?.x ?? 0), b.y + dir[1] * far - (a?.y ?? 0), b.z + dir[2] * far - (a?.z ?? 0)];
+    n.vel = [0, 0, 0];
+    lookAlong(sh.quat, [-dir[0], -dir[1], -dir[2]]);
+    w.mouth = { anchor: n.anchor, off: [...n.off], vel: [0, 0, 0] };
+    w.phase = 'tunnel';
+    w.t = 0;
+    w.dur = Math.max(4, Math.min(12, 2 + 1.4 * Math.log10(Math.max(1, dl * AU_M) / 1e6)));
+    sh.charge = 0;
+    this.travel = null;
+  }
+
+  /** into a wormhole that is already there: out of its partner, on the far side, still moving */
+  private throughNatural(mouth: Body, out: Body) {
+    const sh = this.ship, n = sh.nav;
+    const p = posOf(n);
+    const d: V3 = [p[0] - mouth.x, p[1] - mouth.y, p[2] - mouth.z];
+    const dl = Math.hypot(d[0], d[1], d[2]) || 1;
+    const keep: V3 = [...n.vel];
+    const k = out.r * 1.8 + SHIP_CLEAR / AU_M;
+    n.anchor = out.source ? out : n.anchor;
+    const a = n.anchor;
+    n.off = [out.x - (d[0] / dl) * k - (a?.x ?? 0), out.y - (d[1] / dl) * k - (a?.y ?? 0), out.z - (d[2] / dl) * k - (a?.z ?? 0)];
+    sh.worm = { phase: 'tunnel', t: 0, to: out, dur: 3, natural: true, mouth: { anchor: n.anchor, off: [...n.off], vel: [0, 0, 0] }, keep };
+    this.travel = null;
+  }
+
+  /** on foot: walking the decks, which keep their own gravity whatever the ship does */
+  private walk(dt: number) {
+    const f = this.foot, h = this.ship.hull;
+    const inp = this.controls.walkInput();
+    if (f.seat) {
+      if (inp.f || inp.s || inp.jump) f.seat = null;
+      else return;
+    }
+    const sp = inp.run ? 6 : 3;
+    const fx = -Math.sin(f.yaw), fz = -Math.cos(f.yaw), rx = Math.cos(f.yaw), rz = -Math.sin(f.yaw);
+    const dx = (fx * inp.f + rx * inp.s) * sp * dt, dz = (fz * inp.f + rz * inp.s) * sp * dt;
+    if (h.canStand(f.p.x + dx, f.p.z)) f.p.x += dx;
+    if (h.canStand(f.p.x, f.p.z + dz)) f.p.z += dz;
+    if (inp.jump && f.y <= 0) f.vy = 3.4;
+    f.vy -= 9.8 * dt;
+    f.y = Math.max(0, f.y + f.vy * dt);
+    if (f.y <= 0) f.vy = 0;
+  }
+
+  /** outside: a suit with thrusters, gentle and slow unless you open the throttle */
+  private spacewalk(dt: number) {
+    const s = this.suit.nav, v = s.vel, sh = this.ship;
+    const want = this.controls.thrust(4 * this.controls.throttle, this.suit.quat);
+    for (let k = 0; k < 3; k++) v[k] += (want[k] - v[k]) * Math.min(1, dt * 1.5);
+    for (let k = 0; k < 3; k++) s.off[k] += (v[k] * dt) / AU_M;
+    this.clear(s, 2);
+    // and not through the hull
+    const inv = sh.quat.clone().invert();
+    const loc = relM(s, sh.nav).applyQuaternion(inv);
+    if (sh.hull.pushOut(loc)) {
+      const w = loc.applyQuaternion(sh.quat);
+      const a = s.anchor, S = posOf(sh.nav);
+      s.off = [S[0] + w.x / AU_M - (a?.x ?? 0), S[1] + w.y / AU_M - (a?.y ?? 0), S[2] + w.z / AU_M - (a?.z ?? 0)];
+      for (let k = 0; k < 3; k++) v[k] *= 0.2;
     }
   }
 
@@ -386,40 +818,10 @@ export class View3D {
    * most the overdrive allows here
    */
   speed() {
-    const { alt } = this.nearest();
+    const { alt } = this.nearest(posOf(this.ship.nav));
     const cap = this.ship.cap(alt);
     if (this.ship.odLevel > 0) return cap * Math.min(1, this.controls.throttle);
     return Math.min(cap, Math.max(1, Math.min(isFinite(alt) ? alt : 1e9, 1e16)) * 0.5 * this.controls.throttle);
-  }
-
-  /** start charging a jump to a body */
-  jumpTo(b: Body) {
-    if (this.ship.startJump(b)) { this.travel = null; this.autoOd = false; }
-  }
-
-  /** a jump completes: come out of it a few radii from the body, facing it */
-  private arrive(b: Body) {
-    const p = this.where();
-    const d: V3 = [p[0] - b.x, p[1] - b.y, p[2] - b.z];
-    const dl = Math.hypot(d[0], d[1], d[2]) || 1;
-    const stop = Math.max(this.visR(b) * 3, b.look.craft ? 1e-9 : 2e-8);
-    this.place(b, [(d[0] / dl) * stop, (d[1] / dl) * stop, (d[2] / dl) * stop], true);
-  }
-
-  /** put the viewer at an offset (AU) from a body, riding with it (or what pulls hardest there); `stop` also halts and turns to face it */
-  private place(b: Body, off: V3, stop: boolean) {
-    const p: V3 = [b.x + off[0], b.y + off[1], b.z + off[2]];
-    const old = this.pilot.anchor, v = this.pilot.vel;
-    this.pilot.anchor = b.source ? b : old;
-    const a = this.pilot.anchor;
-    if (stop) v.fill(0);
-    else if (old && a && old !== a) for (let k = 0; k < 3; k++) v[k] += ([old.vx, old.vy, old.vz][k] - [a.vx, a.vy, a.vz][k]) * AU_M / (365.25 * 86400);
-    this.pilot.off = [p[0] - (a?.x ?? 0), p[1] - (a?.y ?? 0), p[2] - (a?.z ?? 0)];
-    this.travel = null;
-    if (stop) {
-      this.camera.position.set(0, 0, 0);
-      this.camera.lookAt(-off[0], -off[1], -off[2]);
-    }
   }
 
   /** seconds to cover a distance (m), using overdrive when it is worth it */
@@ -429,25 +831,46 @@ export class View3D {
     return 3 + 1.4 * Math.log(d / 3e7) + d / OD_MAX;
   }
 
-  private readout() {
-    const v = Math.hypot(...this.pilot.vel);
-    const { b, alt } = this.nearest();
+  /** which room you are in, on foot */
+  private room() {
+    const p = this.foot.p;
+    return p.x < -6.2 ? 'airlock' : p.z < -14 ? 'bridge' : p.z < -8 ? 'forward passage' : p.z < 4 ? 'commons' : p.z < 8 ? 'aft passage' : 'engineering';
+  }
+
+  readout() {
+    const sh = this.ship;
+    const v = Math.hypot(...sh.nav.vel);
+    const S = posOf(sh.nav);
+    const { b, alt } = this.nearest(S);
     const sel = this.app.selected;
-    const p = this.where();
-    const spd = v < 1000 ? `${v.toFixed(0)} m/s` : v < 0.01 * C * AU_M / (365.25 * 86400) ? `${sig(v / 1000, 3)} km/s` : `${sig(v / (C * AU_M / (365.25 * 86400)), 3)} c`;
+    const fmtV = (x: number) => x < 1000 ? `${x.toFixed(x < 10 ? 1 : 0)} m/s` : x < 0.01 * C_MS ? `${sig(x / 1000, 3)} km/s` : `${sig(x / C_MS, 3)} c`;
     let tgt = '';
     if (sel && sel.alive) {
-      const d = Math.hypot(sel.x - p[0], sel.y - p[1], sel.z - p[2]) - this.visR(sel);
-      tgt = `${sel.name} · ${fmtLength(Math.max(0, d))}`;
+      const d = Math.max(0, (Math.hypot(sel.x - S[0], sel.y - S[1], sel.z - S[2]) - this.visR(sel)) * AU_M);
+      tgt = `${sel.name} · ${fmtLength(d / AU_M)}`;
+      if (!sh.worm) tgt += ` · ~${fmtTime(this.eta(d))}`;
     }
-    const sh = this.ship;
-    const drive = sh.jump ? `JUMP to ${sh.jump.b.name} · ${Math.max(0, 2.5 - sh.jump.t).toFixed(1)} s`
-      : sh.odLevel > 0 ? `OVERDRIVE ${(sh.odLevel * 100).toFixed(0)}%${this.autoOd ? ' · auto' : ''}` : 'cruise drive';
-    if (tgt && sel && !sh.jump) {
-      const d = (Math.hypot(sel.x - p[0], sel.y - p[1], sel.z - p[2]) - this.visR(sel)) * AU_M;
-      tgt += ` · ~${fmtTime(this.eta(Math.max(0, d)))}`;
+    const w = sh.worm;
+    const drive = w ? (w.phase === 'charge' ? `wormhole opening · ${Math.max(0, JUMP_CHARGE - w.t).toFixed(1)} s`
+      : w.phase === 'enter' ? `into the wormhole` : w.phase === 'tunnel' ? `in the throat · ${w.to.name} in ${Math.max(0, w.dur - w.t).toFixed(0)} s` : `out of the wormhole`)
+      : this.travel ? `autopilot → ${this.travel.name}${sh.odLevel > 0 ? ` · overdrive ${(sh.odLevel * 100).toFixed(0)}%` : ''}`
+      : sh.odLevel > 0 ? `overdrive ${(sh.odLevel * 100).toFixed(0)}%` : 'cruise drive';
+    let where = '', speed = fmtV(v);
+    if (this.mode === 'pilot') where = `At the helm · ${sh.view === 'chase' ? 'chase view' : 'cockpit'}`;
+    else if (this.mode === 'walk') where = this.foot.seat ? 'On the couch' : `On foot · ${this.room()}`;
+    else if (this.mode === 'scope') where = `Telescope · ×${(70 / this.scope.fov).toFixed(this.scope.fov > 7 ? 1 : 0)}${this.scope.track ? ' · tracking' : ''}`;
+    else {
+      const d = relM(this.suit.nav, sh.nav).length();
+      where = `Spacewalk · ${d < 1000 ? `${d.toFixed(0)} m` : fmtLength(d / AU_M)} from the ship`;
+      const rv = Math.hypot(this.suit.nav.vel[0] - sh.nav.vel[0], this.suit.nav.vel[1] - sh.nav.vel[1], this.suit.nav.vel[2] - sh.nav.vel[2]);
+      speed = `${fmtV(rv)} suit`;
     }
-    return { speed: spd, near: b ? `${b.name} · ${fmtLength(Math.max(0, alt) / AU_M)} up` : '', target: tgt, riding: this.pilot.anchor?.name ?? '', throttle: this.controls.throttle, drive, charge: sh.charge, flash: sh.flash };
+    return {
+      mode: this.mode, where, speed, drive, target: tgt,
+      near: b ? `${b.name} · ${fmtLength(Math.max(0, alt) / AU_M)} up` : '',
+      riding: sh.nav.anchor?.name ?? '', throttle: this.controls.throttle, charge: sh.charge, flash: sh.flash,
+      prompt: this.prompt?.label ?? '', tunnel: w?.phase === 'tunnel', od: sh.od, view: sh.view,
+    };
   }
 
   /** the body nearest the centre of view (or a screen point), within a few degrees or its own disc */
@@ -458,12 +881,13 @@ export class View3D {
       : new THREE.Vector3((cssX / window.innerWidth) * 2 - 1, -(cssY! / window.innerHeight) * 2 + 1, 0.5).unproject(cam).normalize();
     const P = this.where();
     let best: Body | null = null, score = Infinity;
+    const tight = this.mode === 'scope' ? this.scope.fov / 70 : 1;
     for (const b of this.app.visual) {
       const rel = new THREE.Vector3((b.x - P[0]) * AU_M, (b.y - P[1]) * AU_M, (b.z - P[2]) * AU_M);
       const dist = rel.length();
       if (!(dist > 0)) continue;
       const ang = rel.normalize().angleTo(dir);
-      const allow = Math.max(Math.atan(this.visR(b) * AU_M / dist) * 1.2, cssX === undefined ? 0.03 : 0.05);
+      const allow = Math.max(Math.atan(this.visR(b) * AU_M / dist) * 1.2, (cssX === undefined ? 0.03 : 0.05) * tight);
       if (ang < allow && ang / allow < score) { score = ang / allow; best = b; }
     }
     return best;
@@ -484,8 +908,9 @@ export class View3D {
       group.add(this.glow(0xdde8ff, 6));
     } else if (b.look.wormhole) {
       o.kind = 'worm';
-      group.add(new THREE.Mesh(this.sphere, new THREE.MeshBasicMaterial({ color: 0x140830 })));
-      group.add(this.glow(0x9a70ff, 3.5));
+      const m = mouthMesh(this.glowTex);
+      m.name = 'mouth';
+      group.add(m);
     } else if (b.cls === 'bh') {
       o.kind = 'hole';
       group.add(new THREE.Mesh(this.sphere, new THREE.MeshBasicMaterial({ color: 0x000000 })));
@@ -549,6 +974,7 @@ export class View3D {
       g.scale.setScalar(Rm);
       return;
     }
+    if (o.kind === 'worm') tickMouth(g.getObjectByName('mouth') as THREE.Group, performance.now() / 1000, 1);
     if (o.kind !== 'world') {
       g.scale.setScalar(Rm);
       if (o.kind === 'hole') this.jets(b, o, Rm);
@@ -615,10 +1041,11 @@ export class View3D {
     void Rm;
   }
 
-  private drawLabels(P: V3) {
+  private drawLabels(P: V3, hide: boolean) {
     const cam = this.camera;
     const W = window.innerWidth, H = window.innerHeight;
-    const want = new Set<Body>();
+    const want = new Set<Body | string>();
+    if (hide) { for (const el of this.labelEls.values()) el.remove(); this.labelEls.clear(); return; }
     const cands = this.app.visual
       .map(b => ({ b, d: Math.hypot(b.x - P[0], b.y - P[1], b.z - P[2]) }))
       .filter(x => x.b === this.app.selected || x.b.source)
@@ -635,6 +1062,21 @@ export class View3D {
       el.style.left = `${((v.x + 1) / 2) * W + 8}px`;
       el.style.top = `${((1 - v.y) / 2) * H}px`;
       el.classList.toggle('sel', b === this.app.selected);
+    }
+    // outside, where to get back in
+    if (this.mode === 'eva') {
+      const h = HATCH_OUT.clone().applyQuaternion(this.ship.quat).add(this.ship.hull.group.position);
+      const d = h.length();
+      v.copy(h).project(cam);
+      if (v.z < 1 && v.z > -1 && Math.abs(v.x) < 1.05 && Math.abs(v.y) < 1.05) {
+        want.add('hatch');
+        let el = this.labelEls.get('hatch');
+        if (!el) { el = document.createElement('div'); el.className = 'lbl hatch'; this.labels.appendChild(el); this.labelEls.set('hatch', el); }
+        const t = `◉ Airlock · ${d < 1000 ? `${d.toFixed(0)} m` : fmtLength(d / AU_M)}`;
+        if (el.textContent !== t) el.textContent = t;
+        el.style.left = `${((v.x + 1) / 2) * W + 8}px`;
+        el.style.top = `${((1 - v.y) / 2) * H}px`;
+      }
     }
     for (const [b, el] of this.labelEls) if (!want.has(b)) { el.remove(); this.labelEls.delete(b); }
   }
@@ -720,3 +1162,43 @@ function dispose(o: Obj) {
   o.tex?.dispose();
 }
 
+
+/** where a mover is, AU */
+function posOf(m: Mover): V3 {
+  const a = m.anchor;
+  return [(a?.x ?? 0) + m.off[0], (a?.y ?? 0) + m.off[1], (a?.z ?? 0) + m.off[2]];
+}
+
+/** from one mover to another, m, as exactly as the numbers allow */
+function relM(m: Mover, from: Mover) {
+  if (m.anchor === from.anchor) return new THREE.Vector3((m.off[0] - from.off[0]) * AU_M, (m.off[1] - from.off[1]) * AU_M, (m.off[2] - from.off[2]) * AU_M);
+  const p = posOf(m), q = posOf(from);
+  return new THREE.Vector3((p[0] - q[0]) * AU_M, (p[1] - q[1]) * AU_M, (p[2] - q[2]) * AU_M);
+}
+
+/** ride with another body from now on, without moving or changing speed through space */
+function rebase(m: Mover, b: Body) {
+  const p = posOf(m), old = m.anchor;
+  if (old && old.alive) for (let k = 0; k < 3; k++) m.vel[k] += (([old.vx, old.vy, old.vz][k] - [b.vx, b.vy, b.vz][k]) * AU_M) / YR;
+  m.off = [p[0] - b.x, p[1] - b.y, p[2] - b.z];
+  m.anchor = b;
+}
+
+/** face along a direction (world), keeping the sandbox's up (+z) up where it can */
+function lookAlong(q: THREE.Quaternion, d: V3) {
+  const dir = new THREE.Vector3(d[0], d[1], d[2]);
+  if (dir.lengthSq() === 0) return;
+  dir.normalize();
+  const up = Math.abs(dir.z) > 0.99 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, 1);
+  q.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), dir, up));
+}
+
+/** turn part of the way towards a direction (world) */
+function turnTo(q: THREE.Quaternion, d: V3, k: number) {
+  const target = new THREE.Vector3(d[0], d[1], d[2]);
+  if (target.lengthSq() === 0) return;
+  target.normalize();
+  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+  const r = new THREE.Quaternion().setFromUnitVectors(fwd, target);
+  q.premultiply(new THREE.Quaternion().slerp(r, Math.min(1, k)));
+}

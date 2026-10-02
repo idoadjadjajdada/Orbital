@@ -9,73 +9,33 @@ export interface RadarHost {
   where(): V3;
   bodies(): Body[];
   selected(): Body | null;
-  select(b: Body | null): void;
-  go(b: Body): void;
-  jump(b: Body): void;
-  canJump(): boolean;
-  /** seconds to reach a distance (m) at the best speed the drives allow */
-  eta(d: number): number;
+  /** open the nav map */
+  open(): void;
 }
 
 /**
- * The ship's map. Small, it is a scope in the corner: everything round the
- * ship laid flat in the plane it flies in, ahead at the top, on a log scale so
- * the nearest moon and the furthest star both show, each with a stalk for how
- * far above or below that plane it is. Opened (M), it fills most of the screen
- * beside a list of destinations, nearest first, to go to or jump to.
- * Tapping a blip selects it.
+ * The scope in the corner: everything round the viewer laid flat in the plane
+ * it looks along, ahead at the top, on a log scale so the nearest moon and
+ * the furthest star both show, each with a stalk for how far above or below
+ * that plane it is. Tapping it opens the nav map.
  */
 export class Radar {
   readonly el: HTMLElement;
   private cv: HTMLCanvasElement;
   private g: CanvasRenderingContext2D;
-  private list: HTMLElement;
-  big = false;
-  private blips: { b: Body; x: number; y: number }[] = [];
-  private listKey = '';
 
   constructor(private host: RadarHost) {
     this.el = document.createElement('div');
     this.el.className = 'radar3';
-    this.el.innerHTML = `<canvas></canvas><div class="dest3"></div>`;
+    this.el.title = 'Nav map (M)';
+    this.el.innerHTML = `<canvas width="180" height="180"></canvas><span class="rlab">MAP</span>`;
     this.cv = this.el.querySelector('canvas')!;
     this.g = this.cv.getContext('2d')!;
-    this.list = this.el.querySelector('.dest3')!;
-    this.cv.addEventListener('pointerdown', e => {
-      e.stopPropagation();
-      const r = this.cv.getBoundingClientRect();
-      const x = ((e.clientX - r.left) / r.width) * this.cv.width, y = ((e.clientY - r.top) / r.height) * this.cv.height;
-      let best: Body | null = null, bd = (this.cv.width / 14) ** 2;
-      for (const p of this.blips) {
-        const d = (p.x - x) ** 2 + (p.y - y) ** 2;
-        if (d < bd) { bd = d; best = p.b; }
-      }
-      if (best) this.host.select(best);
-      else if (!this.big) this.toggle();
-    });
-    this.list.addEventListener('click', e => {
-      const t = e.target as HTMLElement;
-      const row = t.closest<HTMLElement>('[data-i]');
-      if (!row) return;
-      const b = this.rows[+row.dataset.i!];
-      if (!b) return;
-      if (t.dataset.a === 'go') { this.host.go(b); this.toggle(false); }
-      else if (t.dataset.a === 'jump') { this.host.jump(b); this.toggle(false); }
-      else this.host.select(b);
-    });
-  }
-
-  private rows: Body[] = [];
-
-  toggle(on = !this.big) {
-    this.big = on;
-    this.el.classList.toggle('big', on);
-    this.listKey = '';
+    this.el.addEventListener('pointerdown', e => { e.stopPropagation(); this.host.open(); });
   }
 
   draw() {
-    const W = this.big ? 560 : 180;
-    if (this.cv.width !== W) { this.cv.width = W; this.cv.height = W; }
+    const W = this.cv.width;
     const g = this.g, R = W / 2 - 6, cx = W / 2, cy = W / 2;
     g.clearRect(0, 0, W, W);
     g.fillStyle = 'rgba(6,14,22,0.82)';
@@ -99,20 +59,18 @@ export class Radar {
     // rings, one a decade, labelled
     g.strokeStyle = 'rgba(90,200,170,0.22)';
     g.fillStyle = 'rgba(120,220,190,0.55)';
-    g.font = `${this.big ? 11 : 9}px monospace`;
+    g.font = '9px monospace';
     g.lineWidth = 1;
-    const step = Math.max(1, Math.ceil((hi - lo) / (this.big ? 8 : 4)));
+    const step = Math.max(1, Math.ceil((hi - lo) / 4));
     for (let e = Math.ceil(lo); e <= hi; e += step) {
       const r = rad(10 ** e);
       g.beginPath(); g.arc(cx, cy, r, 0, 2 * Math.PI); g.stroke();
-      if (this.big || r > R * 0.5) g.fillText(fmtLength(10 ** e / AU_M), cx + 3, cy - r - 2);
+      if (r > R * 0.5) g.fillText(fmtLength(10 ** e / AU_M), cx + 3, cy - r - 2);
     }
     g.beginPath(); g.moveTo(cx, cy - R); g.lineTo(cx, cy + R); g.moveTo(cx - R, cy); g.lineTo(cx + R, cy); g.stroke();
-    // the ship, pointing up
     g.fillStyle = '#e8f4ff';
     g.beginPath(); g.moveTo(cx, cy - 6); g.lineTo(cx - 4, cy + 4); g.lineTo(cx + 4, cy + 4); g.fill();
 
-    this.blips = [];
     items.sort((a, c) => c.d - a.d);
     for (const it of items) {
       // in the plane: x right, y ahead (−z); height along camera y
@@ -132,29 +90,9 @@ export class Radar {
         g.strokeStyle = '#ffe070';
         g.strokeRect(x - s - 3, y + up - s - 3, 2 * s + 6, 2 * s + 6);
       }
-      if (this.big && it.b.source && r > 8) { g.fillStyle = 'rgba(220,235,255,0.75)'; g.fillText(it.b.name, x + s + 3, y + up + 3); }
-      this.blips.push({ b: it.b, x, y: y + up });
     }
-    if (this.big) this.drawList(items);
-  }
-
-  private drawList(items: { b: Body; d: number }[]) {
-    const near = items.filter(i => i.b.source || i.b.look.craft).sort((a, c) => a.d - c.d).slice(0, 40);
-    const sel = this.host.selected();
-    const jump = this.host.canJump();
-    const key = near.map(i => `${i.b.id}:${fmtLength(i.d / AU_M)}`).join() + `|${sel?.id}|${jump}`;
-    if (key === this.listKey) return;
-    this.listKey = key;
-    this.rows = near.map(i => i.b);
-    this.list.innerHTML = `<div class="dh">Destinations</div>` + near.map((i, k) => {
-      const eta = this.host.eta(i.d);
-      return `<div class="row${i.b === sel ? ' sel' : ''}" data-i="${k}"><span class="nm">${esc(i.b.name)}</span><span class="ds">${fmtLength(i.d / AU_M)} · ${fmtTime(eta)}</span>`
-        + `<button data-a="go">Go</button><button data-a="jump"${jump ? '' : ' disabled'}>Jump</button></div>`;
-    }).join('');
   }
 }
-
-function esc(s: string) { return s.replace(/[&<>"]/g, c => `&#${c.charCodeAt(0)};`); }
 
 export function fmtTime(s: number) {
   if (!isFinite(s)) return '—';

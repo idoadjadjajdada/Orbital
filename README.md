@@ -76,44 +76,70 @@ separates as it goes — iron to the middle, water and gas on top — and ends
 as an ordinary round world with what floated up as its surface. *Test the
 slump* plays it first. The Star tab makes a star of any mass and age.
 
-**3D** (the *3D* button or `V`). Step inside the sandbox and fly through it at
-true scale. Mouse: click to capture it and look around; `W` `A` `S` `D` fly,
-`Space` / `C` up and down, `Q` / `E` roll, `Shift` boost tenfold, the wheel or
-`+` `−` set the throttle; click selects what is under the crosshair and `T`
-flies you to it. Touch: a stick to fly, drag to look, tap to select, buttons
-for up, down, boost, throttle, *Go to*, overdrive, jump, map and view. A
-controller (Xbox layout, through the browser's Gamepad API — iPad included):
-left stick flies, right stick looks, the triggers go down and up, the bumpers
-roll, clicking the left stick boosts; A selects under the crosshair, B flies to
-it, X overdrive, Y jump, View the map (there A goes, Y jumps, B closes), the
-d-pad steps through nearby bodies (◀ ▶) and sets the throttle (▲ ▼), clicking
-the right stick changes the view, Menu goes back to the map. On the map the
-left stick pans, the triggers zoom, the d-pad picks bodies, A follows, B lets
-go, X pauses, the bumpers change the speed of time and Menu steps into 3D. You ride with whatever pulls on you
-hardest, so worlds do not race away at tens of km/s, and your cruising speed
-is half your height above the nearest surface per second, so the same stick
-skims a moon or crosses a system. The clock runs at one second a second, as it
-would for you; *Settings → Cheats* speeds it up or slows it down. It is drawn
-in the same pixel style: half-resolution, nearest filtering, lighting in a few
-steps, every world wearing the same surface map (craters and all) it has on
-the map. three.js is loaded only when you first open it.
+**3D** (the *3D* button or `V`). Step inside the sandbox at true scale, in a
+ship you can fly, walk around in, and step out of. You ride with whatever pulls
+on you hardest, so worlds do not race away at tens of km/s, and your cruising
+speed is half your height above the nearest surface per second, so the same
+stick skims a moon or crosses a system. The clock runs at one second a second,
+as it would for you; *Settings → Cheats* speeds it up or slows it down. It is
+drawn in the same pixel style: half-resolution, nearest filtering, lighting in
+a few steps, every world wearing the same surface map (craters and all) it has
+on the map. three.js is loaded only when you first open it.
 
-You fly a ship. Its ordinary drive tops out at 5% of light speed — a minute
-from a world to its moons. **Overdrive** (`O`) spools up over three seconds
-towards ten thousand times light speed, but is held back near anything
-massive (never faster than three times your height above the nearest surface
-per second), so it crosses a system in seconds and slows by itself on the way
-in; the autopilot switches it on for any trip more than a few seconds long.
-The **jump drive** (`J`) folds space to the selected body outright: two and a
-half seconds to charge, then forty to recharge. Fly into a wormhole in the
-sandbox and you come out of its other mouth. The **scope** in the corner lays
-everything round the ship flat in the plane you fly in, ahead at the top, on a
-log scale, with a stalk for height above or below; `M` opens it as a map with
-a list of destinations, distances and travel times, to go to or jump to. `Z`
-switches between the chase view and the cockpit.
+There are four places to be, and the controls follow you. A bar along the
+bottom shows the main actions for where you are, in the glyphs of whatever you
+last used (keys or a controller); a prompt under the crosshair says what you
+can use; `H` shows every control for every place.
 
-Coming next: free flight in a suit with thrusters, then landing, with terrain,
-caves and formations generated from what each world is made of.
+| | Keyboard and mouse | Controller (Xbox layout) |
+|---|---|---|
+| **At the helm** | click to capture the mouse and steer · `W` `A` `S` `D` fly · `Space` `C` up, down · `Q` `E` roll · `Shift` boost · wheel or `+` `−` throttle · click selects · `T` fly to it · `O` overdrive · `J` wormhole · `M` nav map · `Z` chase view or cockpit · `F` leave the helm | left stick flies, right stick steers, `LT` `RT` down, up, `LB` `RB` roll, `L3` boost, `R3` camera · `A` selects (again: fly there) · `X` overdrive · `Y` wormhole · `B` leave the helm · d-pad ◀ ▶ targets, ▲ ▼ throttle · View nav map |
+| **On foot** | `W` `A` `S` `D` walk · mouse look · `Shift` run · `Space` jump · `F` or click use · `M` nav map | left stick walks, right stick looks, `L3` run, `X` jump, `A` use, View nav map |
+| **Outside** | `W` `A` `S` `D` `Space` `C` thrusters · `Q` `E` roll · `Shift` boost · wheel thrust level · `F` board (at the airlock) · `G` call the ship · `M` nav map | left stick and triggers thrust, bumpers roll, `A` board or select, `X` call the ship |
+| **Telescope** | mouse aim · wheel zoom · click select · `T` track the target · `F` or `Esc` step back | right stick aims, triggers zoom, `A` select, `X` track, `B` step back |
+
+`V` (or Menu) goes back to the map from anywhere. Touch has a stick, drag to
+look, tap to select (or use, on foot), and buttons for each place.
+
+**The ship** is about 55 m long. Forward is the **bridge**: the helm, a
+console with live readouts, and a holographic **nav table** showing what is
+round the ship. Aft of it the **commons**, under a skylight: a couch facing the
+port window, a **telescope** at the starboard one (it zooms to a few
+hundredths of a degree, enough to see the Moon's craters from the Earth), a
+shelf of **souvenirs** — a little globe of every world you have flown close to
+— a coffee machine, and the **airlock**. At the back, **engineering**: the
+reactor, pulsing faster the harder the drives work, inside the ring of the
+wormhole drive. Leave the helm and the ship flies on by itself: the autopilot
+and wormholes keep going while you walk about. Nobody at the helm and nothing
+to do, it holds station.
+
+**Outside** you are in a suit with thrusters: a few metres a second, more
+with the throttle. The ship holds station while you are out; `G` calls it to
+you, and the airlock's hatch is marked so you can find your way back.
+
+**Drives.** The ordinary drive tops out at 5% of light speed — a minute from a
+world to its moons. **Overdrive** (`O`) spools up over three seconds towards
+ten thousand times light speed, but is held back near anything massive (never
+faster than three times your height above the nearest surface per second), so
+it crosses a system in seconds and slows by itself on the way in; the
+autopilot switches it on for any trip more than a few seconds long. The
+**wormhole drive** (`J`) opens a way to the selected body: three seconds to
+open a mouth ahead of the ship, a dive into it, a ride down the throat — from
+four seconds for a short hop to a dozen across a system — and out of a second
+mouth near the destination, which closes behind you. Then forty seconds to
+recharge. Fly into a wormhole in the sandbox and the same throat takes you
+out of its other mouth.
+
+**The nav map** (`M`, the scope in the corner, or the nav table) is the system
+from above at true scale, from a moon's orbit out to the whole system: every
+body with its present orbit, the ship with its heading, a route to the target
+with how long it takes, and destinations nearest first to fly to or open a
+wormhole to. Wheel or pinch to zoom, drag to pan, tap to select, double-tap to
+go; on a controller the left stick pans, the triggers zoom, the d-pad picks,
+`A` goes, `Y` opens a wormhole, `X` finds the ship, `B` closes it.
+
+Coming next: landing, with terrain, caves and formations generated from what
+each world is made of.
 
 The clock says what it is actually doing. If the integrator cannot keep up
 with the speed you asked for — a moon on a two-day orbit needs thousands of
