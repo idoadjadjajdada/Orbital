@@ -6,7 +6,7 @@ import { stateFromElements, elementsDeg, type Elements } from './orbit';
 import { newStar, structure, teffOf } from './stellar';
 import { addPlanetSystem, makePlanet, planetHelio, setAxis } from './solarsystem';
 import { lagrangePoints } from './analysis';
-import { addTorus } from './disks';
+import { placeExtras } from './extras';
 
 
 
@@ -179,8 +179,9 @@ function earth(w: World) {
   const ob = 23.4392911 * D2R;
   const rot = (v: number[]) => [v[0], Math.cos(ob) * v[1] - Math.sin(ob) * v[2], Math.sin(ob) * v[1] + Math.cos(ob) * v[2]];
   for (const [name, alt, inc, node, ph] of sats) {
+    const craft = name === 'ISS' || name === 'Tiangong' ? 'station' as const : name === 'Hubble' ? 'telescope' as const : 'sat' as const;
     const b = new Body({ name, kind: 'satellite', cls: 'rock', m: 1e4 / MSUN_KG, r: 0.02 * KM, source: false, spin: 0.1,
-      look: { style: 'iron', seed: hashName(name), c1: 0xb0b4b8, c2: 0xe0e4e8 } });
+      look: { style: 'iron', seed: hashName(name), c1: 0xb0b4b8, c2: 0xe0e4e8, craft } });
     const st = stateFromElements(G * e.m, elementsDeg((6378 + alt) * KM, 0.0005, inc, node, 0, ph));
     const r = rot(st.r), v = rot(st.v);
     b.setPos(e.x + r[0], e.y + r[1], e.z + r[2]);
@@ -190,7 +191,7 @@ function earth(w: World) {
   // JWST rides the Sun–Earth L2 point, 1.5 million km out, turning with the pair
   const L2 = lagrangePoints(e, s)[1];
   const jw = new Body({ name: 'JWST', kind: 'satellite', cls: 'rock', m: 6200 / MSUN_KG, r: 0.01 * KM, source: false, spin: 0.01,
-    look: { style: 'iron', seed: 3, c1: 0xc8a040, c2: 0xffd870 } });
+    look: { style: 'iron', seed: 3, c1: 0xc8a040, c2: 0xffd870, craft: 'mirror' } });
   const rx = e.x - s.x, ry = e.y - s.y, rz = e.z - s.z, ux = e.vx - s.vx, uy = e.vy - s.vy, uz = e.vz - s.vz;
   const d2 = rx * rx + ry * ry + rz * rz;
   const wx = (ry * uz - rz * uy) / d2, wy = (rz * ux - rx * uz) / d2, wz = (rx * uy - ry * ux) / d2;
@@ -462,8 +463,7 @@ function spaghetti(w: World) {
 function quasar(w: World) {
   const bh = makeBody('quasar', 9, 'Quasar');
   w.add(bh);
-  const rs = schwarzschild(bh.m);
-  addTorus(w, bh, 40 * rs, 400 * rs, 1e-4 * bh.m, 1500);
+  placeExtras(w, bh, { kind: 'agn', edd: 0.3, tilt: 50 }, 0);
   const rnd = rng(77);
   for (let k = 0; k < 8; k++) {
     const b = star('bstar', `Star ${k + 1}`, 4 + 8 * rnd(), 0.3);
@@ -471,7 +471,7 @@ function quasar(w: World) {
     w.add(b);
   }
   const g = star('redgiant', 'Falling giant', 1.2, 1.9);
-  parabolic(g, bh, 40 * rs, 1500);
+  parabolic(g, bh, 40 * schwarzschild(bh.m), 1500);
   w.add(g);
 }
 

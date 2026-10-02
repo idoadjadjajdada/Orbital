@@ -1,9 +1,9 @@
 import type { Body } from './body';
 import { Hermite } from './integrator';
-import { accrete, collide, disrupt, starDeath, wind, cometActivity, tidalReset, type SimEvent } from './events';
+import { accrete, collide, disrupt, starDeath, wind, cometActivity, tidalReset, spawnFragments, type SimEvent } from './events';
 import { evolve } from './stellar';
 import { refreshRoche } from './catalog';
-import { G, KMS, schwarzschild } from './units';
+import { G, C, KMS, schwarzschild } from './units';
 import { tides, hawking } from './tides';
 import { DiskPhysics, rocheOverflow } from './disks';
 import { assignHosts } from './analysis';
@@ -201,6 +201,18 @@ export class World {
       }
       if (b.kind === 'comet' && stars.length) cometActivity(this, b, stars, dt);
       if (b.tidalHost) tidalReset(this, b);
+      // an unresolved inner disc already feeding: its mass is in the hole's; the
+      // rate is what lights the jets
+      if (b.feedLeft > 0) {
+        const dm = Math.min(b.feedLeft, b.feed * dt);
+        b.feedLeft -= dm;
+        b.swallowed += dm;
+      }
+      if (b.look.white) whiteHoleOutflow(this, b, dt);
+      // a magnetar's crust gives way now and then: a giant flare, every few decades
+      if (b.look.magnetar && Math.random() < dt / 30) {
+        this.emit({ kind: 'flare', x: b.x, y: b.y, z: b.z, size: 1e-4, energy: 1, t: this.time, body: b, name: `${b.name}: giant flare — for a tenth of a second, brighter than a galaxy` });
+      }
       if (b.cls === 'bh' && b.m < 1e-14) {
         if (hawking(b, dt)) {
           this.emit({ kind: 'evaporate', x: b.x, y: b.y, z: b.z, size: 1e-5, energy: 1, t: this.time, body: b, name: `${b.name} evaporated in a final burst of Hawking radiation` });
@@ -219,7 +231,8 @@ export class World {
 
     // drop particles that have left the system, and comet gas that has thinned out
     let far = 0;
-    for (const s of this.sources) far = Math.max(far, Math.hypot(s.x, s.y, s.z) + s.r);
+    // a supermassive hole's gas reaches hundreds of Schwarzschild radii out
+    for (const s of this.sources) far = Math.max(far, Math.hypot(s.x, s.y, s.z) + (s.cls === 'bh' ? 1000 : 1) * s.r);
     // a planetary nebula is thousands of AU across before it fades into the background
     const cull2 = Math.max(2000, 20 * far) ** 2;
     for (const b of this.bodies) {
@@ -236,4 +249,25 @@ export class World {
       if (m0 === undefined || Math.abs(s.m - m0) > 1e-7 * m0) { this.dirtyForces = true; break; }
     }
   }
+}
+
+/**
+ * A white hole only emits. Nothing fixes how fast (it is hypothetical), so it
+ * is tied to the hole's own clock: one parcel of a ten-billionth of its mass
+ * per light-crossing of a thousand horizons — for ten suns, decades of
+ * outflow — as gas leaving at a third of light speed.
+ */
+const whiteAcc = new WeakMap<Body, number>();
+function whiteHoleOutflow(w: World, b: Body, dt: number) {
+  const tCross = (1000 * b.r) / C;
+  const parcel = 1e-10 * b.m;
+  const acc = (whiteAcc.get(b) ?? 0) + dt / tCross;
+  const n = Math.min(10, Math.floor(acc));
+  whiteAcc.set(b, Math.min(acc - n, 10));
+  if (n <= 0) return;
+  const made = spawnFragments(w, { mass: n * parcel, n, cls: 'gasp', x: b.x, y: b.y, z: b.z, vx: b.vx, vy: b.vy, vz: b.vz,
+    rIn: Math.max(b.r * 1.5, 3e-5), rOut: Math.max(b.r * 2, 4e-5), vMin: 0.2 * C, vMax: 0.35 * C, heat: 1, color: 0xe8f0ff, recoil: b });
+  b.m -= made.reduce((t, p) => t + p.m, 0);
+  b.r = schwarzschild(b.m);
+  w.massChanged(b);
 }

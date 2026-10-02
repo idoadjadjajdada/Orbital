@@ -245,19 +245,50 @@ Sun-like star torn apart by a million-sun hole (β = 2); two Earths round a
 10-sun hole, one stripped and one spaghettified; a quasar in its ring of gas
 with a giant falling in; the Kirkwood belt with a semi-major-axis histogram.
 
-**Catalogue**, six shelves: comets, asteroids, Psyche-like metal and
-Arrokoth-like Kuiper objects, moons, dwarf planets; rocky, desert, icy, ocean,
-molten, iron, carbon, eyeball and stripped-core worlds and super-Earths;
-gas, ringed and ice giants, mini-Neptunes, super-puffs, hot Jupiters, brown
-dwarfs; protostars, red, K, Sun-like, F, A, B and O stars, a blue
-supergiant, dying giants, red supergiants and hypergiants, an Eta
-Carinae-class star; white dwarfs (one a whisker under Chandrasekhar), neutron
-stars, pulsars, magnetars, stellar, intermediate-mass and supermassive black
-holes, a black dwarf, a helium white dwarf, a millisecond pulsar, a quark
-star and GW150914's merged hole; a Thorne–Żytkow object; a rubble-pile
-Itokawa, a metal dog-bone Kleopatra and a ringed centaur, which keep the
-shapes they have; a Hycean world; and a rogue planet, ʻOumuamua, a quasar,
-M87*, a primordial black hole, an evaporating one and TON 618.
+**Catalogue**, seven shelves: comets, asteroids, Psyche-like metal and
+Arrokoth-like Kuiper objects, a rubble-pile Itokawa, a metal dog-bone
+Kleopatra and a ringed centaur (the small ones keep the shapes they have),
+moons, dwarf planets; rocky, desert, icy, ocean, Hycean, molten, iron,
+carbon, eyeball and stripped-core worlds and super-Earths; gas, ringed and
+ice giants, mini-Neptunes, super-puffs, hot Jupiters, brown dwarfs;
+protostars, red, K, Sun-like, F, A, B and O stars, a blue supergiant, dying
+giants, red supergiants and hypergiants, an Eta Carinae-class star, a
+Thorne–Żytkow object; white, helium-white and black dwarfs, neutron stars,
+pulsars, millisecond pulsars, magnetars, quark stars, stellar,
+intermediate-mass, merged and supermassive black holes; and spacecraft — the
+ISS, Tiangong, Hubble, JWST, Voyager 1, New Horizons, Parker Solar Probe,
+Cassini, a GPS satellite, a Starlink, a lander and a solar sail that
+sunlight really pushes (β = 0.05).
+
+**Things that arrive already going.** Some objects only do what they are
+known for in the right surroundings, so they are placed with them:
+
+- *Quasar, blazar, M87\*, TON 618*: a ring of gas from 40 to 400
+  Schwarzschild radii and an inner accretion disc too small to resolve,
+  already falling in at a set fraction of the Eddington rate. Its mass is
+  already in the hole's; the rate lights the jets from the start. Jets are as
+  long as the hole is big — thousands of Schwarzschild radii — and as bright
+  as it is fed; a blazar's points almost straight at you.
+- *Microquasar (SS 433), X-ray pulsar (Her X-1), cataclysmic variable*: a
+  companion star just past filling its Roche lobe, a disc the stream has
+  already built, and the inner disc feeding.
+- *Merging neutron stars, binary black hole, double pulsar*: both members,
+  on the orbit gravitational waves are shrinking.
+- *Planetary nebula, supernova remnant (the Crab)*: the shell they threw off,
+  still coasting outward.
+- *Protoplanetary disc*: a young Sun in a disc of dust and planetesimals that
+  settles and gathers by itself.
+- *Wormhole*: both mouths. Anything entering one leaves the other, moving the
+  same way at the same speed.
+- *White hole*: a black hole run backwards. It pulls like one, but whatever
+  reaches its horizon is turned back, and it pours out gas at a third of light
+  speed. White holes and wormholes are hypothetical; they are here as what
+  general relativity allows, not as things known to exist.
+
+Magnetars flare every few decades; pulsars sweep their beams. Supernovae
+throw out a filamented blast wave; mergers of black holes and neutron stars
+send out gravitational-wave ripples (drawn as a quadrupole pattern — the
+real waves are invisible), and neutron-star mergers a kilonova.
 
 ## Limits
 

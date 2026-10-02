@@ -2,6 +2,7 @@ import { iconOf, type App, type Flag, type Tool } from '../app';
 import { Builder } from './builder';
 import { buildCustom } from '../physics/custom';
 import { bakeShaped, drawCells } from '../pixel/shaped';
+import { drawCraft, drawWhiteHole, drawWormhole, drawPulsar, drawJet } from '../pixel/phenomena';
 import { GRID } from '../physics/materials';
 import type { Body } from '../physics/body';
 import { CATALOG, SHELVES, makeBody, type Shelf } from '../physics/catalog';
@@ -16,6 +17,45 @@ const KIND: Record<string, string> = {
   rock: 'Rocky body', ice: 'Icy body', gas: 'Giant', star: 'Star', wd: 'White dwarf', ns: 'Neutron star', bh: 'Black hole', debris: 'Debris',
 };
 const PHASE: Record<string, string> = { proto: 'pre-main-sequence', ms: 'main sequence', giant: 'giant branch', agb: 'asymptotic giant branch', remnant: 'remnant' };
+
+/** icons drawn the way the renderer draws the thing itself: craft, white holes, wormholes, active nuclei, pulsars */
+function specialIcon(b: Body): string {
+  const S = 22;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = S;
+  const ctx = cv.getContext('2d')!;
+  const halo = (R: number, c: [number, number, number], k: number) => {
+    const h = document.createElement('canvas');
+    const n = Math.max(3, Math.ceil(R * 2) | 1);
+    h.width = h.height = n;
+    const g = h.getContext('2d')!;
+    const gr = g.createRadialGradient(n / 2, n / 2, 0, n / 2, n / 2, n / 2);
+    gr.addColorStop(0, `rgba(${c.map(v => Math.round(v * 255)).join(',')},${Math.min(1, k)})`);
+    gr.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, n, n);
+    return h;
+  };
+  const c = S / 2;
+  if (b.look.craft) {
+    // the sprite, doubled so it reads at shelf size
+    const t = document.createElement('canvas'); t.width = t.height = 11;
+    drawCraft(t.getContext('2d')!, b, 5, 5);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(t, 0, 0, 22, 22);
+  } else if (b.look.white) drawWhiteHole(ctx, c, c, 3, 0.3, halo);
+  else if (b.look.wormhole) drawWormhole(ctx, c, c, 4.5, 0.3, 7);
+  else if (b.cls === 'ns') {
+    drawPulsar(ctx, c, c, 2, 0.6, !!b.look.magnetar);
+    ctx.fillStyle = '#cfe0ff'; ctx.fillRect(c - 1, c - 1, 3, 3);
+  } else {
+    // an active nucleus: the black disc, its glowing ring, the jets
+    b.lx = 0.7; b.ly = 0.5; b.lz = 0.5;
+    drawJet(ctx, b, c, c, 2, 0.9, 11, 0.3, halo);
+    ctx.fillStyle = '#000'; ctx.fillRect(c - 2, c - 2, 5, 5);
+    ctx.fillStyle = '#ffb070'; ctx.fillRect(c - 3, c, 7, 1);
+  }
+  return cv.toDataURL();
+}
 
 /** a body's icon: its drawn outline if it holds one, otherwise the round sprite */
 function shapedIcon(b: Body): string {
@@ -45,7 +85,8 @@ export class Hud {
         star: e.cls === 'star' ? { m0: e.m, age: 0, phase: e.key === 'redgiant' || e.key === 'supergiant' || e.key === 'hypergiant' ? 'giant' as const : 'ms' as const, L: 1,
           teff: ({ protostar: 4300, reddwarf: 3200, kdwarf: 4500, sun: 5772, fstar: 6600, astar: 9900, bstar: 15000, ostar: 38000, bluesg: 12000,
             redgiant: 3400, supergiant: 3600, hypergiant: 3500, lbv: 25000 } as Record<string, number>)[e.key] ?? 5772, coreM: 0 } : undefined };
-      this.icons.set(e.key, e.shape ? shapedIcon(makeBody(e.key, 7)) : iconOf(b));
+      const special = e.look.craft || e.look.white || e.look.wormhole || e.extra?.kind === 'agn' || e.look.pulsar;
+      this.icons.set(e.key, e.shape ? shapedIcon(makeBody(e.key, 7)) : special ? specialIcon(makeBody(e.key, 7)) : iconOf(b));
     }
     this.buildPresets();
     this.buildShelves();
@@ -247,7 +288,8 @@ export class Hud {
     }
     $<HTMLImageElement>('iIcon').src = icon ?? '';
     $('iName').textContent = b.name;
-    let kind = KIND[b.cls] ?? b.cls;
+    let kind = b.look.craft ? 'Spacecraft' : b.look.white ? 'White hole (hypothetical)' : b.look.wormhole ? 'Wormhole mouth (hypothetical)'
+      : b.look.magnetar ? 'Magnetar' : b.look.pulsar ? 'Pulsar' : b.feed > 0 && b.cls === 'bh' ? 'Active black hole' : KIND[b.cls] ?? b.cls;
     if (b.star && b.cls === 'star') kind += ` · ${PHASE[b.star.phase]}`;
     $('iKind').textContent = kind;
     const rows: [string, string][] = [];
@@ -287,6 +329,11 @@ export class Hud {
       const rate = this.app.accRate(b);
       if (rate > 0) rows.push(['Feeding', `${sig(rate)} M☉/yr · ${sig(rate / (2.2e-8 * b.m))}× Eddington`]);
     }
+    if (b.look.wormhole) {
+      const o = this.app.world.sources.find(x => x.id === b.partnerId);
+      rows.push(['Leads to', o ? `<a data-id="${o.id}">${o.name}</a>` : 'nothing — its other mouth is gone']);
+    }
+    if (b.feedLeft > 0) rows.push(['Inner disc', `${fmtMass(b.feedLeft)} left, feeding ${sig(b.feed)} M☉/yr`]);
     if (b.sizeGuess) rows.push(['Note', 'mass estimated, not measured']);
     if (!b.source && !b.isParticle) rows.push(['Gravity', 'too small to pull on others']);
     this.drawMap(b);

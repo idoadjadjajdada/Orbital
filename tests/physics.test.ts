@@ -12,6 +12,8 @@ import { MOONS } from '../src/physics/data/moons';
 import { SHAPES, shapeStats, makeShape, slump, MAT, GRID } from '../src/physics/materials';
 import { takeSnapshot, restoreSnapshot } from '../src/physics/snapshot';
 import { tides } from '../src/physics/tides';
+import { placeExtras } from '../src/physics/extras';
+import { ENTRY } from '../src/physics/catalog';
 
 const FOREVER = Number.POSITIVE_INFINITY;
 
@@ -506,5 +508,61 @@ describe('undo', () => {
     restoreSnapshot(w, s);
     expect(w.bodies.length).toBe(n);
     expect(w.bodies.find(b => b.name === 'Titan')!.x).toBe(x0);
+  });
+});
+
+describe('exotic objects', () => {
+  it('a rock dropped into one wormhole mouth comes out of the other', () => {
+    const w = new World();
+    const a = makeBody('wormhole', 1);
+    w.add(a);
+    placeExtras(w, a, ENTRY.get('wormhole')!.extra!, 0.01);
+    const b = w.sources.find(s => s !== a)!;
+    const rock = point('rock', 1e-15, 1e-7);
+    rock.setPos(a.x - 3e-4, 0, 0); rock.setVel(20 * KMS, 0, 0);
+    w.add(rock);
+    run(w, 1e-4, 5e-6);
+    expect(rock.alive).toBe(true);
+    expect(Math.hypot(rock.x - b.x, rock.y - b.y)).toBeLessThan(Math.hypot(rock.x - a.x, rock.y - a.y));
+  });
+
+  it('nothing enters a white hole', () => {
+    const w = new World();
+    const h = makeBody('whitehole', 1);
+    w.add(h);
+    const rock = point('rock', 1e-12, 1e-7);
+    rock.setPos(1e-4, 0, 0); rock.setVel(-0.3 * C, 0, 0);
+    w.add(rock);
+    run(w, 2e-8, 1e-9);
+    expect(rock.alive).toBe(true);
+    expect(rock.vx).toBeGreaterThan(0);
+  });
+
+  it('a quasar arrives feeding, with gas round it', () => {
+    const w = new World();
+    const q = makeBody('quasar', 1);
+    w.add(q);
+    placeExtras(w, q, ENTRY.get('quasar')!.extra!, 1);
+    expect(q.feed).toBeGreaterThan(0);
+    expect(w.particleCount).toBeGreaterThan(500);
+    run(w, 0.01, 0.01);
+    expect(q.feedLeft).toBeLessThan(q.feed * 1e4);
+  });
+
+  it('a microquasar arrives with its companion already overflowing', () => {
+    const w = new World();
+    const b = makeBody('microquasar', 1);
+    w.add(b);
+    placeExtras(w, b, ENTRY.get('microquasar')!.extra!, 1);
+    const donor = w.sources.find(s => s !== b)!;
+    const m0 = donor.m;
+    run(w, 0.01, 2e-4);
+    expect(donor.m).toBeLessThan(m0);
+  });
+
+  it('spacecraft feel gravity but pull on nothing', () => {
+    const iss = makeBody('iss', 1);
+    expect(iss.source).toBe(false);
+    expect(makeBody('sail', 1).beta).toBeGreaterThan(0);
   });
 });

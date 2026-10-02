@@ -3,10 +3,10 @@ import type { Body, Look, Cls, StarState } from './physics/body';
 import { assignHosts, hostOfPoint } from './physics/analysis';
 import { buildPreset, PRESETS } from './physics/presets';
 import { makeBody, ENTRY } from './physics/catalog';
-import { addTorus } from './physics/disks';
+import { placeExtras } from './physics/extras';
 import { SHAPES } from './physics/materials';
 import { buildCustom } from './physics/custom';
-import { G, KMS, GCC, fmtLength, sig, schwarzschild } from './physics/units';
+import { G, KMS, GCC, fmtLength, sig } from './physics/units';
 import { takeSnapshot, restoreSnapshot, type Snapshot } from './physics/snapshot';
 import { shatterBody } from './physics/events';
 import { Body as BodyClass } from './physics/body';
@@ -364,10 +364,8 @@ export class App {
     b.setPos(p.x, p.y, p.z);
     b.setVel(v.x, v.y, v.z);
     this.world.add(b);
-    if (this.armed && ENTRY.get(this.armed)?.extra === 'torus') {
-      const rs = schwarzschild(b.m);
-      addTorus(this.world, b, 40 * rs, 400 * rs, 1e-4 * b.m, 1500);
-    }
+    const extra = this.armed ? ENTRY.get(this.armed)?.extra : undefined;
+    if (extra) placeExtras(this.world, b, extra, (this.view.W / this.view.scale) * 0.25);
     this.hosts = assignHosts(this.world.sources);
     return b;
   }
@@ -402,7 +400,7 @@ export class App {
         collapse: `${name ?? 'A core'} collapsed into a black hole`,
         nebula: `${name ?? 'A giant'} shed its envelope as a planetary nebula`,
         disrupt: name ?? 'Torn apart by tides',
-        impact: name ?? 'Catastrophic impact', merge: name ?? 'Merger', crater: '', graze: 'Hit-and-run', swallow: 'Swallowed', strip: name ?? 'Tidally stripped', evaporate: name ?? 'A black hole evaporated', airburst: '',
+        impact: name ?? 'Catastrophic impact', merge: name ?? 'Merger', crater: '', graze: 'Hit-and-run', swallow: 'Swallowed', strip: name ?? 'Tidally stripped', evaporate: name ?? 'A black hole evaporated', airburst: '', gw: name ?? 'Gravitational waves from a merger', flare: name ?? 'Magnetar flare', wormhole: name ?? '',
       }[e.kind];
       if (msg && (e.energy > 0.3 || e.kind !== 'merge')) this.onToast(msg);
     }

@@ -6,7 +6,7 @@ import type { World } from './world';
 
 /** A visual cue the renderer can pick up: flashes, shock rings. */
 export interface SimEvent {
-  kind: 'impact' | 'merge' | 'disrupt' | 'supernova' | 'ia' | 'kilonova' | 'collapse' | 'nebula' | 'swallow' | 'graze' | 'crater' | 'strip' | 'evaporate' | 'airburst';
+  kind: 'impact' | 'merge' | 'disrupt' | 'supernova' | 'ia' | 'kilonova' | 'collapse' | 'nebula' | 'swallow' | 'graze' | 'crater' | 'strip' | 'evaporate' | 'airburst' | 'gw' | 'flare' | 'wormhole';
   x: number; y: number; z: number;
   size: number;     // AU, a sensible radius for the visual
   energy: number;   // 0..1, how big a deal it is
@@ -136,8 +136,53 @@ function grow(t: Body, density: number) {
   } else if (t.cls === 'rock' || t.cls === 'ice' || t.cls === 'gas') t.r = radiusFromDensity(t.m, density);
 }
 
+const CLEAR = 3e-5; // AU, just outside where test particles are caught by a compact object
+
+/**
+ * Through a wormhole: out of the other mouth, on the far side, still moving the
+ * same way at the same speed relative to the mouth. Returns false if the other
+ * mouth is gone.
+ */
+export function traverse(w: World, mouth: Body, b: Body): boolean {
+  const o = w.sources.find(s => s.id === mouth.partnerId && s.alive);
+  if (!o) return false;
+  const vx = b.vx - mouth.vx, vy = b.vy - mouth.vy, vz = b.vz - mouth.vz;
+  const v = Math.hypot(vx, vy, vz) || 1;
+  // out on the side it was heading for, clear of the throat
+  // (test particles are caught 3,000 km out from anything compact, so beyond that)
+  const k = Math.max(1.5 * Math.max(o.r, b.r * 2), CLEAR);
+  b.setPos(o.x + (vx / v) * k, o.y + (vy / v) * k, o.z + (vz / v) * k);
+  b.setVel(o.vx + vx, o.vy + vy, o.vz + vz);
+  b.alive = true;
+  b.dtWant = 0;
+  w.moved(b);
+  if (b.source || b.m > 1e-12) w.emit({ kind: 'wormhole', x: o.x, y: o.y, z: o.z, size: o.r * 6, energy: 0.4, t: w.time, body: b, name: `${b.name} came through the wormhole` });
+  return true;
+}
+
+/** Nothing can fall into a white hole: whatever reaches its horizon is turned back out. */
+export function repel(w: World, wh: Body, b: Body) {
+  let nx = b.x - wh.x, ny = b.y - wh.y, nz = b.z - wh.z;
+  const n = Math.hypot(nx, ny, nz) || 1; nx /= n; ny /= n; nz /= n;
+  const vx = b.vx - wh.vx, vy = b.vy - wh.vy, vz = b.vz - wh.vz;
+  const vn = vx * nx + vy * ny + vz * nz;
+  const k = Math.max(1.3 * (wh.r + b.r), CLEAR);
+  b.setPos(wh.x + nx * k, wh.y + ny * k, wh.z + nz * k);
+  // the inward motion reversed; momentum goes to the hole
+  if (vn < 0) {
+    b.vx -= 2 * vn * nx; b.vy -= 2 * vn * ny; b.vz -= 2 * vn * nz;
+    const f = (2 * vn * b.m) / wh.m;
+    wh.vx += f * nx; wh.vy += f * ny; wh.vz += f * nz;
+  }
+  b.alive = true;
+  b.dtWant = 0;
+  w.moved(b);
+}
+
 /** A test particle running into a source. */
 export function accrete(w: World, src: Body, p: Body) {
+  if (src.look.wormhole) { if (traverse(w, src, p)) return; }
+  if (src.look.white) { repel(w, src, p); return; }
   if ((src.cls === 'rock' || src.cls === 'ice' || src.cls === 'gas' || src.cls === 'debris') && p.cls === 'debris') {
     // Cratering is for small impactors. A piece more than a few percent of
     // what it hits is a collision between near-equals at the speeds of a
@@ -247,6 +292,16 @@ export function crater(w: World, T: Body, p: Body) {
  *    the Leinhardt & Stewart (2012) universal law and the rest is debris.
  */
 export function collide(w: World, a: Body, b: Body) {
+  if (a.look.wormhole || b.look.wormhole) {
+    const mouth = a.look.wormhole ? a : b, other = mouth === a ? b : a;
+    if (other.look.wormhole) return;
+    if (traverse(w, mouth, other)) return;
+  }
+  if (a.look.white || b.look.white) {
+    const wh = a.look.white ? a : b;
+    repel(w, wh, wh === a ? b : a);
+    return;
+  }
   const T = a.m >= b.m ? a : b, P = T === a ? b : a;
   const dx = P.x - T.x, dy = P.y - T.y, dz = P.z - T.z;
   const dvx = P.vx - T.vx, dvy = P.vy - T.vy, dvz = P.vz - T.vz;
@@ -271,11 +326,12 @@ export function collide(w: World, a: Body, b: Body) {
         rIn: 1e-6, rOut: 3e-6, vMin: 0.05 * C, vMax: 0.3 * C, heat: 1, color: 0xff6040 });
       if (T.m > M_TOV) becomeRemnant(T, 'bh', T.m);
       ev('kilonova', 0.05, 1);
+      ev('gw', Math.max(T.r * 50, 1e-4), 0.8);
     } else {
       T.m -= lost;
       if (T.cls !== 'bh' && P.cls === 'bh') becomeRemnant(T, 'bh', T.m);
       if (T.cls === 'ns' && T.m > M_TOV) becomeRemnant(T, 'bh', T.m);
-      w.emit({ kind: 'merge', x: cx, y: cy, z: cz, size: Math.max(T.r * 50, 1e-4), energy: lost > 0 ? 1 : 0.5, t: w.time,
+      w.emit({ kind: 'gw', x: cx, y: cy, z: cz, size: Math.max(T.r * 50, 1e-4), energy: lost > 0 ? 1 : 0.6, t: w.time,
         name: lost > 0 ? `Black holes merged — ${fmtMass(lost)} left as gravitational waves` : 'Compact objects merged' });
     }
     if (T.cls === 'bh') T.r = schwarzschild(T.m);

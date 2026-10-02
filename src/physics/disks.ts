@@ -460,18 +460,26 @@ export function rocheOverflow(w: World, hosts: Map<Body, { host: Body | null; hi
  * takes over: it is collisional, so it stays a ring; it is viscous, so it
  * spirals in, heating as it goes; and what reaches the hole powers its jets.
  */
-export function addTorus(w: World, host: Body, rIn: number, rOut: number, mass: number, n: number) {
+export function addTorus(w: World, host: Body, rIn: number, rOut: number, mass: number, n: number, normal: [number, number, number] = [0, 0, 1], heat = 0.5) {
+  // a basis in the ring's plane
+  const nn = Math.hypot(normal[0], normal[1], normal[2]) || 1;
+  const nz: [number, number, number] = [normal[0] / nn, normal[1] / nn, normal[2] / nn];
+  const ref = Math.abs(nz[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+  let e1 = [ref[1] * nz[2] - ref[2] * nz[1], ref[2] * nz[0] - ref[0] * nz[2], ref[0] * nz[1] - ref[1] * nz[0]];
+  const l1 = Math.hypot(e1[0], e1[1], e1[2]); e1 = [e1[0] / l1, e1[1] / l1, e1[2] / l1];
+  const e2 = [nz[1] * e1[2] - nz[2] * e1[1], nz[2] * e1[0] - nz[0] * e1[2], nz[0] * e1[1] - nz[1] * e1[0]];
   const made: Body[] = [];
   for (let k = 0; k < n; k++) {
     const r = rIn + (rOut - rIn) * Math.sqrt(Math.random());
     const ph = 2 * Math.PI * Math.random();
     const z = (Math.random() + Math.random() + Math.random() - 1.5) * 0.12 * r;
     const vc = Math.sqrt(G * host.m / r) * (1 + (Math.random() - 0.5) * 0.04);
+    const c = Math.cos(ph), s = Math.sin(ph);
     const b = new Body({ name: 'gas', kind: 'gas', cls: 'gasp', m: mass / n, r: 0, source: false, spin: 0,
       look: { style: 'rocky', seed: 0, c1: 0xffb070, c2: 0xffb070 } });
-    b.setPos(host.x + r * Math.cos(ph), host.y + r * Math.sin(ph), host.z + z);
-    b.setVel(host.vx - vc * Math.sin(ph), host.vy + vc * Math.cos(ph), host.vz);
-    b.heat = 0.5;
+    b.setPos(host.x + r * (c * e1[0] + s * e2[0]) + z * nz[0], host.y + r * (c * e1[1] + s * e2[1]) + z * nz[1], host.z + r * (c * e1[2] + s * e2[2]) + z * nz[2]);
+    b.setVel(host.vx + vc * (-s * e1[0] + c * e2[0]), host.vy + vc * (-s * e1[1] + c * e2[1]), host.vz + vc * (-s * e1[2] + c * e2[2]));
+    b.heat = heat;
     made.push(b);
   }
   for (const b of made) w.add(b);

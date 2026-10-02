@@ -3,8 +3,8 @@ import { KM, M_EARTH, M_JUP, M_MOON, MSUN_KG, R_EARTH, R_JUP, radiusFromDensity,
 import { newStar, structure, wdRadius, NS_RADIUS, giantLife, teffOf, SUPERWIND } from './stellar';
 import { SHAPES, GRID, shapeStats, makeShape } from './materials';
 
-export type Shelf = 'Small' | 'Worlds' | 'Giants' | 'Stars' | 'Remnants' | 'Special';
-export const SHELVES: Shelf[] = ['Small', 'Worlds', 'Giants', 'Stars', 'Remnants', 'Special'];
+export type Shelf = 'Small' | 'Worlds' | 'Giants' | 'Stars' | 'Remnants' | 'Special' | 'Craft';
+export const SHELVES: Shelf[] = ['Small', 'Worlds', 'Giants', 'Stars', 'Remnants', 'Special', 'Craft'];
 
 export interface Entry {
   key: string;
@@ -24,9 +24,27 @@ export interface Entry {
   shape?: { key: string; mat: number };
   /** remnants: how long it has been cooling, yr */
   cooled?: number;
-  /** something placed with it: an accretion torus round a quasar */
-  extra?: 'torus';
+  /** what comes with it, so it arrives already doing what it does (extras.ts) */
+  extra?: Extra;
+  /** radiation-pressure to gravity ratio, for a sail */
+  beta?: number;
 }
+
+export type Extra =
+  /** an active nucleus: a ring of gas and a feeding inner disc at this Eddington fraction, its axis tilted by this many degrees from the line of sight */
+  | { kind: 'agn'; edd: number; tilt: number }
+  /** a companion star filling its Roche lobe, feeding it through L1 */
+  | { kind: 'donor'; star: string; m0: number; age: number; edd: number }
+  /** a second copy of itself on a tight orbit */
+  | { kind: 'twin'; sepKm: number }
+  /** a shell of gas thrown off earlier: mass, radius (AU), speed (km/s) */
+  | { kind: 'shell'; m: number; r: number; v: number; color: number }
+  /** a disc of dust and planetesimals: mass, inner and outer radius (AU) */
+  | { kind: 'dust'; m: number; rIn: number; rOut: number }
+  /** the other mouth */
+  | { kind: 'wormhole' }
+  /** feeding from an unresolved disc, nothing resolved round it */
+  | { kind: 'feed'; edd: number };
 
 const kg = (x: number) => x / MSUN_KG;
 const look = (style: Style, c1: number, c2: number, extra: Partial<Look> = {}) => ({ style, c1, c2, ...extra });
@@ -140,7 +158,7 @@ export const CATALOG: Entry[] = [
   { key: 'smbh', name: 'Supermassive', shelf: 'Remnants', cls: 'bh', m: 4.15e6, day: 1,
     look: look('bh', 0, 0), blurb: "Sagittarius A*: four million suns, 0.08 AU across." },
   { key: 'magnetar', name: 'Magnetar', shelf: 'Remnants', cls: 'ns', m: 1.5, day: 5 / 3600 * HOUR,
-    look: look('ns', 0, 0, { pulsar: true }), blurb: 'A neutron star with a 10¹¹-tesla field, spinning down fast.' },
+    look: look('ns', 0, 0, { pulsar: true, magnetar: true }), blurb: 'A neutron star with a 10¹¹-tesla field. Now and then its crust cracks and it flares brighter than a galaxy for a tenth of a second.' },
   { key: 'heavywd', name: 'Heavy white dwarf', shelf: 'Remnants', cls: 'wd', m: 1.36, day: 0.2 * HOUR,
     look: look('wd', 0, 0), blurb: '1.36 suns in the size of the Moon — a whisker under the Chandrasekhar limit.' },
   { key: 'imbh', name: 'Intermediate BH', shelf: 'Remnants', cls: 'bh', m: 1e3, day: 1,
@@ -155,11 +173,35 @@ export const CATALOG: Entry[] = [
     look: look('ns', 0, 0), blurb: 'Hypothetical: a neutron star whose core has dissolved into free quarks, smaller and denser still.' },
   { key: 'gwbh', name: 'Merged black hole', shelf: 'Remnants', cls: 'bh', m: 62, day: 1,
     look: look('bh', 0, 0), blurb: 'The 62-sun hole left by GW150914, the first black-hole merger ever heard: three suns went out as gravitational waves.' },
+  { key: 'microquasar', name: 'Microquasar', shelf: 'Remnants', cls: 'bh', m: 10, day: 1, extra: { kind: 'donor', star: 'ostar', m0: 15, age: 0.9, edd: 1 },
+    look: look('bh', 0, 0), blurb: 'SS 433: a 10-sun hole eating a 15-sun star that already overfills its Roche lobe. Stream, disc and jets from the start.' },
+  { key: 'xpulsar', name: 'X-ray pulsar', shelf: 'Remnants', cls: 'ns', m: 1.4, day: 1.24 / 3600 * HOUR, extra: { kind: 'donor', star: 'astar', m0: 2, age: 0.95, edd: 0.3 },
+    look: look('ns', 0, 0, { pulsar: true }), blurb: 'Her X-1: a pulsar fed by a companion overflowing its lobe; the gas is funnelled onto its magnetic poles.' },
+  { key: 'cv', name: 'Cataclysmic variable', shelf: 'Remnants', cls: 'wd', m: 0.8, day: 1 * HOUR, cooled: 1e8, extra: { kind: 'donor', star: 'reddwarf', m0: 0.3, age: 0.5, edd: 0.01 },
+    look: look('wd', 0, 0), blurb: 'A white dwarf stripping a red dwarf on a two-hour orbit: a stream, a hot disc, and in time a nova.' },
+  { key: 'nsmerger', name: 'Merging neutron stars', shelf: 'Remnants', cls: 'ns', m: 1.4, day: 1 / 3600 * HOUR, extra: { kind: 'twin', sepKm: 1500 },
+    look: look('ns', 0, 0), blurb: 'Two neutron stars 1,500 km apart, losing orbit to gravitational waves: a kilonova in a few hours. Places both.' },
+  { key: 'bhbinary', name: 'Binary black hole', shelf: 'Remnants', cls: 'bh', m: 30, day: 1, extra: { kind: 'twin', sepKm: 1200 },
+    look: look('bh', 0, 0), blurb: 'Two 30-sun holes 1,200 km apart, under a second from merging, as LIGO heard them. Places both.' },
+  { key: 'doublepulsar', name: 'Double pulsar', shelf: 'Remnants', cls: 'ns', m: 1.3, day: 0.0227 / 3600 * HOUR, extra: { kind: 'twin', sepKm: 9e5 },
+    look: look('ns', 0, 0, { pulsar: true }), blurb: 'PSR J0737−3039: two pulsars on a 2.4-hour orbit, the best test of general relativity there is. Places both.' },
   // ---- Special ----
-  { key: 'quasar', name: 'Quasar', shelf: 'Special', cls: 'bh', m: 1e8, day: 1, extra: 'torus',
-    look: look('bh', 0, 0), blurb: 'A hundred-million-sun hole with a ring of gas round it: the gas spirals in, heats, and drives the jets.' },
-  { key: 'm87', name: 'M87*', shelf: 'Special', cls: 'bh', m: 6.5e9, day: 1,
-    look: look('bh', 0, 0), blurb: 'The first black hole ever imaged: 6.5 billion suns, a shadow wider than the solar system.' },
+  { key: 'quasar', name: 'Quasar', shelf: 'Special', cls: 'bh', m: 1e8, day: 1, extra: { kind: 'agn', edd: 0.3, tilt: 50 },
+    look: look('bh', 0, 0), blurb: 'A hundred-million-sun hole already feeding at a third of the Eddington limit: a ring of gas, a hot inner disc, two jets.' },
+  { key: 'blazar', name: 'Blazar', shelf: 'Special', cls: 'bh', m: 5e8, day: 1, extra: { kind: 'agn', edd: 0.5, tilt: 3 },
+    look: look('bh', 0, 0), blurb: 'A quasar whose jet points almost straight at us: the beamed jet outshines everything round it.' },
+  { key: 'm87', name: 'M87*', shelf: 'Special', cls: 'bh', m: 6.5e9, day: 1, extra: { kind: 'agn', edd: 0.02, tilt: 70 },
+    look: look('bh', 0, 0), blurb: 'The first black hole ever imaged: 6.5 billion suns, feeding slowly but driving a jet thousands of light-years long.' },
+  { key: 'whitehole', name: 'White hole', shelf: 'Special', cls: 'bh', m: 10, day: 1,
+    look: look('bh', 0, 0, { white: true }), blurb: 'Hypothetical: a black hole run backwards. It pulls like one, but nothing can enter — matter only pours out.' },
+  { key: 'wormhole', name: 'Wormhole', shelf: 'Special', cls: 'bh', m: 1e-6, r: 1000 * KM, day: 1, extra: { kind: 'wormhole' },
+    look: look('bh', 0, 0, { wormhole: true }), blurb: 'Hypothetical: two mouths joined through space. What goes in one comes out the other, still moving. Places both.' },
+  { key: 'pne', name: 'Planetary nebula', shelf: 'Special', cls: 'wd', m: 0.6, day: 1 * HOUR, cooled: 1e4, extra: { kind: 'shell', m: 0.2, r: 3000, v: 25, color: 0x60c0d0 },
+    look: look('wd', 0, 0), blurb: 'A newborn white dwarf, still at 100,000 K, inside the envelope it threw off ten thousand years ago.' },
+  { key: 'snr', name: 'Supernova remnant', shelf: 'Special', cls: 'ns', m: 1.4, day: 0.033 / 3600 * HOUR, extra: { kind: 'shell', m: 4.6, r: 3.5e5, v: 1500, color: 0xa0c8ff },
+    look: look('ns', 0, 0, { pulsar: true }), blurb: 'The Crab: a pulsar 30 times a second inside the debris of the supernova seen in 1054.' },
+  { key: 'ppdisc', name: 'Protoplanetary disc', shelf: 'Special', cls: 'star', m: 1, ageFrac: -0.3, day: 3 * DAY, extra: { kind: 'dust', m: 0.01, rIn: 0.3, rOut: 30 },
+    look: look('star', 0, 0), blurb: 'A young Sun in a disc of dust and planetesimals: the pieces settle, collide and gather where they can.' },
   { key: 'microbh', name: 'Evaporating BH', shelf: 'Special', cls: 'bh', m: 1e-22, day: 1,
     look: look('bh', 0, 0), blurb: 'A black hole of 200,000 tonnes, smaller than a proton: Hawking radiation boils it away in about twenty years.' },
   { key: 'rogue', name: 'Rogue planet', shelf: 'Special', cls: 'gas', m: M_JUP, r: R_JUP, day: 10 * HOUR,
@@ -168,8 +210,33 @@ export const CATALOG: Entry[] = [
     look: look('barren', 0x6a4a3a, 0xa07a5a), blurb: 'ʻOumuamua: a few hundred metres of something from another star. Throw it fast.' },
   { key: 'pbh', name: 'Primordial BH', shelf: 'Special', cls: 'bh', m: 1e-12, day: 1,
     look: look('bh', 0, 0), blurb: 'A hypothetical black hole from the Big Bang, the mass of an asteroid and the size of an atom.' },
-  { key: 'ton618', name: 'TON 618', shelf: 'Special', cls: 'bh', m: 6.6e10, day: 1,
-    look: look('bh', 0, 0), blurb: '66 billion suns. Its horizon would swallow the solar system forty times over.' },
+  { key: 'ton618', name: 'TON 618', shelf: 'Special', cls: 'bh', m: 6.6e10, day: 1, extra: { kind: 'agn', edd: 0.4, tilt: 40 },
+    look: look('bh', 0, 0), blurb: '66 billion suns, one of the brightest quasars known: a ring of gas and jets as big as the hole is heavy.' },
+  // ---- Craft ----
+  { key: 'iss', name: 'ISS', shelf: 'Craft', cls: 'rock', m: kg(4.2e5), r: 0.055 * KM, day: 92.7 / 60 * HOUR, look: look('iron', 0xb0b4b8, 0xe8ecf0, { craft: 'station' }),
+    blurb: 'The International Space Station: 420 tonnes, 109 m across, crewed since 2000.' },
+  { key: 'tiangong', name: 'Tiangong', shelf: 'Craft', cls: 'rock', m: kg(1e5), r: 0.027 * KM, day: 91 / 60 * HOUR, look: look('iron', 0xb8b4a8, 0xe8e4d8, { craft: 'station' }),
+    blurb: 'China’s space station: three modules, 100 tonnes.' },
+  { key: 'hubble', name: 'Hubble', shelf: 'Craft', cls: 'rock', m: kg(11110), r: 0.0066 * KM, day: 95 / 60 * HOUR, look: look('iron', 0xc0c4c8, 0xf0f0f0, { craft: 'telescope' }),
+    blurb: 'A 2.4 m telescope in low orbit since 1990.' },
+  { key: 'jwst', name: 'JWST', shelf: 'Craft', cls: 'rock', m: kg(6200), r: 0.011 * KM, day: 1, look: look('iron', 0xc8a040, 0xffd870, { craft: 'mirror' }),
+    blurb: 'A 6.5 m gold mirror behind a tennis-court sunshield, parked at Sun–Earth L2.' },
+  { key: 'voyager', name: 'Voyager 1', shelf: 'Craft', cls: 'rock', m: kg(825), r: 0.0018 * KM, day: 1, look: look('iron', 0xa0a0a0, 0xe0e0e0, { craft: 'probe' }),
+    blurb: 'Launched 1977, now in interstellar space at 17 km/s. Throw it out of the system.' },
+  { key: 'newhorizons', name: 'New Horizons', shelf: 'Craft', cls: 'rock', m: kg(478), r: 0.0013 * KM, day: 1, look: look('iron', 0xb0a080, 0xe8d8b0, { craft: 'probe' }),
+    blurb: 'The fastest launch ever: Pluto in 2015, Arrokoth in 2019.' },
+  { key: 'parker', name: 'Parker Solar Probe', shelf: 'Craft', cls: 'rock', m: kg(685), r: 0.0015 * KM, day: 1, look: look('iron', 0x504840, 0xf0e8d8, { craft: 'probe' }),
+    blurb: 'Dives to 6.9 million km from the Sun behind a carbon heat shield, at 190 km/s.' },
+  { key: 'cassini', name: 'Cassini', shelf: 'Craft', cls: 'rock', m: kg(2523), r: 0.0034 * KM, day: 1, look: look('iron', 0x9a8a60, 0xd8c890, { craft: 'probe' }),
+    blurb: 'Thirteen years at Saturn, ending in a dive into its atmosphere.' },
+  { key: 'gps', name: 'GPS satellite', shelf: 'Craft', cls: 'rock', m: kg(2000), r: 0.0025 * KM, day: 12 * HOUR, look: look('iron', 0x8090a8, 0xc8d4e8, { craft: 'sat' }),
+    blurb: 'Navigation: one of 31, each on a 12-hour orbit 20,200 km up, clocks corrected for relativity.' },
+  { key: 'starlink', name: 'Starlink', shelf: 'Craft', cls: 'rock', m: kg(800), r: 0.0042 * KM, day: 95 / 60 * HOUR, look: look('iron', 0x707888, 0xb8c0d0, { craft: 'sat' }),
+    blurb: 'A flat-packed internet satellite 550 km up; thousands fly in shells.' },
+  { key: 'sail', name: 'Solar sail', shelf: 'Craft', cls: 'rock', m: kg(10), r: 0.01 * KM, day: 1, beta: 0.05, look: look('iron', 0xd0d8e8, 0xffffff, { craft: 'sail' }),
+    blurb: 'Ten kilograms under 400 m² of film: sunlight pushes it with a twentieth of the Sun’s pull, so it can climb out with no fuel.' },
+  { key: 'lander', name: 'Lander', shelf: 'Craft', cls: 'rock', m: kg(1025), r: 0.0015 * KM, day: 1, look: look('iron', 0xb0a090, 0xe0d0b0, { craft: 'lander' }),
+    blurb: 'Perseverance-class: drop it onto a world. On one with air it survives where a rock that size would burn.' },
 ];
 
 export const ENTRY = new Map(CATALOG.map(e => [e.key, e]));
@@ -203,13 +270,16 @@ export function makeBody(key: string, seed = Math.floor(Math.random() * 1e9), na
   } else if (e.cls === 'wd' || e.cls === 'ns' || e.cls === 'bh') {
     star = { m0: e.m, age: 1e6, phase: 'remnant' as const, L: 0, teff: 0, coreM: e.m };
     star.age = e.cooled ?? 1e6;
-    r = e.cls === 'wd' ? wdRadius(m) : e.cls === 'ns' ? e.r ?? NS_RADIUS : schwarzschild(m);
+    r = e.cls === 'wd' ? wdRadius(m) : e.cls === 'ns' ? e.r ?? NS_RADIUS : e.r ?? schwarzschild(m);
     if (e.cls === 'wd') star.L = 30 * (1 + star.age / 1e5) ** -1.4;
   }
   const b = new Body({
     name: name ?? e.name, kind: key, cls: e.cls, look: { ...e.look, seed }, m, r,
     spin: (2 * Math.PI) / e.day, tilt: ((e.tilt ?? 0) * Math.PI) / 180, star,
+    // spacecraft are far too light to pull on anything
+    source: e.shelf !== 'Craft',
   });
+  if (e.beta) b.beta = e.beta;
   if (star) star.teff = e.cls === 'ns' ? 1e6 : e.cls === 'bh' ? 0 : teffOf(star.L, r);
   if (e.key === 'lava') b.heat = 1;
   if (preset && e.shape) {

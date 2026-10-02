@@ -8,6 +8,7 @@ import { bakeSprite, bodyFrame, starRGB, type V3 } from './sprites';
 import { buildMap, paintCrater, type SurfaceMap } from './surface';
 import { bayer } from './noise';
 import { bakeShaped } from './shaped';
+import { drawFlash, drawJet, drawPulsar, drawWhiteHole, drawWormhole, drawCraft } from './phenomena';
 import { chip } from '../physics/materials';
 
 /** CSS pixels per art pixel: the size of one chunky pixel */
@@ -140,14 +141,17 @@ export class Renderer {
   accRate(b: Body) { return this.jet.get(b)?.rate ?? 0; }
   setAim(pts: [number, number, number][] | null, impact: [number, number, number] | null) { this.aim = pts ? { pts, impact } : null; }
   flash(e: SimEvent, now: number) {
-    const big = e.kind === 'supernova' || e.kind === 'ia' || e.kind === 'kilonova' || e.kind === 'evaporate';
-    this.flashes.push({ e, t0: now, dur: e.kind === 'crater' ? 1 : big ? 6 : 2.5 });
+    const big = e.kind === 'supernova' || e.kind === 'ia' || e.kind === 'kilonova' || e.kind === 'evaporate' || e.kind === 'gw';
+    this.flashes.push({ e, t0: now, dur: e.kind === 'crater' ? 1 : e.kind === 'flare' ? 1.6 : big ? 7 : 2.5 });
   }
   forget(b: Body) { this.sprites.delete(b); this.maps.delete(b); this.trails.delete(b); this.jet.delete(b); this.spinVis.delete(b); }
   clearTrails() { this.trails.clear(); }
 
   /** smallest radius a body is drawn at, in art pixels, so it is never lost */
   private minR(b: Body) {
+    if (b.look.craft) return 3;
+    if (b.look.wormhole) return 5;
+    if (b.look.white) return 3;
     if (b.cls === 'star') return 4;
     if (b.cls === 'gas') return 3;
     if (b.cls === 'wd' || b.cls === 'ns' || b.cls === 'bh') return 2;
@@ -394,6 +398,9 @@ export class Renderer {
   private drawBody(d: Drawn, s: DrawState, stars: Body[]) {
     const b = d.b;
     const ctx = this.ctx;
+    if (b.look.craft) { drawCraft(ctx, b, d.sx, d.sy); return; }
+    if (b.look.white) { drawWhiteHole(ctx, d.sx, d.sy, d.r, s.timeReal, this.haloFn); return; }
+    if (b.look.wormhole) { drawWormhole(ctx, d.sx, d.sy, d.r, s.timeReal, b.look.seed % 1000); return; }
     // visual spin, capped so a fast clock does not strobe
     const sv = (this.spinVis.get(b) ?? 0) + Math.max(-0.06, Math.min(0.06, b.spin * s.dtSim));
     this.spinVis.set(b, sv % (2 * Math.PI));
@@ -486,70 +493,39 @@ export class Renderer {
     ctx.drawImage(cached.canvas, Math.round(d.sx - sz / 2), Math.round(d.sy - sz / 2), Math.round(sz), Math.round(sz));
 
     // ---- jets: along the spin of what has fallen in, as bright as the feeding ----
+    if (b.look.pulsar) drawPulsar(ctx, d.sx, d.sy, d.r, s.timeReal * 3 + b.id, !!b.look.magnetar);
     if (b.cls === 'bh' || b.cls === 'ns') this.drawJets(b, d, s);
   }
 
   private drawJets(b: Body, d: Drawn, s: DrawState) {
     let j = this.jet.get(b);
     if (!j) { j = { rate: 0, power: 0 }; this.jet.set(b, j); }
-    const inst = s.dtSim > 0 ? b.swallowed / s.dtSim : 0;
-    b.swallowed = 0;
-    j.rate += (inst - j.rate) * Math.min(1, s.dtReal * 1.5);
+    // paused, the jets hold as they were
+    if (s.dtSim > 0) {
+      const inst = b.swallowed / s.dtSim;
+      b.swallowed = 0;
+      j.rate += (inst - j.rate) * Math.min(1, s.dtReal * 1.5);
+    }
     // against the Eddington rate, 2.2×10⁻⁸ M☉/yr per M☉ at 10% efficiency
     const want = j.rate > 0 ? Math.max(0, Math.min(1, (Math.log10(j.rate / (2.2e-8 * b.m)) + 4) / 4)) : 0;
     j.power += (want - j.power) * Math.min(1, s.dtReal * 2);
     if (j.power < 0.03) return;
-    const Ln = Math.hypot(b.lx, b.ly, b.lz);
-    const ax = Ln > 0 ? [b.lx / Ln, b.ly / Ln, b.lz / Ln] : [0, 0, 1];
-    const proj = Math.hypot(ax[0], ax[1]);
-    const len = Math.max(30, 3000 * schwarzschild(b.m) * this.scale) * (0.4 + j.power);
-    const ctx = this.ctx;
-    ctx.globalCompositeOperation = 'lighter';
-    if (proj < 0.15) {
-      // seen down the jet: a bright point
-      const h = this.halo(6 + 10 * j.power, [0.6, 0.75, 1], j.power);
-      ctx.drawImage(h, Math.round(d.sx - (h.width - 1) / 2), Math.round(d.sy - (h.height - 1) / 2));
-    } else {
-      const ux = ax[0] / proj, uy = -ax[1] / proj;
-      const n = Math.round(len * proj);
-      for (const sg of [1, -1]) {
-        for (let k = 2; k < n; k++) {
-          const t = k / n;
-          const knot = 0.5 + 0.5 * Math.sin(k * 0.6 - s.timeReal * 9);
-          const a = j.power * (1 - t) ** 1.3 * (0.4 + 0.6 * knot);
-          if (a < 0.05) continue;
-          ctx.fillStyle = `rgba(${Math.round(150 + 105 * a)},${Math.round(190 + 65 * a)},255,${Math.min(1, a * 1.4)})`;
-          ctx.fillRect(Math.round(d.sx + sg * ux * k), Math.round(d.sy + sg * uy * k), 1, 1);
-          if (a > 0.5) ctx.fillRect(Math.round(d.sx + sg * ux * k - uy), Math.round(d.sy + sg * uy * k + ux), 1, 1);
-        }
-      }
-    }
-    ctx.globalCompositeOperation = 'source-over';
+    // as long as the hole is big — thousands of Schwarzschild radii — and longer the harder it is fed
+    const len = Math.max(30, schwarzschild(b.m) * this.scale * (800 + 6000 * j.power));
+    drawJet(this.ctx, b, d.sx, d.sy, d.r, j.power, len, s.timeReal, this.haloFn);
   }
 
   private drawFlashes(now: number) {
-    const ctx = this.ctx;
     this.flashes = this.flashes.filter(f => now - f.t0 < f.dur);
     for (const f of this.flashes) {
       const u = (now - f.t0) / f.dur;
       const big = f.dur > 3;
       const x = this.sx(f.e.x), y = this.sy(f.e.y);
-      const color: Record<string, V3> = {
-        supernova: [0.75, 0.85, 1], ia: [1, 0.95, 0.8], kilonova: [1, 0.6, 0.38], collapse: [0.75, 0.55, 1], nebula: [0.45, 0.88, 0.88],
-      };
-      const c = color[f.e.kind] ?? [1, 0.7, 0.4];
-      const R = Math.max(f.e.size * this.scale * (1 + 3 * u), (big ? 40 : f.e.kind === 'crater' ? 4 : 12) * Math.sqrt(f.e.energy + 0.1) * (0.4 + u));
-      const fade = (1 - u) ** 2;
-      const h = this.halo(R, c, fade);
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.drawImage(h, Math.round(x - (h.width - 1) / 2), Math.round(y - (h.height - 1) / 2));
-      if (big || f.e.kind === 'impact' || f.e.kind === 'collapse') {
-        ctx.strokeStyle = css(c, fade);
-        ctx.beginPath(); ctx.arc(Math.round(x), Math.round(y), R * 2.2 * Math.sqrt(u) + 1, 0, 2 * Math.PI); ctx.stroke();
-      }
-      ctx.globalCompositeOperation = 'source-over';
+      const R = Math.max(f.e.size * this.scale, (big ? 40 : f.e.kind === 'crater' ? 4 : 12) * Math.sqrt(f.e.energy + 0.1));
+      drawFlash(this.ctx, f.e, x, y, u, R, this.haloFn, now);
     }
   }
+  private haloFn = (R: number, c: V3, k: number) => this.halo(R, c, k);
 
   private drawSelection(s: DrawState) {
     const ctx = this.ctx;

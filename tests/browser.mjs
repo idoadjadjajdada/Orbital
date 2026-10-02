@@ -93,6 +93,15 @@ try {
   await page.waitForTimeout(200);
   ok('find follows a body by name', await page.evaluate(() => window.orbital.focus?.name === 'Hubble'));
 
+  // the new shelf and the objects that arrive already going
+  await page.click('.chip[data-shelf="Craft"]');
+  ok('the craft shelf lists spacecraft', (await page.$$('.card')).length >= 10);
+  for (const key of ['ton618', 'blazar', 'microquasar', 'wormhole', 'whitehole', 'magnetar', 'nsmerger', 'ppdisc', 'snr', 'iss']) {
+    await page.evaluate(k => { const a = window.orbital; a.clear(); a.armed = k; a.place({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0 }); a.armed = null; a.paused = false; }, key);
+    await page.waitForTimeout(250);
+    ok(`${key} places and runs`, await page.evaluate(() => window.orbital.world.bodies.length > 0 && isFinite(window.orbital.world.time)));
+  }
+
   ok('still no errors', errs.length === 0, errs.join(' | '));
   await page.close();
 
