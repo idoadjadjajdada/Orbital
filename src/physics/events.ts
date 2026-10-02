@@ -58,7 +58,7 @@ export function spawnFragments(w: World, f: FragSpec): Body[] {
   if (n === 0 || f.mass <= 0) return [];
   const mEach = f.mass / n;
   const out: Body[] = [];
-  const rFrag = f.cls === 'gasp' ? 0 : radiusFromDensity(mEach, 3);
+  const rFrag = f.cls === 'gasp' ? 0 : radiusFromDensity(mEach, f.rho ?? 3);
   const placed: [number, number, number][] = [];
   let sx = 0, sy = 0, sz = 0;
   for (let k = 0; k < n; k++) {
@@ -322,10 +322,12 @@ export function collide(w: World, a: Body, b: Body) {
     // a hit, even if found late — a body left inside another would be flung out
     // by the unphysical pull of a point mass at close range
     if (dx * dvx + dy * dvy + dz * dvz > 0 && d > 0.9 * (T.r + P.r)) return;
-    const rho = T.density;
+    const rho = T.cls === 'debris' ? (T.m * T.dens + P.m * (P.cls === 'debris' ? P.dens : P.density)) / (T.m + P.m) : T.density;
     absorbInto(T, P);
     w.kill(P);
-    if (T.cls === 'debris') T.r = radiusFromDensity(T.m, 3);
+    // keep the material's own density: a merged clump must not swell, or its
+    // Roche limit would creep out past the orbit it already has
+    if (T.cls === 'debris') { T.dens = rho; T.r = radiusFromDensity(T.m, rho); refreshRoche(T); }
     else grow(T, rho);
     w.massChanged(T);
     w.structural();

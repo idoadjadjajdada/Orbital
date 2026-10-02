@@ -55,7 +55,8 @@ export class DiskPhysics {
     const srcs = w.sources;
     if (!srcs.length) return false;
     for (const p of w.bodies) {
-      if (!p.alive || !p.isParticle) continue;
+      // only the swarm: moonlets that pull are bodies, not clouds of metre-sized grains
+      if (!p.alive || !p.isParticle || p.source) continue;
       // who it goes round changes slowly; refresh an eighth of the swarm each frame
       let h = this.hostOf.get(p);
       if (h === undefined || (p.id + this.frame) % 8 === 0 || (h && !h.alive)) {
