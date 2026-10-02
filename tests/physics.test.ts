@@ -9,6 +9,11 @@ import { makeBody } from '../src/physics/catalog';
 import { msLife, zamsL } from '../src/physics/stellar';
 import { buildPreset } from '../src/physics/presets';
 import { MOONS } from '../src/physics/data/moons';
+import { SHAPES, shapeStats, makeShape, slump, MAT, GRID } from '../src/physics/materials';
+import { takeSnapshot, restoreSnapshot } from '../src/physics/snapshot';
+import { tides } from '../src/physics/tides';
+import { placeExtras } from '../src/physics/extras';
+import { ENTRY } from '../src/physics/catalog';
 
 const FOREVER = Number.POSITIVE_INFINITY;
 
@@ -393,3 +398,171 @@ describe('moon data', () => {
   });
 });
 const KM_ = 1 / 1.495978707e8;
+
+describe('tides, deep and shallow', () => {
+  const pass = (beta: number) => {
+    const w = new World();
+    const bh = makeBody('bh', 1, 'hole');
+    w.add(bh);
+    const e = makeBody('terran', 2, 'world');
+    const rt = e.r * Math.cbrt(bh.m / e.m);
+    const q = rt / beta, ecc = 0.85, a = q / (1 - ecc);
+    orbiting(bh, e, a, ecc, 0, 3.6); // a little before periapsis
+    w.add(e);
+    const m0 = e.m;
+    const P = 2 * Math.PI * Math.sqrt(a ** 3 / (G * bh.m));
+    run(w, 0.5 * P, P / 200);
+    return { e, m0, w };
+  };
+  it('a grazing pass strips a world but leaves it', () => {
+    const { e, m0, w } = pass(0.62);
+    expect(e.alive).toBe(true);
+    expect(e.m).toBeLessThan(0.99 * m0);
+    expect(e.m).toBeGreaterThan(0.3 * m0);
+    expect(w.particleCount).toBeGreaterThan(20);
+  });
+  it('a deep pass shreds it into a stream', () => {
+    const { e, w } = pass(2.2);
+    expect(e.alive).toBe(false);
+    expect(w.particleCount).toBeGreaterThan(500);
+  });
+});
+
+describe('hand-built bodies', () => {
+  const bone = SHAPES.find(s => s.key === 'dogbone')!.make();
+  it('a small iron bone keeps its shape; a big one slumps, melts and layers', () => {
+    expect(shapeStats(bone, 200).stress).toBeLessThan(1);
+    const big = bone.map((c, i) => (c ? (i % 3 ? 2 : 1) : 0)); // rock with iron mixed through
+    const st = shapeStats(big, 8000);
+    expect(st.stress).toBeGreaterThan(10);
+    const sh = makeShape(big, st);
+    expect(sh.roundGoal).toBeGreaterThan(0.9);
+    for (let k = 0; k < 200 && !sh.packed; k++) slump(sh, sh.tau);
+    expect(sh.packed).toBe(true);
+    // iron ends up in the middle: the cell at the centre is denser than one at the edge
+    let inner = 0, outer = 0, ni = 0, no = 0;
+    for (let j = 0; j < GRID; j++) for (let i = 0; i < GRID; i++) {
+      const id = sh.cells[j * GRID + i];
+      if (!id) continue;
+      const d = Math.hypot(i + 0.5 - sh.cx, j + 0.5 - sh.cy);
+      if (d < sh.rc * 0.4) { inner += MAT.get(id)!.rho; ni++; } else if (d > sh.rc * 0.8) { outer += MAT.get(id)!.rho; no++; }
+    }
+    expect(inner / ni).toBeGreaterThan(outer / no);
+  });
+});
+
+describe('slow effects', () => {
+  it('a micro black hole evaporates', () => {
+    const w = new World();
+    const b = makeBody('microbh', 1);
+    w.add(b);
+    run(w, 30, 1);
+    expect(b.alive).toBe(false);
+  });
+
+  it('a close moon is braked toward synchronous rotation', () => {
+    const w = new World();
+    const p = point('planet', M_EARTH, R_EARTH);
+    const m = orbiting(p, point('moon', M_EARTH / 81, 1737e3 / 1.496e11), 4 * R_EARTH, 0);
+    m.spin = 2 * Math.PI * 365.25; // one turn a day, much faster than its orbit
+    w.add(p); w.add(m);
+    const n = Math.sqrt(G * (p.m + m.m) / (4 * R_EARTH) ** 3);
+    tides(w, assignHosts(w.sources), 1e6);
+    expect(Math.abs(m.spin - n) / n).toBeLessThan(1e-6);
+  });
+
+  it('dust spirals in under Poynting–Robertson drag', () => {
+    const w = new World();
+    const sun = makeBody('sun', 1);
+    w.add(sun);
+    const g = orbiting(sun, point('grain', 1e-20, 0, false), 1, 0);
+    g.cls = 'debris';
+    g.beta = 0.3;
+    // with radiation pressure the grain's effective gravity is (1 − β); start it circular in that
+    const v = Math.sqrt(G * sun.m * (1 - 0.3 * sun.star!.L / sun.m));
+    g.setVel(0, v, 0);
+    w.add(g);
+    run(w, 20, 0.05);
+    const r = Math.hypot(g.x - sun.x, g.y - sun.y);
+    expect(r).toBeLessThan(0.995);
+  });
+
+  it('the Theia impact spins the Earth up to a short day', () => {
+    const w = buildPreset('theia');
+    run(w, 0.001, 1e-4);
+    const E = w.sources.find(b => b.name === 'Proto-Earth')!;
+    const dayHours = (2 * Math.PI / E.spin) * 365.25 * 24;
+    expect(dayHours).toBeLessThan(12);
+  });
+});
+
+describe('undo', () => {
+  it('a snapshot puts every body back', () => {
+    const w = buildPreset('saturn');
+    const n = w.bodies.length;
+    const titan = w.bodies.find(b => b.name === 'Titan')!;
+    const x0 = titan.x;
+    const s = takeSnapshot(w, 'test');
+    run(w, 0.01, 0.01);
+    w.kill(titan);
+    restoreSnapshot(w, s);
+    expect(w.bodies.length).toBe(n);
+    expect(w.bodies.find(b => b.name === 'Titan')!.x).toBe(x0);
+  });
+});
+
+describe('exotic objects', () => {
+  it('a rock dropped into one wormhole mouth comes out of the other', () => {
+    const w = new World();
+    const a = makeBody('wormhole', 1);
+    w.add(a);
+    placeExtras(w, a, ENTRY.get('wormhole')!.extra!, 0.01);
+    const b = w.sources.find(s => s !== a)!;
+    const rock = point('rock', 1e-15, 1e-7);
+    rock.setPos(a.x - 3e-4, 0, 0); rock.setVel(20 * KMS, 0, 0);
+    w.add(rock);
+    run(w, 1e-4, 5e-6);
+    expect(rock.alive).toBe(true);
+    expect(Math.hypot(rock.x - b.x, rock.y - b.y)).toBeLessThan(Math.hypot(rock.x - a.x, rock.y - a.y));
+  });
+
+  it('nothing enters a white hole', () => {
+    const w = new World();
+    const h = makeBody('whitehole', 1);
+    w.add(h);
+    const rock = point('rock', 1e-12, 1e-7);
+    rock.setPos(1e-4, 0, 0); rock.setVel(-0.3 * C, 0, 0);
+    w.add(rock);
+    run(w, 2e-8, 1e-9);
+    expect(rock.alive).toBe(true);
+    expect(rock.vx).toBeGreaterThan(0);
+  });
+
+  it('a quasar arrives feeding, with gas round it', () => {
+    const w = new World();
+    const q = makeBody('quasar', 1);
+    w.add(q);
+    placeExtras(w, q, ENTRY.get('quasar')!.extra!, 1);
+    expect(q.feed).toBeGreaterThan(0);
+    expect(w.particleCount).toBeGreaterThan(500);
+    run(w, 0.01, 0.01);
+    expect(q.feedLeft).toBeLessThan(q.feed * 1e4);
+  });
+
+  it('a microquasar arrives with its companion already overflowing', () => {
+    const w = new World();
+    const b = makeBody('microquasar', 1);
+    w.add(b);
+    placeExtras(w, b, ENTRY.get('microquasar')!.extra!, 1);
+    const donor = w.sources.find(s => s !== b)!;
+    const m0 = donor.m;
+    run(w, 0.01, 2e-4);
+    expect(donor.m).toBeLessThan(m0);
+  });
+
+  it('spacecraft feel gravity but pull on nothing', () => {
+    const iss = makeBody('iss', 1);
+    expect(iss.source).toBe(false);
+    expect(makeBody('sail', 1).beta).toBeGreaterThan(0);
+  });
+});

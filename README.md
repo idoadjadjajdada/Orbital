@@ -14,9 +14,15 @@ npm run test:browser   # smoke test in Chromium, desktop and iPad, after a build
 python3 tools/fetch-moons.py   # refresh the moon table from JPL
 ```
 
-Runs in any current browser with WebGL2, iPad Safari included: touch to
-throw and select, double-tap to follow, pinch to zoom, two fingers to pan.
-Resolution adapts to the frame rate.
+Runs in any current browser, iPad Safari included: touch to throw and
+select, double-tap to follow, pinch to zoom, drag to slide the view.
+
+The view is a flat, top-down pixel-art map. The physics underneath is fully
+3D — tilted orbits, ring planes and moons on their planets' equators are all
+there, seen from above. Each body's surface is baked once into a map in its
+own turning frame and shaded every frame as a sphere lit from the real
+direction of its star, in a few dithered steps; rings are traced against
+their measured profiles and shadow the planet and are shadowed by it.
 
 ## Playing
 
@@ -26,12 +32,39 @@ Resolution adapts to the frame rate.
 | Tap space with a body picked | drop it into a circular orbit (**Auto-orbit**) or at rest |
 | Tap a body · double-tap | select · follow it with the camera |
 | Drag a body | pick it up; let go and it keeps your hand's speed |
-| Drag empty space / right-drag | turn the view |
-| Shift-drag, middle-drag, two fingers | pan |
-| Scroll / pinch | zoom |
+| Drag empty space, two fingers | slide the view |
+| Scroll / pinch / `+` `−` | zoom |
 | `Space` `[` `]` | pause · slower · faster |
 | `T` `O` `Z` `L` `A` | trails · orbits · zones · labels · auto-orbit |
 | `F` `Esc` `Del` `1`–`9` | follow · deselect · delete · pick from the shelf |
+| `H` `R` `P` `M` `E` | tools: move · ruler · push · bombard · erase |
+| `B` · `Ctrl`/`⌘` `Z` | build a body · undo |
+
+**Tools** (left edge). *Ruler*: drag between two points; start or end on a
+body and it follows it, reading distance, light-time, the gap between
+surfaces and the relative speed. *Push*: drag from a body to change its
+velocity; a full-length drag is its whole orbital speed, and the dotted line
+is the new path. *Bombard*: hold on a world to rain small rocks on it and
+watch it crater (or scar, on a giant). *Erase*: rub out bodies and debris.
+Every change you make can be undone.
+
+**Inspector.** Select a body for its orbit and physical data, a map of its
+surface as it is now — craters included, night side dark — flat or as an
+equal-area globe, and for a hand-built body its cross-section. *Circularize*,
+*Reverse* and *Shatter* act on it directly. **Find** jumps to any body by name.
+
+**Build a body.** Draw a cross-section on a 32×32 grid in ten materials
+(iron, rock, basalt, carbon, rubble, ice, water, magma, gas, gold), or start
+from a shape — sphere, potato, contact binary, dog bone, cigar, cube, star,
+ring, layered planets — and pick its size. The builder works out its mass,
+gravity and escape speed, and whether it can hold its shape: the stress its
+own weight puts on it, (2π/3)Gρ²R² scaled by how far from round it is,
+against the strength of what it is made of. A small body keeps whatever you
+drew. One that is too big slumps toward a sphere on its free-fall timescale,
+partway if it is only a little overloaded; one heavy enough to melt
+separates as it goes — iron to the middle, water and gas on top — and ends
+as an ordinary round world with what floated up as its surface. *Test the
+slump* plays it first. The Star tab makes a star of any mass and age.
 
 The clock says what it is actually doing. If the integrator cannot keep up
 with the speed you asked for — a moon on a two-day orbit needs thousands of
@@ -70,6 +103,11 @@ of the remnant is spawned as self-gravitating fragments. Anything that hits a
 star or a compact object is swallowed; inside three Schwarzschild radii of a
 black hole there is no stable orbit left and it falls in.
 
+**Spin.** Collisions keep angular momentum: what an impact brings that does
+not leave as debris or go into orbit becomes spin, up to the rate at which
+the merged body would fly apart. The Theia impact leaves the Earth with a day
+of a few hours.
+
 **Small impacts dig craters.** Something under 1/10,000 of the target's mass
 does not just add itself: it makes a crater sized by the Schmidt–Housen
 π-scaling law and throws out ejecta, of which the part faster than escape
@@ -77,12 +115,31 @@ speed leaves. A big planet keeps most of the impactor; a small moon or
 asteroid, with an escape speed of metres per second, loses more than it
 gains — small bodies are worn down. Fresh craters glow with melt and cool;
 a gas giant takes a dark scar in its clouds that fades in weeks, as
-Shoemaker–Levy 9's did on Jupiter.
+Shoemaker–Levy 9's did on Jupiter. On a world with an Earth-like atmosphere
+anything smaller than about fifty metres bursts in the air instead, as the
+Chelyabinsk meteor did (Venus stops much bigger ones).
 
-**Tides.** A body inside the Roche limit of something much heavier comes
-apart — the fluid limit, 2.44 R (ρ_M/ρ_m)^⅓, for anything held together by its
-own gravity, ~1.5 for small rubble piles — and the pieces keep the spin and
-orbit it had.
+**Tides.** How much a close pass does depends on how deep it goes: the
+penetration factor β = r_t/r_p, with r_t = R (M/m)^⅓ the tidal radius.
+Crossing the Roche distance (2.44 r_t for anything held together by its own
+gravity, ~1.5 for rubble piles) only works out what this pass will do. A
+fluid body loses nothing until β ≈ 0.5; between that and β ≈ 0.9 it is
+*stripped* — the layers beyond its two Lagrange points pulled off into a
+leading and a trailing tidal tail, the leading one more bound than the body
+and the trailing one less — and past it, or on any orbit that stays inside
+the limit, it is destroyed (Guillochon & Ramirez-Ruiz 2013). It comes apart
+where the tides actually tear it, at the tidal radius or at periapsis, and
+the pieces keep the rotation and orbit it had there. That sets the spread of
+orbital energy across the debris, ΔE ≈ GMR/r², and so how long the
+spaghetti-like stream grows and how fast it falls back: around a black hole
+half a star's debris is bound and returns over weeks to months, settles into
+a disc through its own collisions, spirals in and feeds the jets; the other
+half leaves.
+
+Slower tides act too. A body's spin is braked (or wound up) toward its
+orbital period at the rate the tidal torque gives (Gladman et al. 1996), so
+moons lock; an eccentric locked moon is flexed every orbit and heats, by
+(21/2)(k₂/Q)GM²R⁵ne²/a⁶ — Io's resonances keep that going.
 
 **Rings form; they are not painted on.** Debris going round something
 collides with itself. Each simulated particle stands for a great many
@@ -96,6 +153,23 @@ outside the limit — gathers into a moonlet; inside it nothing can, so a ring
 is what remains. Whether a torn-up moon becomes a ring or new moons depends on
 where its orbit's angular momentum settles it: a(1−e²) inside or outside the
 limit.
+
+**A Moon from a giant impact.** The Theia graze leaves about 2% of the mass
+in orbit (Canup 2004), surface density falling as r^−1.5. Inside the Roche
+limit it is a ring of 500 small pieces that collide and settle. Outside it,
+as the impact simulations find, it is a few intact clumps of Theia's mantle,
+the largest holding about half (Canup & Asphaug 2001). A third of the disc
+starts as rock vapour turning in the impact's plane; it does not gravitate
+here, but it drags on the clumps until it condenses, about a year, damping
+their eccentricities on the timescale of Tanaka & Ward (2004). Clumps that
+meet slowly inside their mutual Hill sphere merge — the gravitational
+aggregation rule of N-body lunar-accretion studies — and the merged Earth
+takes the recoil of the uneven disc, keeping momentum exact. The process is
+chaotic, as the real one was: in nine test runs at the preset's own clock,
+eight left a moon or two moons totalling about a lunar mass (largest single
+moons 0.6 to 1.4 lunar masses) within a few weeks, at four to eight Earth
+radii; one scattered its clumps and left only fragments. Roughly half the
+disc falls back onto the Earth, as Ida et al. (1997) found.
 
 **Accretion discs and jets.** Gas round a white dwarf, neutron star or black
 hole is an α-disc (Shakura & Sunyaev, α = 0.1): the same collisions settle it,
@@ -114,7 +188,14 @@ Kalirai initial–final mass relation and a planetary nebula; up to 25 M☉ a
 core-collapse supernova leaves a kicked neutron star; above that a black hole,
 directly and quietly above 40 M☉. A white dwarf fed past 1.38 M☉ detonates and
 leaves nothing; a neutron star past 2.3 M☉ collapses. Starlight pushes on gas
-and dust, which is why a comet's tail points away from its star.
+and dust, which is why a comet's tail points away from its star, and drags on
+it through Poynting–Robertson drag (the light is aberrated by the grain's own
+motion), so dust spirals slowly in.
+
+**Hawking radiation.** A black hole radiates as a black body and loses mass
+faster the smaller it is: its lifetime is 2.1×10⁶⁷ yr (M/M☉)³. Every real
+black hole outlives the universe by far; the catalogue's 200,000-tonne one
+is gone in about twenty years and ends in a burst.
 
 ## Real scale, honestly
 
@@ -159,18 +240,55 @@ Chen & Kipping relation except g and h, flagged), Proxima Centauri b and d.
 
 **Events.** Theia grazing the proto-Earth; a moon torn into a ring; a black
 hole binary in the SS 433 configuration (overflow, stream, disc, jets); two
-black holes merging; Sgr A* with the S-stars and a tidal disruption; the
-Kirkwood belt with a semi-major-axis histogram.
+black holes merging; Sgr A* with the S-stars and a tidal disruption; a
+Sun-like star torn apart by a million-sun hole (β = 2); two Earths round a
+10-sun hole, one stripped and one spaghettified; a quasar in its ring of gas
+with a giant falling in; the Kirkwood belt with a semi-major-axis histogram.
 
-**Catalogue**, six shelves: comets, asteroids, Psyche-like metal and
-Arrokoth-like Kuiper objects, moons, dwarf planets; rocky, desert, icy, ocean,
-molten, iron, carbon, eyeball and stripped-core worlds and super-Earths;
-gas, ringed and ice giants, mini-Neptunes, super-puffs, hot Jupiters, brown
-dwarfs; protostars, red, K, Sun-like, F, A, B and O stars, a blue
-supergiant, dying giants, red supergiants and hypergiants, an Eta
-Carinae-class star; white dwarfs (one a whisker under Chandrasekhar), neutron
-stars, pulsars, magnetars, stellar, intermediate-mass and supermassive black
-holes; and a rogue planet, ʻOumuamua, a primordial black hole and TON 618.
+**Catalogue**, seven shelves: comets, asteroids, Psyche-like metal and
+Arrokoth-like Kuiper objects, a rubble-pile Itokawa, a metal dog-bone
+Kleopatra and a ringed centaur (the small ones keep the shapes they have),
+moons, dwarf planets; rocky, desert, icy, ocean, Hycean, molten, iron,
+carbon, eyeball and stripped-core worlds and super-Earths; gas, ringed and
+ice giants, mini-Neptunes, super-puffs, hot Jupiters, brown dwarfs;
+protostars, red, K, Sun-like, F, A, B and O stars, a blue supergiant, dying
+giants, red supergiants and hypergiants, an Eta Carinae-class star, a
+Thorne–Żytkow object; white, helium-white and black dwarfs, neutron stars,
+pulsars, millisecond pulsars, magnetars, quark stars, stellar,
+intermediate-mass, merged and supermassive black holes; and spacecraft — the
+ISS, Tiangong, Hubble, JWST, Voyager 1, New Horizons, Parker Solar Probe,
+Cassini, a GPS satellite, a Starlink, a lander and a solar sail that
+sunlight really pushes (β = 0.05).
+
+**Things that arrive already going.** Some objects only do what they are
+known for in the right surroundings, so they are placed with them:
+
+- *Quasar, blazar, M87\*, TON 618*: a ring of gas from 40 to 400
+  Schwarzschild radii and an inner accretion disc too small to resolve,
+  already falling in at a set fraction of the Eddington rate. Its mass is
+  already in the hole's; the rate lights the jets from the start. Jets are as
+  long as the hole is big — thousands of Schwarzschild radii — and as bright
+  as it is fed; a blazar's points almost straight at you.
+- *Microquasar (SS 433), X-ray pulsar (Her X-1), cataclysmic variable*: a
+  companion star just past filling its Roche lobe, a disc the stream has
+  already built, and the inner disc feeding.
+- *Merging neutron stars, binary black hole, double pulsar*: both members,
+  on the orbit gravitational waves are shrinking.
+- *Planetary nebula, supernova remnant (the Crab)*: the shell they threw off,
+  still coasting outward.
+- *Protoplanetary disc*: a young Sun in a disc of dust and planetesimals that
+  settles and gathers by itself.
+- *Wormhole*: both mouths. Anything entering one leaves the other, moving the
+  same way at the same speed.
+- *White hole*: a black hole run backwards. It pulls like one, but whatever
+  reaches its horizon is turned back, and it pours out gas at a third of light
+  speed. White holes and wormholes are hypothetical; they are here as what
+  general relativity allows, not as things known to exist.
+
+Magnetars flare every few decades; pulsars sweep their beams. Supernovae
+throw out a filamented blast wave; mergers of black holes and neutron stars
+send out gravitational-wave ripples (drawn as a quadrupole pattern — the
+real waves are invisible), and neutron-star mergers a kilonova.
 
 ## Limits
 
@@ -189,15 +307,18 @@ holes; and a rogue planet, ʻOumuamua, a primordial black hole and TON 618.
 - The 1PN term is the test-particle form, exact for periapsis advance; it does
   not include frame-dragging or the full Einstein–Infeld–Hoffmann terms.
 - Stellar evolution is single-star and parametric, not a stellar-structure code.
-- Gravitational lensing is drawn as a point lens in screen space; it bends the
-  whole image, including anything in front of the hole.
+- Gravitational lensing is drawn as a point lens on the background sky, as if
+  seen from a height equal to the view's width. Simulated bodies lie beside a
+  hole rather than behind it and are not lensed.
+- A hand-built body's shape is drawn and its strength tested against its own
+  weight, but gravity treats it as a point mass like everything else.
 
 ## Layout
 
 ```
 src/physics/   integrator, forces, collisions, stars, presets — no DOM, fully tested
-src/render/    three.js scene, shaders, overlays
+src/pixel/     pixel-art renderer: surface maps, sprites, rings, particles, lensing
 src/physics/data/moons.ts   generated from JPL by tools/fetch-moons.py
-src/ui/        input, HUD, the belt histogram
+src/ui/        input and tools, HUD, the body builder, the belt histogram
 tests/         physics.test.ts (vitest), browser.mjs (Playwright smoke test)
 ```

@@ -31,6 +31,8 @@
   <nav class="hud top-right">
     <div class="row">
       <button class="chip" id="presetBtn">Systems ▾</button>
+      <button class="chip" id="findBtn" title="Find a body by name">Find</button>
+      <button class="chip" id="undoBtn" title="Undo (Ctrl/⌘ Z)" disabled>↶ Undo</button>
       <button class="chip" id="clear" title="Clear (C)">Clear</button>
       <button class="chip icon" id="helpBtn" title="Controls">?</button>
     </div>
@@ -42,6 +44,10 @@
       <button class="chip tog on" data-flag="auto" title="A">Auto-orbit</button>
     </div>
     <div class="menu" id="presetMenu" hidden></div>
+    <div class="menu find" id="findMenu" hidden>
+      <input id="findQ" placeholder="Name…" autocomplete="off" spellcheck="false" />
+      <div id="findList"></div>
+    </div>
   </nav>
 
   <aside class="hud inspector" id="inspector" hidden>
@@ -53,35 +59,68 @@
       </div>
       <button class="icon close" id="iClose" title="Deselect (Esc)">✕</button>
     </div>
+    <div class="imap" id="iMapBox" hidden>
+      <div class="row"><span class="isub" id="iMapT">Surface</span><span class="row seg"><button class="chip small on" data-proj="flat">Flat</button><button class="chip small" data-proj="moll">Globe</button><button class="chip small" data-proj="cut" id="iCut">Inside</button></span></div>
+      <canvas id="iMap" width="128" height="64"></canvas>
+    </div>
     <dl id="iStats"></dl>
     <div class="row iact">
       <button class="chip" id="iFollow">Follow</button>
+      <button class="chip" id="iCirc" title="Put it on a circular orbit about what it goes round">Circularize</button>
+      <button class="chip" id="iRev" title="Same speed, the other way round">Reverse</button>
+      <button class="chip" id="iShatter" title="Break it apart, as a catastrophic impact would">Shatter</button>
       <button class="chip danger" id="iDelete">Delete</button>
     </div>
   </aside>
+
+  <nav class="hud tools" id="tools" aria-label="Tools">
+    <button data-tool="hand" class="on" title="Move (H): select, drag bodies, throw what you picked"><b>✋</b><span>Move</span></button>
+    <button data-tool="ruler" title="Ruler (R): drag between two points or bodies"><b>📏</b><span>Ruler</span></button>
+    <button data-tool="push" title="Push (P): drag from a body to change its velocity"><b>➚</b><span>Push</span></button>
+    <button data-tool="bombard" title="Bombard (M): hold on a body to rain small rocks on it"><b>☄</b><span>Bombard</span></button>
+    <button data-tool="erase" title="Erase (E): rub out bodies and debris"><b>⌫</b><span>Erase</span></button>
+  </nav>
+  <div class="hud ruler" id="rulerBox" hidden></div>
 
   <footer class="hud bottom">
     <div class="shelves" id="shelves"></div>
     <div class="cards" id="cards"></div>
   </footer>
 
-  <div class="hud forge" id="forge" hidden>
-    <div class="fhead">Forge <button class="icon close" id="fClose">✕</button></div>
-    <div class="fbody">
-      <img id="fPrev" alt="" />
-      <div class="fcontrols">
-        <label>Kind
-          <select id="fStyle">
-            <option value="terran">Rocky, oceans</option><option value="rocky">Rocky</option><option value="barren">Barren</option>
-            <option value="desert">Desert</option><option value="ocean">Ocean world</option><option value="ice">Ice</option>
-            <option value="lava">Molten</option><option value="iron">Iron</option><option value="carbon">Carbon</option>
-            <option value="gas">Gas giant</option><option value="icegiant">Ice giant</option><option value="star">Star</option>
-          </select>
-        </label>
-        <label>Mass <span id="fMassV"></span><input type="range" id="fMass" min="-4" max="3.6" step="0.01" value="0" /></label>
-        <label>Density <span id="fRhoV"></span><input type="range" id="fRho" min="0.3" max="12" step="0.05" value="5.5" /></label>
-        <div class="row"><label class="col">Colour <input type="color" id="fC1" value="#1d4f8c" /></label><label class="col">and <input type="color" id="fC2" value="#4f8a3c" /></label></div>
-        <div class="row"><button class="chip" id="fSeed">New pattern</button><button class="chip on" id="fUse">Place this</button></div>
+  <div class="hud builder" id="builder" hidden>
+    <div class="fhead">Build a body
+      <span class="row seg"><button class="chip small on" data-bmode="world">World</button><button class="chip small" data-bmode="star">Star</button></span>
+      <button class="icon close" id="bClose" title="Close">✕</button>
+    </div>
+    <div class="bbody">
+      <div id="bWorld" class="bdraw">
+        <canvas id="bGrid" aria-label="Drawing grid: the body's cross-section"></canvas>
+        <div class="row btools">
+          <button class="chip small on" data-btool="paint" title="Paint (right-click erases)">✎ Paint</button>
+          <button class="chip small" data-btool="erase">⌫ Erase</button>
+          <button class="chip small" data-btool="fill">▣ Fill</button>
+          <button class="chip small" id="bMirror" title="Mirror left and right">⇋ Mirror</button>
+          <button class="chip small" id="bUndo">↶</button>
+          <button class="chip small" id="bClear">Clear</button>
+        </div>
+        <div class="bmats" id="bMats"></div>
+        <div class="bsub">Shapes</div>
+        <div class="row bshapes" id="bShapes"></div>
+      </div>
+      <div class="bside">
+        <canvas id="bPrev"></canvas>
+        <label class="bname">Name <input id="bName" maxlength="28" /></label>
+        <div id="bStar" hidden>
+          <label>Mass <span id="bStarMV"></span><input type="range" id="bStarM" min="-1.1" max="2.18" step="0.01" /></label>
+          <label>Age <span id="bStarAgeV"></span><input type="range" id="bStarAge" min="-0.5" max="1.9" step="0.01" /></label>
+        </div>
+        <div class="bworldctl" data-world>
+          <label>Size <span id="bSizeV"></span><input type="range" id="bSize" min="-0.5" max="5.3" step="0.01" /></label>
+          <label>Day <span id="bDayV"></span><input type="range" id="bDay" min="0" max="3.5" step="0.01" /></label>
+        </div>
+        <dl id="bStats"></dl>
+        <div class="verdict" id="bVerdict"></div>
+        <div class="row"><button class="chip" id="bTest">Test the slump</button><button class="chip on" id="bUse">Place it</button></div>
       </div>
     </div>
   </div>
@@ -93,14 +132,15 @@
       <tr><td>Tap space with a body picked</td><td>drop it into a circular orbit (Auto-orbit) or at rest</td></tr>
       <tr><td>Tap a body</td><td>select it · double-tap (or Follow) to ride along with it</td></tr>
       <tr><td>Drag a body</td><td>pick it up; let go and it keeps your hand's speed</td></tr>
-      <tr><td>Drag empty space / right-drag</td><td>turn the view</td></tr>
-      <tr><td>Shift-drag, middle-drag, two fingers</td><td>pan</td></tr>
-      <tr><td>Scroll / pinch</td><td>zoom</td></tr>
+      <tr><td>Drag empty space, two fingers</td><td>slide the view</td></tr>
+      <tr><td>Scroll / pinch / <kbd>+</kbd> <kbd>−</kbd></td><td>zoom</td></tr>
       <tr><td><kbd>Space</kbd> <kbd>[</kbd> <kbd>]</kbd></td><td>pause · slower · faster</td></tr>
       <tr><td><kbd>T</kbd> <kbd>O</kbd> <kbd>Z</kbd> <kbd>L</kbd> <kbd>A</kbd></td><td>trails · orbits · zones · labels · auto-orbit</td></tr>
       <tr><td><kbd>F</kbd> <kbd>Esc</kbd> <kbd>Del</kbd> <kbd>1</kbd>–<kbd>9</kbd></td><td>follow · deselect · delete · pick from shelf</td></tr>
+      <tr><td><kbd>H</kbd> <kbd>R</kbd> <kbd>P</kbd> <kbd>M</kbd> <kbd>E</kbd></td><td>tools: move · ruler · push · bombard · erase</td></tr>
+      <tr><td><kbd>B</kbd> · <kbd>Ctrl/⌘</kbd> <kbd>Z</kbd></td><td>build a body · undo</td></tr>
     </table>
-    <p>Everything is at real scale and real time. Bodies are drawn at their true size once you are close enough, and never smaller than a few pixels. Nothing is skipped: rings settle, discs drain and stars die only as fast as the clock runs.</p>
+    <p>Everything is at real scale and real time. Seen from above. Bodies are drawn at their true size once you are close enough, and never smaller than a few pixels — the physics underneath is fully 3D. Nothing is skipped: rings settle, discs drain and stars die only as fast as the clock runs.</p>
   </div>
 
   <div class="toasts" id="toasts"></div>

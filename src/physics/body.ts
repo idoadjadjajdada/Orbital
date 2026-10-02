@@ -1,4 +1,5 @@
 import { schwarzschild, densityOf } from './units';
+import type { Shape } from './materials';
 
 /** What a body is made of — this decides how it collides, tears and evolves. */
 export type Cls =
@@ -26,6 +27,13 @@ export interface Look {
   /** in body radii; `kind` picks a measured radial profile */
   rings?: { inner: number; outer: number; color: number; opacity: number; kind?: 'saturn' | 'uranus' | 'neptune' | 'jupiter' };
   pulsar?: boolean;
+  /** a magnetar: a pulsar whose field gives way now and then in a giant flare */
+  magnetar?: boolean;
+  /** hypothetical objects drawn their own way */
+  white?: boolean;
+  wormhole?: boolean;
+  /** a spacecraft: which pixel sprite */
+  craft?: 'station' | 'telescope' | 'mirror' | 'probe' | 'sat' | 'sail' | 'lander';
 }
 
 export type Phase = 'proto' | 'ms' | 'giant' | 'agb' | 'remnant' | 'none';
@@ -85,12 +93,29 @@ export class Body {
   hostId = 0;        // cached orbital host (analysis.ts), 0 = none
   /** Roche distance from a source of mass M is rocheK · ∛M; 0 = cannot be torn apart */
   rocheK = 0;
+  /** a tidal pass under way: the source it is passing, the distance at which it
+   *  comes apart on this pass (0 = already dealt with), and when it began */
+  tidalHost = 0;
+  tidalR = 0;
+  tidalT = 0;
   /** for fragments and particles: the bulk density (g/cm³) of what they came from */
   dens = 3;
   /** mass is an estimate from an assumed size and density, not a measurement */
   sizeGuess = false;
   /** craters, in the body's own rotating frame: unit direction, angular radius (rad), sim time made */
   craters: { x: number; y: number; z: number; a: number; t: number }[] = [];
+  /** a hand-drawn body: its outline and what it is made of, while it holds a shape */
+  shape?: Shape;
+  /**
+   * An active nucleus: gas in an inner accretion disc too small to resolve,
+   * already counted in the body's mass, falling in at `feed` M☉/yr until
+   * `feedLeft` is used up. It powers the jets from the start, rather than
+   * waiting for the resolved ring of gas to spiral in.
+   */
+  feed = 0;
+  feedLeft = 0;
+  /** the other mouth of a wormhole */
+  partnerId = 0;
   /** compact objects: mass swallowed since the renderer last looked, and the angular momentum it brought */
   swallowed = 0;
   lx = 0; ly = 0; lz = 0;
@@ -118,7 +143,7 @@ export class Body {
   /** Radius at which something hitting this body is gone. For a black hole
    *  that is the innermost stable circular orbit, three horizons out: inside
    *  it there is no circular orbit left to sit in and matter plunges. */
-  get captureRadius() { return this.cls === 'bh' ? 3 * schwarzschild(this.m) : this.r; }
+  get captureRadius() { return this.cls === 'bh' && !this.look.white && !this.look.wormhole ? 3 * schwarzschild(this.m) : this.r; }
 
   get density() { return densityOf(this.m, this.r); }
 

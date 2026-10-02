@@ -1,11 +1,13 @@
 import type { Body } from './body';
 import { Hermite } from './integrator';
-import { accrete, collide, disrupt, starDeath, wind, cometActivity, type SimEvent } from './events';
+import { accrete, collide, disrupt, starDeath, wind, cometActivity, tidalReset, spawnFragments, type SimEvent } from './events';
 import { evolve } from './stellar';
 import { refreshRoche } from './catalog';
-import { G } from './units';
+import { G, C, KMS, schwarzschild } from './units';
+import { tides, hawking } from './tides';
 import { DiskPhysics, rocheOverflow } from './disks';
 import { assignHosts } from './analysis';
+import { slump, lookFromShape } from './materials';
 
 /**
  * The simulation: a set of bodies, the integrator that moves them, and
@@ -53,8 +55,14 @@ export class World {
     this.bodies = [];
     this.sources = [];
     this.events = [];
+    this.disks.vapour = [];
     this.time = 0;
     this.dirtyStructure = this.dirtyForces = true;
+  }
+
+  /** a giant impact's vapour, dragging on what orbits through it until it condenses */
+  addVapour(host: Body, M: number, rIn: number, rOut: number, n: [number, number, number], tau = 1) {
+    this.disks.vapour.push({ host, M, rIn, rOut, tau, n });
   }
 
   emit(e: SimEvent) { this.events.push(e); if (this.events.length > 200) this.events.shift(); }
@@ -86,6 +94,22 @@ export class World {
    * Returns the time actually covered.
    */
   step(T: number, deadline: number): number {
+    // The disc processes (collisions, drag, back-reaction) act once per step,
+    // so with a debris disc present a step is kept to a fraction of its
+    // shortest orbit: a fast clock then gives the same physics as a slow one.
+    const sub = this.disks.minPeriod / 30;
+    if (!(T > sub)) return this.stepOnce(T, deadline);
+    let done = 0;
+    while (done < T * (1 - 1e-12)) {
+      const want = Math.min(sub, T - done);
+      const got = this.stepOnce(want, deadline);
+      done += got;
+      if (got < want || performance.now() > deadline) break;
+    }
+    return done;
+  }
+
+  private stepOnce(T: number, deadline: number): number {
     this.rebuild();
     this.backReaction(T / 2);
     let done = 0;
@@ -139,11 +163,17 @@ export class World {
       // each orbit, so it is left out rather than aliased into a false push.
       const span = 2 * Math.abs(dt) * 4;
       const near = Math.cbrt(G * s.m * span * span) ** 2;
+      const h = Math.abs(dt) * 2;
       for (const p of this.bodies) {
         if (p.source || !p.alive || p.m === 0) continue;
         const dx = p.x - s.x, dy = p.y - s.y, dz = p.z - s.z;
         if (dx * dx + dy * dy + dz * dz < near) continue;
-        const r2 = dx * dx + dy * dy + dz * dz + soft;
+        // A particle sweeping past in less than a step pulls for less than a
+        // step: soften by the distance it covers, so the kick is the passage
+        // averaged rather than the closest instant sampled — which would
+        // inject energy, enough to throw a moonlet out of a debris disc.
+        const sweep2 = ((p.vx - s.vx) ** 2 + (p.vy - s.vy) ** 2 + (p.vz - s.vz) ** 2) * h * h;
+        const r2 = dx * dx + dy * dy + dz * dz + soft + sweep2;
         const f = G * p.m / (r2 * Math.sqrt(r2));
         ax += f * dx; ay += f * dy; az += f * dz;
       }
@@ -157,6 +187,7 @@ export class World {
     // rings settle, discs drain, moonlets gather, stars overflow their lobes
     if (this.disks.step(this, this.hosts, dt)) this.dirtyForces = true;
     rocheOverflow(this, this.hosts, dt, this.overflowPending);
+    tides(this, this.hosts, dt);
     const stars = this.sources.filter(b => b.luminous && b.cls === 'star');
     for (const b of [...this.sources]) {
       if (!b.alive) continue;
@@ -169,11 +200,39 @@ export class World {
         refreshRoche(b);
       }
       if (b.kind === 'comet' && stars.length) cometActivity(this, b, stars, dt);
+      if (b.tidalHost) tidalReset(this, b);
+      // an unresolved inner disc already feeding: its mass is in the hole's; the
+      // rate is what lights the jets
+      if (b.feedLeft > 0) {
+        const dm = Math.min(b.feedLeft, b.feed * dt);
+        b.feedLeft -= dm;
+        b.swallowed += dm;
+      }
+      if (b.look.white) whiteHoleOutflow(this, b, dt);
+      // a magnetar's crust gives way now and then: a giant flare, every few decades
+      if (b.look.magnetar && Math.random() < dt / 30) {
+        this.emit({ kind: 'flare', x: b.x, y: b.y, z: b.z, size: 1e-4, energy: 1, t: this.time, body: b, name: `${b.name}: giant flare — for a tenth of a second, brighter than a galaxy` });
+      }
+      if (b.cls === 'bh' && b.m < 1e-14) {
+        if (hawking(b, dt)) {
+          this.emit({ kind: 'evaporate', x: b.x, y: b.y, z: b.z, size: 1e-5, energy: 1, t: this.time, body: b, name: `${b.name} evaporated in a final burst of Hawking radiation` });
+          this.kill(b);
+          continue;
+        }
+        b.r = schwarzschild(b.m);
+      }
+      if (b.shape && slump(b.shape, dt)) {
+        // finished slumping: an ordinary round world now, warmed by the fall
+        b.look = { ...b.look, ...lookFromShape(b.shape, b.look.seed) };
+        b.heat = Math.max(b.heat, Math.min(1, (2 * G * b.m / b.r) / (5 * KMS) ** 2));
+        this.emit({ kind: 'merge', x: b.x, y: b.y, z: b.z, size: b.r * 3, energy: 0.2, t: this.time, body: b, name: `${b.name} slumped into a sphere` });
+      }
     }
 
     // drop particles that have left the system, and comet gas that has thinned out
     let far = 0;
-    for (const s of this.sources) far = Math.max(far, Math.hypot(s.x, s.y, s.z) + s.r);
+    // a supermassive hole's gas reaches hundreds of Schwarzschild radii out
+    for (const s of this.sources) far = Math.max(far, Math.hypot(s.x, s.y, s.z) + (s.cls === 'bh' ? 1000 : 1) * s.r);
     // a planetary nebula is thousands of AU across before it fades into the background
     const cull2 = Math.max(2000, 20 * far) ** 2;
     for (const b of this.bodies) {
@@ -190,4 +249,25 @@ export class World {
       if (m0 === undefined || Math.abs(s.m - m0) > 1e-7 * m0) { this.dirtyForces = true; break; }
     }
   }
+}
+
+/**
+ * A white hole only emits. Nothing fixes how fast (it is hypothetical), so it
+ * is tied to the hole's own clock: one parcel of a ten-billionth of its mass
+ * per light-crossing of a thousand horizons — for ten suns, decades of
+ * outflow — as gas leaving at a third of light speed.
+ */
+const whiteAcc = new WeakMap<Body, number>();
+function whiteHoleOutflow(w: World, b: Body, dt: number) {
+  const tCross = (1000 * b.r) / C;
+  const parcel = 1e-10 * b.m;
+  const acc = (whiteAcc.get(b) ?? 0) + dt / tCross;
+  const n = Math.min(10, Math.floor(acc));
+  whiteAcc.set(b, Math.min(acc - n, 10));
+  if (n <= 0) return;
+  const made = spawnFragments(w, { mass: n * parcel, n, cls: 'gasp', x: b.x, y: b.y, z: b.z, vx: b.vx, vy: b.vy, vz: b.vz,
+    rIn: Math.max(b.r * 1.5, 3e-5), rOut: Math.max(b.r * 2, 4e-5), vMin: 0.2 * C, vMax: 0.35 * C, heat: 1, color: 0xe8f0ff, recoil: b });
+  b.m -= made.reduce((t, p) => t + p.m, 0);
+  b.r = schwarzschild(b.m);
+  w.massChanged(b);
 }

@@ -3,6 +3,7 @@ import type { World } from './world';
 import { G, AU_M, MSUN_KG, radiusFromDensity, KMS } from './units';
 import { hostOfPoint, lagrangePoints } from './analysis';
 import { spawnFragments } from './events';
+import { refreshRoche } from './catalog';
 
 /*
  * Discs and rings: what a swarm of debris or gas does when it is going round
@@ -35,9 +36,20 @@ const GRAIN_RHO = 1500;  // kg/m³
 const ALPHA = 0.1, ASPECT = 0.05;
 
 
+/**
+ * The vapour of a giant impact. Most of a Moon-forming disc starts as silicate
+ * vapour and melt at thousands of kelvin; the vapour does not gravitate here
+ * (its mass is already counted in the debris) but it drags on everything that
+ * moves through it until it cools and condenses, over about a year.
+ */
+export interface Vapour { host: Body; M: number; rIn: number; rOut: number; tau: number; /** the plane it turns in: its own angular momentum, unit */ n: [number, number, number] }
+
 export class DiskPhysics {
   private frame = 0;
   private hostOf = new Map<Body, Body | null>();
+  vapour: Vapour[] = [];
+  /** the shortest orbital period in any disc, yr: the world keeps its steps well under it */
+  minPeriod = Infinity;
 
   step(w: World, hosts: Map<Body, { host: Body | null; hill: number }>, dt: number): boolean {
     this.frame++;
@@ -66,8 +78,21 @@ export class DiskPhysics {
     }
     for (const p of this.hostOf.keys()) if (!p.alive) this.hostOf.delete(p);
 
-    let touched = false;
-    for (const [host, list] of groups) if (list.length >= 6 && this.relax(w, host, list, dt)) touched = true;
+    this.minPeriod = Infinity;
+    for (const [host, list] of groups) {
+      if (list.length < 20) continue;
+      let r2 = Infinity;
+      for (const p of list) r2 = Math.min(r2, (p.x - host.x) ** 2 + (p.y - host.y) ** 2 + (p.z - host.z) ** 2);
+      const r = Math.max(Math.sqrt(r2), host.r);
+      this.minPeriod = Math.min(this.minPeriod, 2 * Math.PI * Math.sqrt(r ** 3 / (G * host.m)));
+    }
+    let touched = gather(w, hosts);
+    this.vapour = this.vapour.filter(v => v.host.alive && v.M > 1e-6 * v.host.m);
+    for (const v of this.vapour) vapourDrag(w, v, hosts, dt);
+    for (const [host, list] of groups) {
+      if (list.length >= 6 && this.relax(w, host, list, dt)) touched = true;
+      if (list.length >= 20) friction(w, host, list, hosts, dt);
+    }
     return touched;
   }
 
@@ -113,7 +138,7 @@ export class DiskPhysics {
     const nPhi = Math.max(6, Math.min(64, Math.floor(n / (nR * 6))));
     const sigK = 3 / (4 * GRAIN_RHO * GRAIN) / (AU_M * AU_M) * MSUN_KG; // AU² of grain cross-section per M☉
     const GM = G * host.m;
-    interface Col { m: number; vol: number; sig: number; R: number; gas: number; mvR: number; mvz: number; L: number; Lk: number; idx: number[] }
+    interface Col { src: number; m: number; vol: number; sig: number; R: number; gas: number; mvR: number; mvz: number; L: number; Lk: number; idx: number[] }
     const cells = new Map<number, Col>();
     for (let k = 0; k < n; k++) {
       const R = loc[k * 6];
@@ -123,8 +148,11 @@ export class DiskPhysics {
       const ip = Math.floor(((Math.atan2(loc[k * 6 + 2], loc[k * 6 + 1]) + Math.PI) / (2 * Math.PI)) * nPhi) % nPhi;
       const key = (ir + 100000) * 128 + ip;
       let c = cells.get(key);
-      if (!c) cells.set(key, (c = { m: 0, vol: 0, sig: 0, R: 0, gas: 0, mvR: 0, mvz: 0, L: 0, Lk: 0, idx: [] }));
-      c.m += p.m; c.vol += p.m / p.dens; c.sig += p.m * sigK; c.R += p.m * R;
+      if (!c) cells.set(key, (c = { src: 0, m: 0, vol: 0, sig: 0, R: 0, gas: 0, mvR: 0, mvz: 0, L: 0, Lk: 0, idx: [] }));
+      // a moonlet shares momentum with the debris it ploughs through, but it is one
+      // body, not a cloud of metre-sized grains: it adds nothing to the optical depth
+      c.m += p.m; c.vol += p.m / p.dens; c.R += p.m * R;
+      if (!p.source) c.sig += p.m * sigK; else c.src++;
       c.mvR += p.m * loc[k * 6 + 3]; c.mvz += p.m * loc[k * 6 + 5];
       c.L += p.m * R * loc[k * 6 + 4];
       c.Lk += p.m * R * Math.sqrt(GM / R);
@@ -198,7 +226,8 @@ export class DiskPhysics {
       // ...and only if the patch's orbit stays outside it: a clump whose periapsis
       // dips inside will be torn apart again on its next pass, so it never forms
       let rpOk = false;
-      if (cl.gas === 0 && cl.list.length >= 4 && R > aRoche) {
+      // (a patch holding a moonlet already has its clump: moonlets merge by gather())
+      if (cl.gas === 0 && c.src === 0 && cl.list.length >= 4 && R > aRoche) {
         const vR = c.mvR / c.m, vP = c.L / c.m / R, vZ = c.mvz / c.m;
         const eps = (vR * vR + vP * vP + vZ * vZ) / 2 - GM / R;
         if (eps < 0) {
@@ -220,11 +249,12 @@ export class DiskPhysics {
           let x = 0, y = 0, z = 0;
           for (const p of cl.list) { x += p.m * p.x; y += p.m * p.y; z += p.m * p.z; w.kill(p); }
           const b = new Body({ name: 'moonlet', kind: 'fragment', cls: 'debris', m: c.m, r: rClump,
-            look: { style: 'barren', seed: Math.floor(Math.random() * 1e6), c1: 0x6a625a, c2: 0x9a9088 }, source: c.m > 1e-13, spin: 0 });
+            look: { style: 'barren', seed: Math.floor(Math.random() * 1e6), c1: 0x6a625a, c2: 0x9a9088 }, source: c.m > Math.max(1e-13, 1e-4 * host.m), spin: 0 });
           b.setPos(x / c.m, y / c.m, z / c.m);
           b.setVel(ux, uy, uz);
           b.heat = 0.4;
           b.dens = c.m / c.vol;
+          refreshRoche(b);
           w.add(b);
           w.structural();
           touched = true;
@@ -232,6 +262,149 @@ export class DiskPhysics {
       }
     }
     return touched;
+  }
+}
+
+/**
+ * Damping by a vapour disc (Tanaka & Ward 2004): a body moving through gas at
+ * other than the local orbital speed raises a wake that damps its
+ * eccentricity and inclination on t ≈ (M/m)(M/Σr²)(h/r)⁴/Ω — a few orbits for
+ * a moonlet in a young impact disc. Without it moonlets slingshot one another
+ * out of the disc before they can gather. Applied at fixed angular momentum,
+ * with the reaction on the host the vapour surrounds.
+ */
+const ASPECT_VAPOUR = 0.07;
+function vapourDrag(w: World, v: Vapour, hosts: Map<Body, { host: Body | null; hill: number }>, dt: number) {
+  const H = v.host;
+  v.M *= Math.exp(-dt / v.tau);
+  const GM = G * H.m;
+  // Σ ∝ r^−1.5 between rIn and rOut: Σ(r) = K r^−1.5, M = 4πK(√rOut − √rIn)
+  const K = v.M / (4 * Math.PI * (Math.sqrt(v.rOut) - Math.sqrt(v.rIn)));
+  for (const s of w.sources) {
+    if (s === H || !s.alive || s.held || s.m > 0.05 * H.m || s.cls === 'star' || s.compact) continue;
+    if (hosts.get(s)?.host !== H) continue;
+    const rx = s.x - H.x, ry = s.y - H.y, rz = s.z - H.z;
+    const R = Math.hypot(rx, ry, rz);
+    if (R < v.rIn || R > v.rOut * 1.3) continue;
+    const Sigma = K * Math.min(R, v.rOut) ** -1.5 * (R > v.rOut ? Math.exp(-(R - v.rOut) / (0.1 * v.rOut)) : 1);
+    const Om = Math.sqrt(GM / (R * R * R));
+    const t = Math.max(1 / Om, (H.m / s.m) * (H.m / (Sigma * R * R)) * ASPECT_VAPOUR ** 4 / Om);
+    const k = 1 - Math.exp(-dt / t);
+    const ux = s.vx - H.vx, uy = s.vy - H.vy, uz = s.vz - H.vz;
+    // the vapour's own plane — the impact's, not the planet's equator, which a
+    // tilted spin before the impact can leave well off it
+    const [nx, ny, nz] = v.n;
+    const vr = (ux * rx + uy * ry + uz * rz) / R;
+    const vn = ux * nx + uy * ny + uz * nz;
+    const dvx = -(vr * rx / R + vn * nx) * k, dvy = -(vr * ry / R + vn * ny) * k, dvz = -(vr * rz / R + vn * nz) * k;
+    s.vx += dvx; s.vy += dvy; s.vz += dvz;
+    const f = s.m / H.m;
+    H.vx -= dvx * f; H.vy -= dvy * f; H.vz -= dvz * f;
+  }
+}
+
+/**
+ * Moonlets that meet slowly inside their mutual Hill sphere — bound to each
+ * other, or closing slower than their mutual escape speed — are a pair that will
+ * collide: in a disc thick with debris their encounter is damped before they
+ * can fly apart again. They are merged now
+ * rather than left to slingshot one another out of the disc — the gravitational
+ * aggregation rule used in N-body studies of moon formation in impact discs.
+ */
+function gather(w: World, hosts: Map<Body, { host: Body | null; hill: number }>): boolean {
+  const small = w.sources.filter(s => s.alive && s.cls === 'debris' && hosts.get(s)?.host);
+  let merged = false;
+  for (let i = 0; i < small.length; i++) {
+    const a = small[i];
+    if (!a.alive) continue;
+    const H = hosts.get(a)!.host!;
+    for (let j = i + 1; j < small.length; j++) {
+      const b = small[j];
+      if (!b.alive || hosts.get(b)?.host !== H) continue;
+      const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+      const d = Math.hypot(dx, dy, dz);
+      const R = Math.hypot(a.x - H.x, a.y - H.y, a.z - H.z);
+      const rH = R * Math.cbrt((a.m + b.m) / (3 * H.m));
+      if (d > rH) continue;
+      const mu = a.m * b.m / (a.m + b.m);
+      const v2 = (b.vx - a.vx) ** 2 + (b.vy - a.vy) ** 2 + (b.vz - a.vz) ** 2;
+      // bound to each other, or meeting slower than they would hit at — the
+      // deep, slow passes that would otherwise sling one of them out of the disc
+      const vHit2 = 2 * G * (a.m + b.m) / (a.r + b.r);
+      if (0.5 * mu * v2 - G * a.m * b.m / d >= 0 && v2 > vHit2) continue;
+      // inside its host's Roche limit a pair cannot stick: tides pull it apart again
+      const rho = (a.m * a.dens + b.m * b.dens) / (a.m + b.m);
+      if (R < 2.44 * H.r * Math.cbrt(Math.max(0.01, H.density) / rho)) continue;
+      const T = a.m >= b.m ? a : b, P = T === a ? b : a;
+      const M = T.m + P.m;
+      T.vx = (T.vx * T.m + P.vx * P.m) / M; T.vy = (T.vy * T.m + P.vy * P.m) / M; T.vz = (T.vz * T.m + P.vz * P.m) / M;
+      T.x = (T.x * T.m + P.x * P.m) / M; T.y = (T.y * T.m + P.y * P.m) / M; T.z = (T.z * T.m + P.z * P.m) / M;
+      T.m = M;
+      T.dens = rho;
+      T.r = radiusFromDensity(M, rho);
+      T.name = 'moonlet';
+      refreshRoche(T);
+      w.kill(P);
+      merged = true;
+    }
+  }
+  if (merged) w.structural();
+  return merged;
+}
+
+/**
+ * Dynamical friction and drag on a moonlet embedded in a disc. A body moving
+ * through the disc at other than the local orbital velocity raises a wake that
+ * pulls it back, and in a disc of vapour and melt the gas drags on it besides:
+ * its eccentricity and inclination damp on
+ *   t ≈ (M / m) (M / Σr²) (h/r)⁴ / Ω   (Tanaka & Ward 2004),
+ * a handful of orbits for a moonlet in a young impact disc. Without it,
+ * moonlets scatter each other and some are thrown clear before they can
+ * gather. The momentum taken from the moonlet goes to the disc material
+ * around it.
+ */
+const ASPECT_DUST = 0.1;
+function friction(w: World, host: Body, list: Body[], hosts: Map<Body, { host: Body | null; hill: number }>, dt: number) {
+  const GM = G * host.m;
+  for (const s of w.sources) {
+    if (s === host || !s.alive || s.held || s.m > 0.05 * host.m || s.cls === 'star' || s.compact) continue;
+    if (hosts.get(s)?.host !== host) continue;
+    const rx = s.x - host.x, ry = s.y - host.y, rz = s.z - host.z;
+    const R = Math.hypot(rx, ry, rz);
+    // the disc material near its orbit
+    let mAnn = 0, Lx = 0, Ly = 0, Lz = 0;
+    const near: Body[] = [];
+    for (const p of list) {
+      const px = p.x - host.x, py = p.y - host.y, pz = p.z - host.z;
+      const pr = Math.hypot(px, py, pz);
+      if (Math.abs(pr - R) > 0.2 * R) continue;
+      near.push(p);
+      mAnn += p.m;
+      const vx = p.vx - host.vx, vy = p.vy - host.vy, vz = p.vz - host.vz;
+      Lx += p.m * (py * vz - pz * vy); Ly += p.m * (pz * vx - px * vz); Lz += p.m * (px * vy - py * vx);
+    }
+    if (near.length < 4 || mAnn < 1e-4 * s.m) continue;
+    const Sigma = mAnn / (2 * Math.PI * R * 0.4 * R);
+    const Om = Math.sqrt(GM / (R * R * R));
+    const t = Math.max(2 / Om, (host.m / s.m) * (host.m / (Sigma * R * R)) * ASPECT_DUST ** 4 / Om);
+    // the disc can only take up as much momentum as it has to give: a light
+    // swarm barely slows a heavy moonlet, whatever the formula says
+    const k = Math.min(1 - Math.exp(-dt / t), 0.3 * mAnn / s.m);
+    if (k < 1e-6) continue;
+    // Damp the radial and vertical motion only: the drag works on the
+    // eccentricity and inclination at fixed angular momentum, so the orbit
+    // circularizes where its angular momentum puts it, not wherever the moonlet
+    // happens to be — a moonlet caught at periapsis is not dragged inside the Roche limit.
+    const Ln = Math.hypot(Lx, Ly, Lz);
+    if (!(Ln > 0)) continue;
+    const nx = Lx / Ln, ny = Ly / Ln, nz = Lz / Ln;
+    const ux = s.vx - host.vx, uy = s.vy - host.vy, uz = s.vz - host.vz;
+    const vr = (ux * rx + uy * ry + uz * rz) / R;
+    const vn = ux * nx + uy * ny + uz * nz;
+    const dvx = -(vr * rx / R + vn * nx) * k, dvy = -(vr * ry / R + vn * ny) * k, dvz = -(vr * rz / R + vn * nz) * k;
+    s.vx += dvx; s.vy += dvy; s.vz += dvz;
+    const f = s.m / mAnn;
+    for (const p of near) { p.vx -= dvx * f; p.vy -= dvy * f; p.vz -= dvz * f; }
   }
 }
 
@@ -279,4 +452,35 @@ export function rocheOverflow(w: World, hosts: Map<Body, { host: Body | null; hi
     const given = made.reduce((t, p) => t + p.m, 0);
     if (given > 0) { s.m -= given; w.massChanged(s); }
   }
+}
+
+/**
+ * A ring of gas round a compact object, in near-circular orbits, as thick as
+ * its own pressure would hold it (h/r ≈ 0.08). The disc physics above then
+ * takes over: it is collisional, so it stays a ring; it is viscous, so it
+ * spirals in, heating as it goes; and what reaches the hole powers its jets.
+ */
+export function addTorus(w: World, host: Body, rIn: number, rOut: number, mass: number, n: number, normal: [number, number, number] = [0, 0, 1], heat = 0.5) {
+  // a basis in the ring's plane
+  const nn = Math.hypot(normal[0], normal[1], normal[2]) || 1;
+  const nz: [number, number, number] = [normal[0] / nn, normal[1] / nn, normal[2] / nn];
+  const ref = Math.abs(nz[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+  let e1 = [ref[1] * nz[2] - ref[2] * nz[1], ref[2] * nz[0] - ref[0] * nz[2], ref[0] * nz[1] - ref[1] * nz[0]];
+  const l1 = Math.hypot(e1[0], e1[1], e1[2]); e1 = [e1[0] / l1, e1[1] / l1, e1[2] / l1];
+  const e2 = [nz[1] * e1[2] - nz[2] * e1[1], nz[2] * e1[0] - nz[0] * e1[2], nz[0] * e1[1] - nz[1] * e1[0]];
+  const made: Body[] = [];
+  for (let k = 0; k < n; k++) {
+    const r = rIn + (rOut - rIn) * Math.sqrt(Math.random());
+    const ph = 2 * Math.PI * Math.random();
+    const z = (Math.random() + Math.random() + Math.random() - 1.5) * 0.12 * r;
+    const vc = Math.sqrt(G * host.m / r) * (1 + (Math.random() - 0.5) * 0.04);
+    const c = Math.cos(ph), s = Math.sin(ph);
+    const b = new Body({ name: 'gas', kind: 'gas', cls: 'gasp', m: mass / n, r: 0, source: false, spin: 0,
+      look: { style: 'rocky', seed: 0, c1: 0xffb070, c2: 0xffb070 } });
+    b.setPos(host.x + r * (c * e1[0] + s * e2[0]) + z * nz[0], host.y + r * (c * e1[1] + s * e2[1]) + z * nz[1], host.z + r * (c * e1[2] + s * e2[2]) + z * nz[2]);
+    b.setVel(host.vx + vc * (-s * e1[0] + c * e2[0]), host.vy + vc * (-s * e1[1] + c * e2[1]), host.vz + vc * (-s * e1[2] + c * e2[2]));
+    b.heat = heat;
+    made.push(b);
+  }
+  for (const b of made) w.add(b);
 }

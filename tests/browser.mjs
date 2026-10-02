@@ -21,7 +21,7 @@ try {
   ok('boots without errors', errs.length === 0, errs.join(' | '));
   ok('the solar system is loaded', await page.evaluate(() => window.orbital.world.sources.length) >= 20);
 
-  for (const key of ['inner', 'earth', 'saturn', 'trappist', 'kepler16', 'theia', 'ringmaker', 'xrb', 'kirkwood', 'sgra', 'merger', 'solar']) {
+  for (const key of ['inner', 'earth', 'saturn', 'trappist', 'kepler16', 'theia', 'ringmaker', 'xrb', 'kirkwood', 'sgra', 'merger', 'tde', 'spaghetti', 'quasar', 'solar']) {
     await page.evaluate(k => window.orbital.loadPreset(k), key);
     await page.waitForTimeout(400);
     ok(`${key} loads and runs`, await page.evaluate(() => window.orbital.world.sources.length > 0 && isFinite(window.orbital.world.time)));
@@ -41,6 +41,67 @@ try {
   await page.waitForTimeout(400);
   ok('selecting shows the inspector', await page.isVisible('#inspector'));
 
+  ok('the inspector draws a surface map', await page.evaluate(() => { const a = window.orbital; a.select(a.world.sources.find(b => b.name === 'Earth')); return true; }) && (await page.waitForTimeout(400), await page.isVisible('#iMap')));
+
+  // the builder: draw, check, place
+  await page.keyboard.press('KeyB');
+  await page.waitForTimeout(200);
+  ok('B opens the builder', await page.isVisible('#builder'));
+  await page.click('#bShapes button:has-text("Dog bone")');
+  await page.fill('#bSize', '2');
+  await page.dispatchEvent('#bSize', 'input');
+  const verdictSmall = await page.textContent('#bVerdict');
+  await page.fill('#bSize', '4');
+  await page.dispatchEvent('#bSize', 'input');
+  const verdictBig = await page.textContent('#bVerdict');
+  ok('a small iron bone holds its shape; a huge one slumps', /keeps its shape/.test(verdictSmall) && /slump/.test(verdictBig), `${verdictSmall} / ${verdictBig}`);
+  const gb = await page.$('#bGrid');
+  const box = await gb.boundingBox();
+  await page.click('.swatch[data-mat="7"]');
+  await page.mouse.move(box.x + 20, box.y + 20); await page.mouse.down(); await page.mouse.move(box.x + 60, box.y + 40, { steps: 5 }); await page.mouse.up();
+  await page.click('#bUse');
+  const n0 = await page.evaluate(() => window.orbital.world.sources.length);
+  // somewhere with nothing under the pointer
+  const spot = await page.evaluate(() => { for (let y = 160; y < 600; y += 23) for (let x = 400; x < 900; x += 31) if (!window.orbital.view.pick(x, y)) return [x, y]; return [700, 200]; });
+  await page.mouse.click(spot[0], spot[1]);
+  await page.waitForTimeout(300);
+  ok('a built body can be placed', await page.evaluate(n => window.orbital.world.sources.length === n + 1 && window.orbital.world.sources.some(b => b.kind === 'custom' && b.shape), n0));
+  await page.evaluate(() => { window.orbital.paused = false; });
+  await page.waitForTimeout(1500);
+  ok('the huge one slumped into a sphere', await page.evaluate(() => window.orbital.world.sources.find(b => b.kind === 'custom')?.shape?.round > 0.5));
+
+  // undo puts it back
+  await page.keyboard.press('Control+KeyZ');
+  await page.waitForTimeout(200);
+  ok('undo removes it', await page.evaluate(n => window.orbital.world.sources.length === n, n0));
+
+  // tools
+  await page.keyboard.press('Escape');
+  await page.click('[data-tool="ruler"]');
+  await page.mouse.move(300, 300); await page.mouse.down(); await page.mouse.move(600, 500, { steps: 5 }); await page.mouse.up();
+  ok('the ruler measures', await page.isVisible('#rulerBox') && /AU|km/.test(await page.textContent('#rulerBox')));
+  await page.click('[data-tool="hand"]');
+  await page.evaluate(() => window.orbital.loadPreset('earth'));
+  await page.waitForTimeout(300);
+  await page.evaluate(() => { const a = window.orbital; a.tool = 'bombard'; a.bombard = { target: a.world.sources.find(b => b.name === 'Moon'), acc: 0 }; });
+  await page.waitForTimeout(2500);
+  await page.evaluate(() => { window.orbital.bombard = null; window.orbital.tool = 'hand'; });
+  ok('bombarding the Moon leaves craters', await page.evaluate(() => window.orbital.world.sources.find(b => b.name === 'Moon').craters.length > 0));
+  await page.click('#findBtn');
+  await page.fill('#findQ', 'Hubble');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(200);
+  ok('find follows a body by name', await page.evaluate(() => window.orbital.focus?.name === 'Hubble'));
+
+  // the new shelf and the objects that arrive already going
+  await page.click('.chip[data-shelf="Craft"]');
+  ok('the craft shelf lists spacecraft', (await page.$$('.card')).length >= 10);
+  for (const key of ['ton618', 'blazar', 'microquasar', 'wormhole', 'whitehole', 'magnetar', 'nsmerger', 'ppdisc', 'snr', 'iss']) {
+    await page.evaluate(k => { const a = window.orbital; a.clear(); a.armed = k; a.place({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0 }); a.armed = null; a.paused = false; }, key);
+    await page.waitForTimeout(250);
+    ok(`${key} places and runs`, await page.evaluate(() => window.orbital.world.bodies.length > 0 && isFinite(window.orbital.world.time)));
+  }
+
   ok('still no errors', errs.length === 0, errs.join(' | '));
   await page.close();
 
@@ -57,11 +118,11 @@ try {
   ok('iPad: a system loads from the menu by touch', await t.evaluate(() => window.orbital.presetKey === 'saturn'));
   const cdp = await ipad.newCDPSession(t);
   const touch = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts.map((q, i) => ({ x: q[0], y: q[1], id: i })) });
-  const d0 = await t.evaluate(() => window.orbital.view.distGoal);
+  const d0 = await t.evaluate(() => window.orbital.view.scale);
   await touch('touchStart', [[500, 400], [700, 400]]);
   for (let k = 1; k <= 6; k++) await touch('touchMove', [[500 - 20 * k, 400], [700 + 20 * k, 400]]);
   await touch('touchEnd', []);
-  ok('iPad: pinching zooms', await t.evaluate(d => window.orbital.view.distGoal < d, d0));
+  ok('iPad: pinching zooms', await t.evaluate(d => window.orbital.view.scale > d, d0));
   ok('iPad: no errors', terrs.length === 0, terrs.join(' | '));
   await ipad.close();
 } finally {
