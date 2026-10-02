@@ -61,8 +61,8 @@ export class World {
   }
 
   /** a giant impact's vapour, dragging on what orbits through it until it condenses */
-  addVapour(host: Body, M: number, rIn: number, rOut: number, tau = 1) {
-    this.disks.vapour.push({ host, M, rIn, rOut, tau });
+  addVapour(host: Body, M: number, rIn: number, rOut: number, n: [number, number, number], tau = 1) {
+    this.disks.vapour.push({ host, M, rIn, rOut, tau, n });
   }
 
   emit(e: SimEvent) { this.events.push(e); if (this.events.length > 200) this.events.shift(); }

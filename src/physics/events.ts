@@ -544,9 +544,8 @@ function grazeAndMerge(w: World, T: Body, P: Body, o: { vImp: number; vesc: numb
   const Lrest = Math.max(0, Limp - Ldisk);
   setSpin(T, [spinL[0] + Lrest * lx, spinL[1] + Lrest * ly, spinL[2] + Lrest * lz]);
   // A third or so of the disc starts as rock vapour (Canup 2004); it drags on
-  // the moonlets until it condenses, about a year. The spin axis just set is
-  // the impact's own, which is the plane the vapour turns in.
-  w.addVapour(T, 0.3 * disk, T.r, Math.max(rMax, 10 * T.r), 1);
+  // the moonlets until it condenses, about a year, turning in the impact's plane.
+  w.addVapour(T, 0.3 * disk, T.r, Math.max(rMax, 10 * T.r), [lx, ly, lz], 1);
   w.massChanged(T);
   w.structural();
   w.emit({ kind: 'merge', x: cx, y: cy, z: cz, size: T.r * 6, energy: 1, t: w.time,

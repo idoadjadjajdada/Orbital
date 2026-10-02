@@ -42,7 +42,7 @@ const ALPHA = 0.1, ASPECT = 0.05;
  * (its mass is already counted in the debris) but it drags on everything that
  * moves through it until it cools and condenses, over about a year.
  */
-export interface Vapour { host: Body; M: number; rIn: number; rOut: number; tau: number }
+export interface Vapour { host: Body; M: number; rIn: number; rOut: number; tau: number; /** the plane it turns in: its own angular momentum, unit */ n: [number, number, number] }
 
 export class DiskPhysics {
   private frame = 0;
@@ -281,9 +281,9 @@ function vapourDrag(w: World, v: Vapour, hosts: Map<Body, { host: Body | null; h
     const t = Math.max(1 / Om, (H.m / s.m) * (H.m / (Sigma * R * R)) * ASPECT_VAPOUR ** 4 / Om);
     const k = 1 - Math.exp(-dt / t);
     const ux = s.vx - H.vx, uy = s.vy - H.vy, uz = s.vz - H.vz;
-    // the disc's plane: the vapour's own spin, taken as the host's spin axis
-    const t2 = H.tilt, nd = H.node;
-    const nx = Math.sin(t2) * Math.sin(nd), ny = -Math.sin(t2) * Math.cos(nd), nz = Math.cos(t2);
+    // the vapour's own plane — the impact's, not the planet's equator, which a
+    // tilted spin before the impact can leave well off it
+    const [nx, ny, nz] = v.n;
     const vr = (ux * rx + uy * ry + uz * rz) / R;
     const vn = ux * nx + uy * ny + uz * nz;
     const dvx = -(vr * rx / R + vn * nx) * k, dvy = -(vr * ry / R + vn * ny) * k, dvz = -(vr * rz / R + vn * nz) * k;
