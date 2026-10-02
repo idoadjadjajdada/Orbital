@@ -481,19 +481,22 @@ function grazeAndMerge(w: World, T: Body, P: Body, o: { vImp: number; vesc: numb
   const sq0 = Math.sqrt(rMin), sq1 = Math.sqrt(rMax);
   const uR = Math.min(1, Math.max(0, (Math.sqrt(aR) - sq0) / (sq1 - sq0))); // mass fraction inside aR
   const fIn = uR;
-  // 500 small pieces inside; outside, 30 that pull on each other
-  const nIn = fIn > 0 ? 500 : 0, nOut = fIn < 1 ? 30 : 0;
+  // 500 small pieces inside. Outside, the impact simulations find the material
+  // not as a fine swarm but as a few intact clumps of Theia's mantle, the largest
+  // holding about half of it (Canup & Asphaug 2001; Canup 2004)
+  const nIn = fIn > 0 ? 500 : 0;
+  const CLUMPS = [0.5, 0.25, 0.15, 0.1];
   const mIn = disk * fIn, mOut = disk - mIn;
   const placed: [number, number, number][] = [];
   const made: Body[] = [];
   let sx = 0, sy = 0, sz = 0, Ldisk = 0;
-  const one = (outer: boolean, mEach: number) => {
+  const one = (outer: boolean, mEach: number, at?: [number, number]) => {
     const rFrag = radiusFromDensity(mEach, rhoDisc);
     let px = 0, py = 0, pz = 0, rr = 0, th = 0;
     for (let tries = 0; tries < 40; tries++) {
       const lo = outer ? uR : 0, hi = outer ? 1 : uR;
-      rr = (sq0 + (sq1 - sq0) * (lo + (hi - lo) * rnd())) ** 2;
-      th = 2 * Math.PI * rnd();
+      rr = at ? at[0] : (sq0 + (sq1 - sq0) * (lo + (hi - lo) * rnd())) ** 2;
+      th = at ? at[1] : 2 * Math.PI * rnd();
       const h = (rnd() - 0.5) * 0.04 * rr;
       px = (ax * Math.cos(th) + bx * Math.sin(th)) * rr + lx * h;
       py = (ay * Math.cos(th) + by * Math.sin(th)) * rr + ly * h;
@@ -517,7 +520,11 @@ function grazeAndMerge(w: World, T: Body, P: Body, o: { vImp: number; vesc: numb
     made.push(f);
   };
   for (let k = 0; k < nIn; k++) one(false, mIn / nIn);
-  for (let k = 0; k < nOut; k++) one(true, mOut / nOut);
+  if (mOut > 0) {
+    // spread round the orbit, each with its periapsis safely beyond the Roche limit
+    const th0 = 2 * Math.PI * rnd();
+    CLUMPS.forEach((f, k) => one(true, f * mOut, [aR * (1.15 + 0.5 * rnd()), th0 + (k * 2 * Math.PI) / CLUMPS.length + 0.3 * (rnd() - 0.5)]));
+  }
   // the disc carries no net linear momentum of its own; the remnant keeps the pair's
   sx /= disk; sy /= disk; sz /= disk;
   for (const f of made) { f.vx += vx - sx; f.vy += vy - sy; f.vz += vz - sz; if (f.source) refreshRoche(f); w.add(f); }
