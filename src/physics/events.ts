@@ -489,7 +489,7 @@ function grazeAndMerge(w: World, T: Body, P: Body, o: { vImp: number; vesc: numb
   const mIn = disk * fIn, mOut = disk - mIn;
   const placed: [number, number, number][] = [];
   const made: Body[] = [];
-  let sx = 0, sy = 0, sz = 0, Ldisk = 0;
+  let sx = 0, sy = 0, sz = 0, qx = 0, qy = 0, qz = 0, mDisk = 0, Ldisk = 0;
   const one = (outer: boolean, mEach: number, at?: [number, number]) => {
     const rFrag = radiusFromDensity(mEach, rhoDisc);
     let px = 0, py = 0, pz = 0, rr = 0, th = 0;
@@ -516,6 +516,7 @@ function grazeAndMerge(w: World, T: Body, P: Body, o: { vImp: number; vesc: numb
     f.heat = 1;
     f.dens = rhoDisc;
     sx += mEach * pvx; sy += mEach * pvy; sz += mEach * pvz;
+    qx += mEach * px; qy += mEach * py; qz += mEach * pz; mDisk += mEach;
     Ldisk += mEach * rr * vc;
     made.push(f);
   };
@@ -525,9 +526,20 @@ function grazeAndMerge(w: World, T: Body, P: Body, o: { vImp: number; vesc: numb
     const th0 = 2 * Math.PI * rnd();
     CLUMPS.forEach((f, k) => one(true, f * mOut, [aR * (1.15 + 0.5 * rnd()), th0 + (k * 2 * Math.PI) / CLUMPS.length + 0.3 * (rnd() - 0.5)]));
   }
-  // the disc carries no net linear momentum of its own; the remnant keeps the pair's
-  sx /= disk; sy /= disk; sz /= disk;
-  for (const f of made) { f.vx += vx - sx; f.vy += vy - sy; f.vz += vz - sz; if (f.source) refreshRoche(f); w.add(f); }
+  // Each piece is on its orbit about the merged body. A few big clumps are not
+  // spread evenly round it, so their centre of mass and momentum are off-centre:
+  // the merged body takes the recoil, keeping the pair's totals exactly, rather
+  // than every piece being given a common drift that would make all their orbits eccentric.
+  const Mt = T.m + mDisk;
+  const ex = cx - qx / Mt, ey = cy - qy / Mt, ez = cz - qz / Mt;
+  T.x = ex; T.y = ey; T.z = ez;
+  T.vx = vx - sx / Mt; T.vy = vy - sy / Mt; T.vz = vz - sz / Mt;
+  for (const f of made) {
+    f.x += ex - cx; f.y += ey - cy; f.z += ez - cz;
+    f.vx += T.vx; f.vy += T.vy; f.vz += T.vz;
+    if (f.source) refreshRoche(f);
+    w.add(f);
+  }
   // what the disc did not take spins the merged body up — the five-hour day the young Earth was left with
   const Lrest = Math.max(0, Limp - Ldisk);
   setSpin(T, [spinL[0] + Lrest * lx, spinL[1] + Lrest * ly, spinL[2] + Lrest * lz]);
