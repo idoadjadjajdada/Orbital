@@ -516,7 +516,8 @@ export class Renderer {
     j.power += (want - j.power) * Math.min(1, s.dtReal * 2);
     if (j.power < 0.03) return;
     // as long as the hole is big — thousands of Schwarzschild radii — and longer the harder it is fed
-    const len = Math.max(30, schwarzschild(b.m) * this.scale * (800 + 6000 * j.power));
+    // (never drawn longer than the screen: zoomed in on a giant hole it would be billions of pixels)
+    const len = Math.min(2 * (this.W + this.H), Math.max(30, schwarzschild(b.m) * this.scale * (800 + 6000 * j.power)));
     drawJet(this.ctx, b, d.sx, d.sy, d.r, j.power, len, s.timeReal, this.haloFn);
   }
 
@@ -526,7 +527,7 @@ export class Renderer {
       const u = (now - f.t0) / f.dur;
       const big = f.dur > 3;
       const x = this.sx(f.e.x), y = this.sy(f.e.y);
-      const R = Math.max(f.e.size * this.scale, (big ? 40 : f.e.kind === 'crater' ? 4 : 12) * Math.sqrt(f.e.energy + 0.1));
+      const R = Math.min(this.W + this.H, Math.max(f.e.size * this.scale, (big ? 40 : f.e.kind === 'crater' ? 4 : 12) * Math.sqrt(f.e.energy + 0.1)));
       drawFlash(this.ctx, f.e, x, y, u, R, this.haloFn, now);
     }
   }

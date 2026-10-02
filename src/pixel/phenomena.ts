@@ -14,7 +14,7 @@ function blit(ctx: CanvasRenderingContext2D, h: HTMLCanvasElement, x: number, y:
 
 /** a ring of pixels, brightness varying round it by `f(angle)`, dithered */
 function ring(ctx: CanvasRenderingContext2D, x: number, y: number, R: number, thick: number, c: V3, f: (a: number) => number) {
-  if (R < 1) return;
+  if (R < 1 || R > 4000) return;
   const n = Math.max(16, Math.round(2 * Math.PI * R * 1.2));
   for (let k = 0; k < n; k++) {
     const a = (k / n) * 2 * Math.PI;
@@ -195,13 +195,13 @@ export function drawWhiteHole(ctx: CanvasRenderingContext2D, x: number, y: numbe
   ring(ctx, x, y, Math.max(rPx * 2.5, 6) + 2 * Math.sin(now * 2), 1, [1, 1, 1], a => 0.5 + 0.5 * Math.sin(a * 6 - now * 4));
   ctx.globalCompositeOperation = 'source-over';
   ctx.fillStyle = '#ffffff';
-  const R = Math.max(2, Math.round(rPx));
+  const R = Math.max(2, Math.min(300, Math.round(rPx)));
   for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) if (dx * dx + dy * dy <= R * R) ctx.fillRect(Math.round(x) + dx, Math.round(y) + dy, 1, 1);
 }
 
 /** A wormhole mouth: a swirl round a dark throat with the other side's stars in it. */
 export function drawWormhole(ctx: CanvasRenderingContext2D, x: number, y: number, rPx: number, now: number, seed: number) {
-  const R = Math.max(5, Math.round(rPx * 2));
+  const R = Math.max(5, Math.min(300, Math.round(rPx * 2)));
   const cx = Math.round(x), cy = Math.round(y);
   for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
     const r = Math.hypot(dx, dy) / R;
