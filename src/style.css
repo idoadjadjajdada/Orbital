@@ -187,13 +187,39 @@ kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-
 .hud3 .tgt { color: var(--acc); }
 .hint3 { position: absolute; left: 50%; top: calc(64px + env(safe-area-inset-top)); transform: translateX(-50%); font-size: 12px; color: var(--dim); white-space: nowrap; }
 .stick3, .btns3 { display: none; pointer-events: auto; }
+.hud3 .drv { font-size: 12px; letter-spacing: 0.04em; color: #b9c8ff; }
+.hud3 .jmp { font-size: 11px; color: #c890ff; letter-spacing: 1px; }
+.flash3 { position: absolute; inset: 0; background: radial-gradient(circle, #fff 0%, #d8c8ff 45%, rgba(120, 80, 255, 0.6) 100%); opacity: 0; pointer-events: none; }
+.radar3 { position: absolute; left: calc(16px + env(safe-area-inset-left)); bottom: calc(16px + env(safe-area-inset-bottom)); pointer-events: auto; display: flex; gap: 12px; align-items: flex-start; }
+.radar3 canvas { width: 180px; height: 180px; cursor: pointer; touch-action: none; }
+.radar3 .dest3 { display: none; }
+.radar3.big { left: 50%; top: 50%; bottom: auto; transform: translate(-50%, -50%); background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 12px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); z-index: 3; }
+.radar3.big canvas { width: min(560px, 62vh, calc(100vw - 340px)); height: auto; aspect-ratio: 1; }
+.radar3.big .dest3 { display: block; width: 280px; max-height: min(560px, 62vh); overflow-y: auto; font-size: 12.5px; }
+.dest3 .dh { font-weight: 600; margin-bottom: 6px; }
+.dest3 .row { display: grid; grid-template-columns: 1fr auto auto; gap: 2px 6px; align-items: center; padding: 5px 4px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.dest3 .row.sel { color: var(--acc); }
+.dest3 .nm { grid-column: 1; grid-row: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dest3 .ds { grid-column: 1; grid-row: 2; color: var(--dim); font-size: 11px; }
+.dest3 button[data-a="go"] { grid-column: 2; }
+.dest3 button[data-a="jump"] { grid-column: 3; }
+.dest3 button { grid-row: 1 / span 2; background: transparent; border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 4px 8px; font: inherit; cursor: pointer; }
+.dest3 button:disabled { opacity: 0.35; cursor: default; }
+@media (max-width: 700px) {
+  .radar3.big { flex-direction: column; align-items: center; }
+  .radar3.big canvas { width: min(calc(100vw - 56px), 46vh); }
+  .radar3.big .dest3 { width: min(calc(100vw - 56px), 420px); max-height: 30vh; }
+}
 @media (pointer: coarse) {
   .hint3 { display: none; }
   .stick3 { display: block; position: absolute; left: calc(28px + env(safe-area-inset-left)); bottom: calc(28px + env(safe-area-inset-bottom)); width: 130px; height: 130px; border-radius: 50%; background: rgba(160, 180, 255, 0.08); border: 1px solid var(--line); touch-action: none; }
   .knob3 { position: absolute; left: 40px; top: 40px; width: 50px; height: 50px; border-radius: 50%; background: rgba(255, 226, 168, 0.35); border: 1px solid rgba(255, 226, 168, 0.6); }
-  .btns3 { display: grid; grid-template-columns: repeat(2, 64px); gap: 8px; position: absolute; right: calc(24px + env(safe-area-inset-right)); bottom: calc(28px + env(safe-area-inset-bottom)); }
+  .btns3 { display: grid; grid-template-columns: repeat(3, 64px); gap: 8px; position: absolute; right: calc(24px + env(safe-area-inset-right)); bottom: calc(28px + env(safe-area-inset-bottom)); }
   .btns3 button { height: 52px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); color: var(--text); font-size: 15px; touch-action: none; }
   .hud3 { bottom: auto; top: calc(96px + env(safe-area-inset-top)); }
+  .btns3 button.on { background: rgba(200, 144, 255, 0.35); }
+  .radar3:not(.big) { bottom: auto; top: calc(96px + env(safe-area-inset-top)); }
+  .radar3:not(.big) canvas { width: 130px; height: 130px; }
 }
 .cheat { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--dim); margin: 6px 0; }
 .cheat span { color: var(--text); }

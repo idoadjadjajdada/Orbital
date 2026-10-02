@@ -20,9 +20,10 @@ export class Controls3D {
   private stick = { x: 0, y: 0, id: -1, cx: 0, cy: 0 };
   private look = { id: -1, x: 0, y: 0, moved: 0 };
   private hold = { up: false, down: false, boost: false };
-  private root: HTMLElement;
+  readonly root: HTMLElement;
   private hudEl: HTMLElement;
   private knob: HTMLElement;
+  private flashEl: HTMLElement;
 
   constructor(private v: View3D) {
     this.root = document.createElement('div');
@@ -31,16 +32,19 @@ export class Controls3D {
     this.root.innerHTML = `
       <div class="xhair"></div>
       <div class="hud3" id="hud3"></div>
-      <div class="hint3">Click to look · WASD fly · Space / C up, down · Q / E roll · Shift boost · Wheel throttle · Click selects · T go to it · V map</div>
+      <div class="hint3">Click to look · WASD fly · Space / C up, down · Q / E roll · Shift boost · Wheel throttle · Click selects · T go · O overdrive · J jump · M map · Z view · V back</div>
+      <div class="flash3" id="flash3"></div>
       <div class="stick3" id="stick3"><div class="knob3" id="knob3"></div></div>
       <div class="btns3">
         <button data-b="up">▲</button><button data-b="down">▼</button>
         <button data-b="boost">Boost</button><button data-b="slower">−</button><button data-b="faster">+</button>
         <button data-b="go">Go to</button>
+        <button data-b="od">Overdrive</button><button data-b="jump">Jump</button><button data-b="map">Map</button><button data-b="view">View</button>
       </div>`;
     document.body.appendChild(this.root);
     this.hudEl = this.root.querySelector('#hud3')!;
     this.knob = this.root.querySelector('#knob3')!;
+    this.flashEl = this.root.querySelector('#flash3')!;
     const stick = this.root.querySelector('#stick3') as HTMLElement;
 
     window.addEventListener('keydown', e => this.key(e, true));
@@ -111,6 +115,7 @@ export class Controls3D {
         if (k === 'slower') this.throttle = clamp(this.throttle / 2, 1e-3, 1e3);
         if (k === 'faster') this.throttle = clamp(this.throttle * 2, 1e-3, 1e3);
         if (k === 'go') this.goSelected();
+        this.command(k);
       });
       b.addEventListener('pointerup', () => set(false));
       b.addEventListener('pointerleave', () => set(false));
@@ -130,12 +135,27 @@ export class Controls3D {
     if (s && s.alive) this.v.goTo(s);
   }
 
+  /** the ship's commands, from keys or buttons */
+  private command(k: string) {
+    const sh = this.v.ship;
+    if (k === 'od') { sh.od = !sh.od; if (sh.od) this.v.travel = null; }
+    if (k === 'jump') { const s = this.app().selected; if (s && s.alive) this.v.jumpTo(s); }
+    if (k === 'map') { this.v.radar.toggle(); if (this.v.radar.big && document.pointerLockElement) document.exitPointerLock(); }
+    if (k === 'view') sh.view = sh.view === 'chase' ? 'cockpit' : 'chase';
+  }
+
   private key(e: KeyboardEvent, down: boolean) {
     if (!this.v.active) return;
     const tag = (e.target as HTMLElement)?.tagName;
     if (tag === 'INPUT' || tag === 'SELECT') return;
     if (down) {
       if (e.code === 'KeyT') this.goSelected();
+      if (!e.repeat) {
+        if (e.code === 'KeyO') this.command('od');
+        if (e.code === 'KeyJ') this.command('jump');
+        if (e.code === 'KeyM') this.command('map');
+        if (e.code === 'KeyZ') this.command('view');
+      }
       if (e.code === 'Equal' || e.code === 'NumpadAdd') this.throttle = clamp(this.throttle * 2, 1e-3, 1e3);
       if (e.code === 'Minus' || e.code === 'NumpadSubtract') this.throttle = clamp(this.throttle / 2, 1e-3, 1e3);
       if (['Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyC', 'KeyR', 'KeyF'].includes(e.code)) e.preventDefault();
@@ -181,10 +201,15 @@ export class Controls3D {
     return [v.x, v.y, v.z];
   }
 
-  hud(r: { speed: string; near: string; target: string; riding: string; throttle: number }) {
+  hud(r: { speed: string; near: string; target: string; riding: string; throttle: number; drive: string; charge: number; flash: number }) {
     const t = r.throttle >= 1 ? `×${r.throttle.toFixed(r.throttle < 10 ? 1 : 0)}` : `÷${(1 / r.throttle).toFixed(1)}`;
-    const html = `<b>${r.speed}</b> <span>throttle ${t}</span>${r.near ? `<div>near ${r.near}</div>` : ''}${r.target ? `<div class="tgt">◎ ${r.target}</div>` : ''}${r.riding ? `<div class="dim">moving with ${r.riding}</div>` : ''}`;
+    const bar = '▮'.repeat(Math.floor(r.charge * 10)) + '▯'.repeat(10 - Math.floor(r.charge * 10));
+    const html = `<b>${r.speed}</b> <span>throttle ${t}</span><div class="drv">${r.drive}</div><div class="jmp">jump ${bar}</div>`
+      + `${r.near ? `<div>near ${r.near}</div>` : ''}${r.target ? `<div class="tgt">◎ ${r.target}</div>` : ''}${r.riding ? `<div class="dim">moving with ${r.riding}</div>` : ''}`;
     if (this.hudEl.innerHTML !== html) this.hudEl.innerHTML = html;
+    const o = Math.min(1, r.flash).toFixed(2);
+    if (this.flashEl.style.opacity !== o) this.flashEl.style.opacity = o;
+    for (const b of this.root.querySelectorAll<HTMLElement>('[data-b="od"]')) b.classList.toggle('on', this.v.ship.od);
   }
 }
 

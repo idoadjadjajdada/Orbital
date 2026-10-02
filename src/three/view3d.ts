@@ -6,6 +6,8 @@ import { buildMap, paintCrater, ringTau, type SurfaceMap } from '../pixel/surfac
 import { bodyFrame, starRGB, type V3 } from '../pixel/sprites';
 import { bodyAxis, tintOf } from '../pixel/renderer';
 import { Controls3D } from './controls';
+import { Ship, CRUISE, OD_MAX } from './ship';
+import { Radar, fmtTime } from './radar';
 
 /**
  * The sandbox seen from inside it, at true scale. The scene is laid out in
@@ -95,7 +97,7 @@ void main() {
 export class View3D {
   readonly canvas: HTMLCanvasElement;
   private renderer: THREE.WebGLRenderer;
-  private scene = new THREE.Scene();
+  readonly scene = new THREE.Scene();
   camera: THREE.PerspectiveCamera;
   private objs = new Map<Body, Obj>();
   private markers: THREE.Points;
@@ -106,7 +108,11 @@ export class View3D {
   private labels: HTMLElement;
   private labelEls = new Map<Body, HTMLElement>();
   controls: Controls3D;
+  ship: Ship;
+  radar: Radar;
   active = false;
+  /** overdrive switched on by the autopilot, to switch off on arrival */
+  private autoOd = false;
 
   /** where the viewer is: an offset (AU) from the body it rides with, a velocity (m/s) relative to it, and which way it faces */
   pilot = { anchor: null as Body | null, off: [0, 0, 0] as V3, vel: [0, 0, 0] as V3 };
@@ -136,6 +142,19 @@ export class View3D {
     this.labels.hidden = true;
     document.body.appendChild(this.labels);
     this.controls = new Controls3D(this);
+    this.ship = new Ship(this.camera, this.scene, this.glowTex);
+    this.radar = new Radar({
+      camera: this.camera,
+      where: () => this.where(),
+      bodies: () => this.app.visual,
+      selected: () => this.app.selected,
+      select: b => this.app.select(b),
+      go: b => { this.app.select(b); this.goTo(b); },
+      jump: b => { this.app.select(b); this.jumpTo(b); },
+      canJump: () => this.ship.ready(),
+      eta: d => this.eta(d),
+    });
+    this.controls.root.appendChild(this.radar.el);
     window.addEventListener('resize', () => this.resize());
     this.resize();
   }
@@ -158,6 +177,9 @@ export class View3D {
     this.pilot.anchor = b;
     this.pilot.vel = [0, 0, 0];
     this.travel = null;
+    this.ship.jump = null;
+    this.ship.od = false;
+    this.ship.odLevel = 0;
     if (b) {
       const d = Math.max(b.r * 4, 2e-7);
       this.pilot.off = [d * 0.8, -d * 0.55, d * 0.25];
@@ -228,6 +250,8 @@ export class View3D {
     if (this.pilot.anchor && !this.pilot.anchor.alive) this.pilot.anchor = null;
     this.pickAnchor();
     this.controls.update(dtReal);
+    const arrive = this.ship.update(dtReal);
+    if (arrive) this.arrive(arrive);
     this.fly(dtReal);
     const P = this.where();
     const cam = this.camera;
@@ -276,8 +300,16 @@ export class View3D {
     }
     setPoints(this.parts, pp, pc);
 
+    // the light on the hull: the star that shines brightest here
+    let sun: THREE.Vector3 | null = null, best = 0;
+    for (const s of stars) {
+      const d2 = (s.x - P[0]) ** 2 + (s.y - P[1]) ** 2 + (s.z - P[2]) ** 2;
+      if ((s.star?.L ?? 0) / d2 > best) { best = (s.star?.L ?? 0) / d2; sun = new THREE.Vector3(P[0] - s.x, P[1] - s.y, P[2] - s.z).normalize(); }
+    }
+    this.ship.draw(dtReal, cam, this.pilot.vel, sun);
     this.renderer.render(this.scene, cam);
     this.drawLabels(P);
+    this.radar.draw();
     this.controls.hud(this.readout());
   }
 
@@ -297,23 +329,46 @@ export class View3D {
       const d: V3 = [t.b.x - p[0], t.b.y - p[1], t.b.z - p[2]];
       const dist = Math.hypot(d[0], d[1], d[2]);
       const gap = dist - t.stop;
-      // close the gap exponentially, a few seconds whatever the distance
-      const want = gap > 0 ? (gap * AU_M) / 1.2 : 0;
+      // overdrive for anything more than a few seconds away on the ordinary drive
+      if (gap * AU_M > 5 * CRUISE && !this.ship.od) { this.ship.od = true; this.autoOd = true; }
+      if (this.autoOd && gap * AU_M < CRUISE) { this.ship.od = false; this.autoOd = false; }
+      // close the gap exponentially, no faster than the drive allows
+      const want = gap > 0 ? Math.min((gap * AU_M) / 1.2, this.ship.cap(this.nearest().alt)) : 0;
+      this.ship.thrust = gap > 0 ? 1 : 0;
       for (let k = 0; k < 3; k++) v[k] += ((d[k] / dist) * want - v[k]) * Math.min(1, dt * 3);
       // turn to face it
       const target = new THREE.Vector3(d[0], d[1], d[2]).normalize();
       const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
       const q = new THREE.Quaternion().setFromUnitVectors(fwd, target);
       this.camera.quaternion.premultiply(new THREE.Quaternion().slerp(q, Math.min(1, dt * 3)));
-      if (gap < t.stop * 0.05 || this.controls.moving()) { this.travel = null; if (gap < t.stop * 0.05) v.fill(0); }
+      if (gap < t.stop * 0.05 || this.controls.moving()) {
+        this.travel = null;
+        if (gap < t.stop * 0.05) v.fill(0);
+        if (this.autoOd) { this.ship.od = false; this.autoOd = false; }
+      }
     } else {
       this.travel = null;
-      const want = this.controls.thrust(this.speed());
+      if (this.autoOd) { this.ship.od = false; this.autoOd = false; }
+      const sp = this.speed();
+      const want = this.controls.thrust(sp);
+      this.ship.thrust = Math.min(1, Math.hypot(want[0], want[1], want[2]) / sp);
       for (let k = 0; k < 3; k++) v[k] += (want[k] - v[k]) * Math.min(1, dt * 4);
     }
     for (let k = 0; k < 3; k++) this.pilot.off[k] += (v[k] * dt) / AU_M;
+    // into a wormhole's throat, and out of the other mouth
+    let n = this.nearest();
+    if (n.b && n.b.look.wormhole && n.alt < 0.5 * this.visR(n.b) * AU_M) {
+      const out = this.app.world.bodies.find(q => q.id === n.b!.partnerId && q.alive);
+      if (out) {
+        const p = this.where(), b = n.b;
+        const d: V3 = [p[0] - b.x, p[1] - b.y, p[2] - b.z];
+        const dl = Math.hypot(d[0], d[1], d[2]) || 1;
+        this.place(out, [(d[0] / dl) * out.r * 1.8, (d[1] / dl) * out.r * 1.8, (d[2] / dl) * out.r * 1.8], false);
+        this.ship.flash = 1;
+        n = this.nearest();
+      }
+    }
     // never inside anything
-    const n = this.nearest();
     if (n.b && n.alt < 2) {
       const p = this.where(), b = n.b;
       const d: V3 = [p[0] - b.x, p[1] - b.y, p[2] - b.z];
@@ -325,10 +380,53 @@ export class View3D {
     }
   }
 
-  /** cruising speed, m/s: half the height above the nearest surface per second, scaled by the throttle */
+  /**
+   * cruising speed, m/s: half the height above the nearest surface per second,
+   * scaled by the throttle, up to what the drive allows; in overdrive, the
+   * most the overdrive allows here
+   */
   speed() {
     const { alt } = this.nearest();
-    return Math.max(1, Math.min(isFinite(alt) ? alt : 1e9, 1e16)) * 0.5 * this.controls.throttle;
+    const cap = this.ship.cap(alt);
+    if (this.ship.odLevel > 0) return cap * Math.min(1, this.controls.throttle);
+    return Math.min(cap, Math.max(1, Math.min(isFinite(alt) ? alt : 1e9, 1e16)) * 0.5 * this.controls.throttle);
+  }
+
+  /** start charging a jump to a body */
+  jumpTo(b: Body) {
+    if (this.ship.startJump(b)) { this.travel = null; this.autoOd = false; }
+  }
+
+  /** a jump completes: come out of it a few radii from the body, facing it */
+  private arrive(b: Body) {
+    const p = this.where();
+    const d: V3 = [p[0] - b.x, p[1] - b.y, p[2] - b.z];
+    const dl = Math.hypot(d[0], d[1], d[2]) || 1;
+    const stop = Math.max(this.visR(b) * 3, b.look.craft ? 1e-9 : 2e-8);
+    this.place(b, [(d[0] / dl) * stop, (d[1] / dl) * stop, (d[2] / dl) * stop], true);
+  }
+
+  /** put the viewer at an offset (AU) from a body, riding with it (or what pulls hardest there); `stop` also halts and turns to face it */
+  private place(b: Body, off: V3, stop: boolean) {
+    const p: V3 = [b.x + off[0], b.y + off[1], b.z + off[2]];
+    const old = this.pilot.anchor, v = this.pilot.vel;
+    this.pilot.anchor = b.source ? b : old;
+    const a = this.pilot.anchor;
+    if (stop) v.fill(0);
+    else if (old && a && old !== a) for (let k = 0; k < 3; k++) v[k] += ([old.vx, old.vy, old.vz][k] - [a.vx, a.vy, a.vz][k]) * AU_M / (365.25 * 86400);
+    this.pilot.off = [p[0] - (a?.x ?? 0), p[1] - (a?.y ?? 0), p[2] - (a?.z ?? 0)];
+    this.travel = null;
+    if (stop) {
+      this.camera.position.set(0, 0, 0);
+      this.camera.lookAt(-off[0], -off[1], -off[2]);
+    }
+  }
+
+  /** seconds to cover a distance (m), using overdrive when it is worth it */
+  eta(d: number) {
+    if (d < 5 * CRUISE) return d / CRUISE + 1;
+    // spool, then the climb out of one well and the fall into the next, then the cruise between
+    return 3 + 1.4 * Math.log(d / 3e7) + d / OD_MAX;
   }
 
   private readout() {
@@ -342,7 +440,14 @@ export class View3D {
       const d = Math.hypot(sel.x - p[0], sel.y - p[1], sel.z - p[2]) - this.visR(sel);
       tgt = `${sel.name} · ${fmtLength(Math.max(0, d))}`;
     }
-    return { speed: spd, near: b ? `${b.name} · ${fmtLength(Math.max(0, alt) / AU_M)} up` : '', target: tgt, riding: this.pilot.anchor?.name ?? '', throttle: this.controls.throttle };
+    const sh = this.ship;
+    const drive = sh.jump ? `JUMP to ${sh.jump.b.name} · ${Math.max(0, 2.5 - sh.jump.t).toFixed(1)} s`
+      : sh.odLevel > 0 ? `OVERDRIVE ${(sh.odLevel * 100).toFixed(0)}%${this.autoOd ? ' · auto' : ''}` : 'cruise drive';
+    if (tgt && sel && !sh.jump) {
+      const d = (Math.hypot(sel.x - p[0], sel.y - p[1], sel.z - p[2]) - this.visR(sel)) * AU_M;
+      tgt += ` · ~${fmtTime(this.eta(Math.max(0, d)))}`;
+    }
+    return { speed: spd, near: b ? `${b.name} · ${fmtLength(Math.max(0, alt) / AU_M)} up` : '', target: tgt, riding: this.pilot.anchor?.name ?? '', throttle: this.controls.throttle, drive, charge: sh.charge, flash: sh.flash };
   }
 
   /** the body nearest the centre of view (or a screen point), within a few degrees or its own disc */

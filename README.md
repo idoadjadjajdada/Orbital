@@ -71,7 +71,7 @@ true scale. Mouse: click to capture it and look around; `W` `A` `S` `D` fly,
 `Space` / `C` up and down, `Q` / `E` roll, `Shift` boost tenfold, the wheel or
 `+` `−` set the throttle; click selects what is under the crosshair and `T`
 flies you to it. Touch: a stick to fly, drag to look, tap to select, buttons
-for up, down, boost, throttle and *Go to*. You ride with whatever pulls on you
+for up, down, boost, throttle, *Go to*, overdrive, jump, map and view. You ride with whatever pulls on you
 hardest, so worlds do not race away at tens of km/s, and your cruising speed
 is half your height above the nearest surface per second, so the same stick
 skims a moon or crosses a system. The clock runs at one second a second, as it
@@ -80,9 +80,22 @@ in the same pixel style: half-resolution, nearest filtering, lighting in a few
 steps, every world wearing the same surface map (craters and all) it has on
 the map. three.js is loaded only when you first open it.
 
-Coming next, in this order: a ship (overdrive, wormhole jumps, a radar map to
-pick destinations from), free flight in a suit with thrusters, and landing,
-with terrain, caves and formations generated from what each world is made of.
+You fly a ship. Its ordinary drive tops out at 5% of light speed — a minute
+from a world to its moons. **Overdrive** (`O`) spools up over three seconds
+towards ten thousand times light speed, but is held back near anything
+massive (never faster than three times your height above the nearest surface
+per second), so it crosses a system in seconds and slows by itself on the way
+in; the autopilot switches it on for any trip more than a few seconds long.
+The **jump drive** (`J`) folds space to the selected body outright: two and a
+half seconds to charge, then forty to recharge. Fly into a wormhole in the
+sandbox and you come out of its other mouth. The **scope** in the corner lays
+everything round the ship flat in the plane you fly in, ahead at the top, on a
+log scale, with a stalk for height above or below; `M` opens it as a map with
+a list of destinations, distances and travel times, to go to or jump to. `Z`
+switches between the chase view and the cockpit.
+
+Coming next: free flight in a suit with thrusters, then landing, with terrain,
+caves and formations generated from what each world is made of.
 
 The clock says what it is actually doing. If the integrator cannot keep up
 with the speed you asked for — a moon on a two-day orbit needs thousands of
@@ -336,7 +349,7 @@ real waves are invisible), and neutron-star mergers a kilonova.
 ```
 src/physics/   integrator, forces, collisions, stars, presets — no DOM, fully tested
 src/pixel/     pixel-art renderer: surface maps, sprites, rings, particles, lensing, bursts
-src/three/     the 3D view (three.js, loaded on demand) and its flying controls
+src/three/     the 3D view (three.js, loaded on demand), its flying controls, the ship and its scope
 src/physics/data/moons.ts   generated from JPL by tools/fetch-moons.py
 src/ui/        input and tools, HUD, the body builder, the belt histogram
 tests/         physics.test.ts (vitest), browser.mjs (Playwright smoke test)
