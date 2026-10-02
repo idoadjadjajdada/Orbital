@@ -104,13 +104,21 @@ export class Hud {
       b.title = label ? `Undo ${label} (Ctrl/⌘ Z)` : 'Nothing to undo';
     };
     $('helpBtn').onclick = () => { $('help').hidden = !$('help').hidden; };
+    $('modeBtn').onclick = () => void app.toggle3D();
+    app.onMode = () => { $('modeBtn').textContent = app.mode3d ? 'Map' : '3D'; $('modeBtn').classList.toggle('on', app.mode3d); this.sync(); };
+    // settings, and the cheat for the clock
+    $('setBtn').onclick = () => { $('settings').hidden = !$('settings').hidden; };
+    $('sClose').onclick = () => { $('settings').hidden = true; };
+    const cheat = $<HTMLInputElement>('cheatWarp');
+    cheat.oninput = () => { app.warpLog = Number(cheat.value); };
+    $('cheatReal').onclick = () => { app.warpLog = Math.log10(1 / (365.25 * 86400)); };
     $('hClose').onclick = () => { $('help').hidden = true; };
     $('clear').onclick = () => app.clear();
     app.onSelect = () => this.inspect(true);
     app.onToast = m => this.toast(m);
     app.onFrame = () => this.tick();
     window.addEventListener('keydown', e => {
-      if ((e.target as HTMLElement)?.tagName === 'INPUT') return;
+      if ((e.target as HTMLElement)?.tagName === 'INPUT' || app.mode3d) return;
       const n = Number(e.key);
       if (n >= 1 && n <= 9) {
         const list = CATALOG.filter(c => c.shelf === this.shelf);
@@ -454,6 +462,11 @@ export class Hud {
   private tick() {
     const a = this.app;
     $('elapsed').textContent = `t = ${fmtDuration(a.world.time)}`;
+    if (!$('settings').hidden) {
+      const c = $<HTMLInputElement>('cheatWarp');
+      if (c !== document.activeElement) c.value = String(a.warpLog);
+      $('cheatV').textContent = a.warp * 365.25 * 86400 < 1.5 && a.warp * 365.25 * 86400 > 0.67 ? 'real time — one second a second' : `${fmtDuration(a.warp)} per second`;
+    }
     const want = a.warp;
     $('rate').textContent = a.paused ? 'paused' : `${fmtDuration(want)} per second`;
     const lag = !a.paused && a.rate < 0.8 * want ? ` running at ${fmtDuration(a.rate)}/s` : '';

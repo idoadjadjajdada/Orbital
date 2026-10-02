@@ -66,6 +66,24 @@ separates as it goes — iron to the middle, water and gas on top — and ends
 as an ordinary round world with what floated up as its surface. *Test the
 slump* plays it first. The Star tab makes a star of any mass and age.
 
+**3D** (the *3D* button or `V`). Step inside the sandbox and fly through it at
+true scale. Mouse: click to capture it and look around; `W` `A` `S` `D` fly,
+`Space` / `C` up and down, `Q` / `E` roll, `Shift` boost tenfold, the wheel or
+`+` `−` set the throttle; click selects what is under the crosshair and `T`
+flies you to it. Touch: a stick to fly, drag to look, tap to select, buttons
+for up, down, boost, throttle and *Go to*. You ride with whatever pulls on you
+hardest, so worlds do not race away at tens of km/s, and your cruising speed
+is half your height above the nearest surface per second, so the same stick
+skims a moon or crosses a system. The clock runs at one second a second, as it
+would for you; *Settings → Cheats* speeds it up or slows it down. It is drawn
+in the same pixel style: half-resolution, nearest filtering, lighting in a few
+steps, every world wearing the same surface map (craters and all) it has on
+the map. three.js is loaded only when you first open it.
+
+Coming next, in this order: a ship (overdrive, wormhole jumps, a radar map to
+pick destinations from), free flight in a suit with thrusters, and landing,
+with terrain, caves and formations generated from what each world is made of.
+
 The clock says what it is actually doing. If the integrator cannot keep up
 with the speed you asked for — a moon on a two-day orbit needs thousands of
 steps a year — the readout shows the rate it is really achieving. Accuracy is
@@ -317,7 +335,8 @@ real waves are invisible), and neutron-star mergers a kilonova.
 
 ```
 src/physics/   integrator, forces, collisions, stars, presets — no DOM, fully tested
-src/pixel/     pixel-art renderer: surface maps, sprites, rings, particles, lensing
+src/pixel/     pixel-art renderer: surface maps, sprites, rings, particles, lensing, bursts
+src/three/     the 3D view (three.js, loaded on demand) and its flying controls
 src/physics/data/moons.ts   generated from JPL by tools/fetch-moons.py
 src/ui/        input and tools, HUD, the body builder, the belt histogram
 tests/         physics.test.ts (vitest), browser.mjs (Playwright smoke test)
