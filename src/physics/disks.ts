@@ -48,6 +48,8 @@ export class DiskPhysics {
   private frame = 0;
   private hostOf = new Map<Body, Body | null>();
   vapour: Vapour[] = [];
+  /** the shortest orbital period in any disc, yr: the world keeps its steps well under it */
+  minPeriod = Infinity;
 
   step(w: World, hosts: Map<Body, { host: Body | null; hill: number }>, dt: number): boolean {
     this.frame++;
@@ -76,6 +78,14 @@ export class DiskPhysics {
     }
     for (const p of this.hostOf.keys()) if (!p.alive) this.hostOf.delete(p);
 
+    this.minPeriod = Infinity;
+    for (const [host, list] of groups) {
+      if (list.length < 20) continue;
+      let r2 = Infinity;
+      for (const p of list) r2 = Math.min(r2, (p.x - host.x) ** 2 + (p.y - host.y) ** 2 + (p.z - host.z) ** 2);
+      const r = Math.max(Math.sqrt(r2), host.r);
+      this.minPeriod = Math.min(this.minPeriod, 2 * Math.PI * Math.sqrt(r ** 3 / (G * host.m)));
+    }
     let touched = gather(w, hosts);
     this.vapour = this.vapour.filter(v => v.host.alive && v.M > 1e-6 * v.host.m);
     for (const v of this.vapour) vapourDrag(w, v, hosts, dt);

@@ -94,6 +94,22 @@ export class World {
    * Returns the time actually covered.
    */
   step(T: number, deadline: number): number {
+    // The disc processes (collisions, drag, back-reaction) act once per step,
+    // so with a debris disc present a step is kept to a fraction of its
+    // shortest orbit: a fast clock then gives the same physics as a slow one.
+    const sub = this.disks.minPeriod / 30;
+    if (!(T > sub)) return this.stepOnce(T, deadline);
+    let done = 0;
+    while (done < T * (1 - 1e-12)) {
+      const want = Math.min(sub, T - done);
+      const got = this.stepOnce(want, deadline);
+      done += got;
+      if (got < want || performance.now() > deadline) break;
+    }
+    return done;
+  }
+
+  private stepOnce(T: number, deadline: number): number {
     this.rebuild();
     this.backReaction(T / 2);
     let done = 0;
