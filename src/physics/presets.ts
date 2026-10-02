@@ -6,6 +6,10 @@ import { stateFromElements, elementsDeg, type Elements } from './orbit';
 import { newStar, structure, teffOf } from './stellar';
 import { addPlanetSystem, makePlanet, planetHelio, setAxis } from './solarsystem';
 import { lagrangePoints } from './analysis';
+import { addTorus } from './disks';
+
+
+
 
 export interface PresetInfo {
   key: string;
@@ -37,11 +41,14 @@ export const PRESETS: PresetInfo[] = [
   { key: 'cnc55', group: 'Exoplanets', name: '55 Cancri', blurb: 'A lava world on an 18-hour orbit, and four giants further out.', warp: 0.3, view: 7, focus: '55 Cancri A' },
   { key: 'kepler90', group: 'Exoplanets', name: 'Kepler-90', blurb: 'Eight planets — as many as ours — packed inside an Earth orbit.', warp: 0.1, view: 1.3, focus: 'Kepler-90' },
   { key: 'proxima', group: 'Exoplanets', name: 'Proxima Centauri', blurb: 'The nearest star and its two small planets.', warp: 0.02, view: 0.07, focus: 'Proxima Centauri' },
-  { key: 'theia', group: 'Events', name: 'Theia', blurb: 'A Mars-sized world grazes the proto-Earth. Watch a disc form, and what gathers in it.', warp: 2 * HOUR, view: 0.0008, focus: 'Proto-Earth' },
+  { key: 'theia', group: 'Events', name: 'Theia', blurb: 'A Mars-sized world grazes the proto-Earth. A disc of debris and rock vapour forms, and over a few weeks a Moon gathers in it.', warp: 3 * HOUR, view: 0.0008, focus: 'Proto-Earth' },
   { key: 'ringmaker', group: 'Events', name: 'Making a ring', blurb: 'An icy moon on an orbit that dips inside its giant’s Roche limit.', warp: 2 * DAY, view: 0.004, focus: 'Giant' },
   { key: 'xrb', group: 'Events', name: 'Black hole binary', blurb: 'A star overflowing onto a black hole: a stream, a disc, and jets.', warp: 2 * DAY, view: 0.18, focus: 'Black hole' },
   { key: 'merger', group: 'Events', name: 'Black holes merging', blurb: 'Two 30-sun black holes, minutes from merging.', warp: 2e-6, view: 3e-4, focus: 'BH A' },
   { key: 'sgra', group: 'Events', name: 'Sagittarius A*', blurb: 'Four million suns, the S-stars, and a star on its way in.', warp: 0.02, view: 200, focus: 'Sgr A*' },
+  { key: 'tde', group: 'Events', name: 'Star torn apart', blurb: 'A Sun-like star dives past a million-sun black hole: spaghettified into a stream, half of it falling back into a disc.', warp: 0.002, view: 3, focus: 'Black hole' },
+  { key: 'spaghetti', group: 'Events', name: 'Spaghettification', blurb: 'Two Earths on eccentric orbits round a 10-sun black hole: one grazes the tidal limit and is stripped, one dives deep and is shredded.', warp: 1e-4, view: 0.03, focus: 'Black hole' },
+  { key: 'quasar', group: 'Events', name: 'Quasar', blurb: 'A hundred-million-sun hole in a ring of hot gas, stars on wide orbits, one on its way to be torn apart.', warp: 1, view: 2500, focus: 'Quasar' },
   { key: 'kirkwood', group: 'Events', name: 'Kirkwood gaps', blurb: '3,000 asteroids, Mars, Jupiter and Saturn. Gaps open where the periods resonate.', warp: 30, view: 6, focus: 'Sun' },
 ];
 
@@ -406,6 +413,68 @@ function sgra(w: World) {
   w.add(v);
 }
 
+/** a body on a parabolic orbit about `host`, starting r0 out, with closest approach q */
+function parabolic(b: Body, host: Body, q: number, r0: number) {
+  const mu = G * (host.m + b.m);
+  const h = Math.sqrt(2 * mu * q);
+  const vr = Math.sqrt(Math.max(0, 2 * mu / r0 - (h / r0) ** 2));
+  const nu = Math.acos(Math.min(1, 2 * q / r0 - 1));
+  const rh = [Math.cos(nu), -Math.sin(nu)], th = [Math.sin(nu), Math.cos(nu)];
+  b.setPos(host.x + r0 * rh[0], host.y + r0 * rh[1], host.z);
+  b.setVel(host.vx - vr * rh[0] + (h / r0) * th[0], host.vy - vr * rh[1] + (h / r0) * th[1], host.vz);
+}
+
+/**
+ * A tidal disruption event. The star's tidal radius is R (M/m)^⅓ ≈ 0.47 AU;
+ * it passes at half that (β = 2), past the point of no return for a Sun-like
+ * star. The spread of orbital energy across it, G M R / r_t², makes half the
+ * debris bound — falling back over weeks to months — and half unbound.
+ */
+function tde(w: World) {
+  const bh = makeBody('smbh', 3, 'Black hole');
+  bh.m = 1e6; bh.r = schwarzschild(bh.m);
+  w.add(bh);
+  const st = makeBody('sun', 17, 'Doomed star');
+  const rt = st.r * Math.cbrt(bh.m / st.m);
+  parabolic(st, bh, rt / 2, 6 * rt);
+  w.add(st);
+}
+
+/** Two Earths round a 10-sun hole: one at β ≈ 0.6 (stripped), one at β ≈ 2 (destroyed). */
+function spaghetti(w: World) {
+  const bh = makeBody('bh', 5, 'Black hole');
+  w.add(bh);
+  const mk = (name: string, beta: number, phase: number, seed: number) => {
+    const e = makeBody('terran', seed, name);
+    const rt = e.r * Math.cbrt(bh.m / e.m);
+    const q = rt / beta, ecc = 0.85, a = q / (1 - ecc);
+    place(e, bh, elementsDeg(a, ecc, 0, 0, phase, 200), bh.m);
+    w.add(e);
+  };
+  mk('Grazing world', 0.62, 0, 41);
+  mk('Plunging world', 2.2, 140, 42);
+}
+
+/**
+ * A quasar: the hole feeds from a ring of gas whose viscosity lets it spiral
+ * in, glowing; S-star-like orbits further out; and a red giant falling in.
+ */
+function quasar(w: World) {
+  const bh = makeBody('quasar', 9, 'Quasar');
+  w.add(bh);
+  const rs = schwarzschild(bh.m);
+  addTorus(w, bh, 40 * rs, 400 * rs, 1e-4 * bh.m, 1500);
+  const rnd = rng(77);
+  for (let k = 0; k < 8; k++) {
+    const b = star('bstar', `Star ${k + 1}`, 4 + 8 * rnd(), 0.3);
+    place(b, bh, elementsDeg(600 + 1600 * rnd(), 0.2 + 0.6 * rnd(), 180 * rnd(), 360 * rnd(), 360 * rnd(), 360 * rnd()), bh.m);
+    w.add(b);
+  }
+  const g = star('redgiant', 'Falling giant', 1.2, 1.9);
+  parabolic(g, bh, 40 * rs, 1500);
+  w.add(g);
+}
+
 function kirkwood(w: World) {
   const s = sun(w);
   for (const name of ['Mars', 'Jupiter', 'Saturn']) {
@@ -426,7 +495,7 @@ const BUILDERS: Record<string, (w: World) => void> = {
   jupiter: w => planetPreset(w, 'Jupiter'), saturn: w => planetPreset(w, 'Saturn'),
   uranus: w => planetPreset(w, 'Uranus'), neptune: w => planetPreset(w, 'Neptune'), pluto: w => planetPreset(w, 'Pluto'),
   trappist, kepler16, hr8799, cnc55, kepler90, proxima,
-  theia, ringmaker, xrb, merger, sgra, kirkwood,
+  theia, ringmaker, xrb, merger, sgra, kirkwood, tde, spaghetti, quasar,
 };
 
 export function buildPreset(key: string, w = new World()): World {

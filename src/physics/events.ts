@@ -1,12 +1,12 @@
 import { Body, type Cls } from './body';
 import { G, C, KM, KMS, GCC, AU_M, YEAR_S, MSUN_KG, radiusFromDensity, schwarzschild, fmtMass } from './units';
 import { becomeRemnant, msLife, M_TOV, remnantMass, structure, newStar, teffOf } from './stellar';
-import { refreshRoche } from './catalog';
+import { refreshRoche, rocheFactor } from './catalog';
 import type { World } from './world';
 
 /** A visual cue the renderer can pick up: flashes, shock rings. */
 export interface SimEvent {
-  kind: 'impact' | 'merge' | 'disrupt' | 'supernova' | 'ia' | 'kilonova' | 'collapse' | 'nebula' | 'swallow' | 'graze' | 'crater';
+  kind: 'impact' | 'merge' | 'disrupt' | 'supernova' | 'ia' | 'kilonova' | 'collapse' | 'nebula' | 'swallow' | 'graze' | 'crater' | 'strip' | 'evaporate' | 'airburst';
   x: number; y: number; z: number;
   size: number;     // AU, a sensible radius for the visual
   energy: number;   // 0..1, how big a deal it is
@@ -47,6 +47,8 @@ export interface FragSpec {
   source?: boolean;
   /** bias direction for ejecta (unit), and how strongly (0 = isotropic) */
   bias?: [number, number, number]; biasK?: number;
+  /** place the pieces in two caps, along +axis and −axis (tidal stripping) */
+  bipolar?: [number, number, number];
 }
 
 /** Scatter `mass` into test particles, conserving the given total momentum exactly. */
@@ -64,6 +66,11 @@ export function spawnFragments(w: World, f: FragSpec): Body[] {
     if (f.bias && f.biasK) {
       const b = f.bias, kk = f.biasK;
       d = [d[0] + b[0] * kk, d[1] + b[1] * kk, d[2] + b[2] * kk];
+      const l = Math.hypot(d[0], d[1], d[2]); d = [d[0] / l, d[1] / l, d[2] / l];
+    }
+    if (f.bipolar) {
+      const s = k % 2 ? -1 : 1, a = f.bipolar, j = 0.45;
+      d = [s * a[0] + d[0] * j, s * a[1] + d[1] * j, s * a[2] + d[2] * j];
       const l = Math.hypot(d[0], d[1], d[2]); d = [d[0] / l, d[1] / l, d[2] / l];
     }
     let rr = f.rIn + (f.rOut - f.rIn) * Math.cbrt(rnd());
@@ -88,7 +95,7 @@ export function spawnFragments(w: World, f: FragSpec): Body[] {
       look: { style: 'rocky', seed: ++fragSeq, c1: f.color, c2: f.color },
       m: mEach, r: rFrag, source: !!f.source, spin: 0,
     });
-    if (f.source) p.name = 'debris';
+    if (f.source) { p.name = 'debris'; p.dens = f.rho ?? 3; refreshRoche(p); }
     p.setPos(f.x + ox, f.y + oy, f.z + oz);
     p.setVel(vx, vy, vz);
     p.heat = f.heat * (0.6 + 0.4 * rnd());
@@ -132,6 +139,17 @@ function grow(t: Body, density: number) {
 /** A test particle running into a source. */
 export function accrete(w: World, src: Body, p: Body) {
   if ((src.cls === 'rock' || src.cls === 'ice' || src.cls === 'gas' || src.cls === 'debris') && p.cls === 'debris') {
+    // Cratering is for small impactors. A piece more than a few percent of
+    // what it hits is a collision between near-equals at the speeds of a
+    // settling disc: the two simply stick.
+    if (src.cls === 'debris' && p.m > 0.03 * src.m) {
+      const rho = src.dens;
+      absorbInto(src, p);
+      src.r = radiusFromDensity(src.m, rho);
+      refreshRoche(src);
+      w.massChanged(src);
+      return;
+    }
     crater(w, src, p);
     return;
   }
@@ -163,6 +181,16 @@ const KG_M3 = 1000; // one g/cm³ in kg/m³
  * clouds, as Shoemaker–Levy 9 did on Jupiter, which the winds smear away.
  */
 export function crater(w: World, T: Body, p: Body) {
+  // A thick atmosphere stops small stony bodies before they reach the ground:
+  // on Earth anything under about fifty metres breaks up and burns overhead,
+  // as the Chelyabinsk meteor did, and never digs a crater.
+  const shield = T.look.style === 'terran' || T.look.style === 'ocean' ? 50 : T.name === 'Venus' ? 1500 : T.name === 'Titan' ? 200 : 0;
+  if (shield > 0 && 2 * p.r * AU_M < shield && T.cls !== 'gas') {
+    absorbInto(T, p);
+    w.massChanged(T);
+    w.emit({ kind: 'airburst', x: p.x, y: p.y, z: p.z, size: T.r * 0.03, energy: 0.1, t: w.time, body: T });
+    return;
+  }
   const dvx = p.vx - T.vx, dvy = p.vy - T.vy, dvz = p.vz - T.vz;
   const v = Math.hypot(dvx, dvy, dvz);
   let nx = p.x - T.x, ny = p.y - T.y, nz = p.z - T.z;
@@ -290,7 +318,10 @@ export function collide(w: World, a: Body, b: Body) {
   // Fragments are already the smallest thing resolved: when one meets
   // anything that is not a star it sticks, momentum and mass conserved.
   if (T.cls === 'debris' || P.cls === 'debris') {
-    if (dx * dvx + dy * dvy + dz * dvz > 0) return; // touching but already separating
+    // only just touching and already separating: let them go. Anything deeper is
+    // a hit, even if found late — a body left inside another would be flung out
+    // by the unphysical pull of a point mass at close range
+    if (dx * dvx + dy * dvy + dz * dvz > 0 && d > 0.9 * (T.r + P.r)) return;
     const rho = T.density;
     absorbInto(T, P);
     w.kill(P);
@@ -360,6 +391,9 @@ export function collide(w: World, a: Body, b: Body) {
   const debris = Mtot - Mlr;
   const vx = (T.vx * T.m + P.vx * P.m) / Mtot, vy = (T.vy * T.m + P.vy * P.m) / Mtot, vz = (T.vz * T.m + P.vz * P.m) / Mtot;
 
+  // the angular momentum of the impact, about the pair's centre, ends up as spin
+  const spinL = spinVector(T).map((v, i) => v + spinVector(P)[i]);
+  const Lo = [mu * (dy * dvz - dz * dvy), mu * (dz * dvx - dx * dvz), mu * (dx * dvy - dy * dvx)];
   // the remnant takes over the target: name, look, class
   T.m = Mlr; T.vx = vx; T.vy = vy; T.vz = vz; T.x = cx; T.y = cy; T.z = cz;
   w.kill(P);
@@ -369,6 +403,8 @@ export function collide(w: World, a: Body, b: Body) {
     if (P.cls === 'gas' && T.cls !== 'gas' && P.m > T.m * 0.3) T.cls = 'gas';
     T.r = radiusFromDensity(Mlr, T.cls === 'gas' ? Math.min(rhoMix, rhoT) : rhoMix);
     T.heat = Math.min(1, T.heat + heat);
+    const keep = Mlr / Mtot;
+    setSpin(T, [(spinL[0] + Lo[0]) * keep, (spinL[1] + Lo[1]) * keep, (spinL[2] + Lo[2]) * keep]);
     refreshRoche(T);
     w.massChanged(T);
   }
@@ -404,18 +440,25 @@ export function collide(w: World, a: Body, b: Body) {
  */
 function grazeAndMerge(w: World, T: Body, P: Body, o: { vImp: number; vesc: number; bImp: number; bcrit: number; rhoMix: number; heat: number; color: number }) {
   const Mtot = T.m + P.m;
-  const fDisk = 0.01 + 0.04 * Math.min(1, (o.bImp - o.bcrit) / (1 - o.bcrit));
+  // Canup (2004): a 45° graze at about escape speed puts ~2% of the mass in orbit;
+  // more oblique impacts more, faster ones lose some of it to escape
+  const x = Math.min(1, (o.bImp - o.bcrit) / (1 - o.bcrit));
+  const fDisk = (0.016 + 0.06 * x) * Math.max(0.4, 1 - 0.8 * Math.max(0, o.vImp / o.vesc - 1));
   const disk = fDisk * Mtot;
   const cx = (T.x * T.m + P.x * P.m) / Mtot, cy = (T.y * T.m + P.y * P.m) / Mtot, cz = (T.z * T.m + P.z * P.m) / Mtot;
   const vx = (T.vx * T.m + P.vx * P.m) / Mtot, vy = (T.vy * T.m + P.vy * P.m) / Mtot, vz = (T.vz * T.m + P.vz * P.m) / Mtot;
   const dx = P.x - T.x, dy = P.y - T.y, dz = P.z - T.z, ux = P.vx - T.vx, uy = P.vy - T.vy, uz = P.vz - T.vz;
+  // orbital angular momentum of the pair about their centre of mass
+  const mu = T.m * P.m / Mtot;
   let lx = dy * uz - dz * uy, ly = dz * ux - dx * uz, lz = dx * uy - dy * ux;
+  const Limp = mu * Math.hypot(lx, ly, lz);
   const ln = Math.hypot(lx, ly, lz) || 1; lx /= ln; ly /= ln; lz /= ln;
   // a basis in the impact plane
   let ax = dx, ay = dy, az = dz;
   const an = Math.hypot(ax, ay, az) || 1; ax /= an; ay /= an; az /= an;
   const bx = ly * az - lz * ay, by = lz * ax - lx * az, bz = lx * ay - ly * ax;
 
+  const spinL = spinVector(T, 1).map((v, i) => v + spinVector(P, 1)[i]);
   T.m = Mtot - disk;
   T.x = cx; T.y = cy; T.z = cz; T.vx = vx; T.vy = vy; T.vz = vz;
   if (P.cls === 'gas' && P.m > 0.3 * T.m) T.cls = 'gas';
@@ -424,64 +467,196 @@ function grazeAndMerge(w: World, T: Body, P: Body, o: { vImp: number; vesc: numb
   refreshRoche(T);
   w.kill(P);
 
-  const heavy = disk > 0.01 * T.m;
-  const n = heavy ? 36 : 300;
-  const mEach = disk / n;
-  const rFrag = radiusFromDensity(mEach, 3);
+  // The disc is vapour and melt of the mantles, about 3.3 g/cm³. Its Roche
+  // limit splits it: inside, only a ring of small pieces can exist (test
+  // particles that collide and settle); outside, self-gravitating clumps that
+  // can gather into a moon. Surface density falls as r^−1.5 out to twice that
+  // limit, about half the mass outside it, which gives the disc the specific
+  // angular momentum the impact simulations find.
+  const rhoDisc = Math.min(3.3, o.rhoMix);
+  const aR = 2.44 * T.r * Math.cbrt(T.density / rhoDisc);
+  const rMin = 1.15 * T.r, rMax = Math.max(2 * aR, 3 * T.r);
+  const sq0 = Math.sqrt(rMin), sq1 = Math.sqrt(rMax);
+  const uR = Math.min(1, Math.max(0, (Math.sqrt(aR) - sq0) / (sq1 - sq0))); // mass fraction inside aR
+  const fIn = uR;
+  // 500 small pieces inside; outside, 30 that pull on each other
+  const nIn = fIn > 0 ? 500 : 0, nOut = fIn < 1 ? 30 : 0;
+  const mIn = disk * fIn, mOut = disk - mIn;
   const placed: [number, number, number][] = [];
   const made: Body[] = [];
-  let sx = 0, sy = 0, sz = 0;
-  for (let k = 0; k < n; k++) {
+  let sx = 0, sy = 0, sz = 0, Ldisk = 0;
+  const one = (outer: boolean, mEach: number) => {
+    const rFrag = radiusFromDensity(mEach, rhoDisc);
     let px = 0, py = 0, pz = 0, rr = 0, th = 0;
     for (let tries = 0; tries < 40; tries++) {
-      rr = T.r * (1.3 + 3.2 * rnd() ** 1.5) + rFrag;
+      const lo = outer ? uR : 0, hi = outer ? 1 : uR;
+      rr = (sq0 + (sq1 - sq0) * (lo + (hi - lo) * rnd())) ** 2;
       th = 2 * Math.PI * rnd();
-      const h = (rnd() - 0.5) * 0.1 * rr;
+      const h = (rnd() - 0.5) * 0.04 * rr;
       px = (ax * Math.cos(th) + bx * Math.sin(th)) * rr + lx * h;
       py = (ay * Math.cos(th) + by * Math.sin(th)) * rr + ly * h;
       pz = (az * Math.cos(th) + bz * Math.sin(th)) * rr + lz * h;
-      if (!heavy || !placed.some(q => (q[0] - px) ** 2 + (q[1] - py) ** 2 + (q[2] - pz) ** 2 < 4.4 * rFrag * rFrag)) break;
+      if (!outer || !placed.some(q => (q[0] - px) ** 2 + (q[1] - py) ** 2 + (q[2] - pz) ** 2 < 4.4 * rFrag * rFrag)) break;
     }
-    placed.push([px, py, pz]);
-    const vc = Math.sqrt(G * T.m / rr) * (0.88 + 0.16 * rnd());
-    const vr = (rnd() - 0.5) * 0.15 * vc;
-    // tangential, prograde with the impact
-    const tx = (-ax * Math.sin(th) + bx * Math.cos(th)), ty = (-ay * Math.sin(th) + by * Math.cos(th)), tz = (-az * Math.sin(th) + bz * Math.cos(th));
+    if (outer) placed.push([px, py, pz]);
+    const vc = Math.sqrt(G * T.m / rr) * (0.98 + 0.04 * rnd());
+    const vr = (rnd() - 0.5) * 0.04 * vc;
+    const tx = -ax * Math.sin(th) + bx * Math.cos(th), ty = -ay * Math.sin(th) + by * Math.cos(th), tz = -az * Math.sin(th) + bz * Math.cos(th);
     const rx = px / rr, ry = py / rr, rz = pz / rr;
     const pvx = tx * vc + rx * vr, pvy = ty * vc + ry * vr, pvz = tz * vc + rz * vr;
-    const f = new Body({ name: heavy ? 'debris' : 'fragment', kind: 'fragment', cls: 'debris', m: mEach, r: rFrag, source: heavy, spin: 0,
+    const f = new Body({ name: outer ? 'debris' : 'fragment', kind: 'fragment', cls: 'debris', m: mEach, r: rFrag, source: outer, spin: 0,
       look: { style: 'barren', seed: ++fragSeq, c1: o.color, c2: o.color } });
     f.setPos(cx + px, cy + py, cz + pz);
     f.setVel(pvx, pvy, pvz);
     f.heat = 1;
-    f.dens = o.rhoMix;
-    sx += pvx; sy += pvy; sz += pvz;
+    f.dens = rhoDisc;
+    sx += mEach * pvx; sy += mEach * pvy; sz += mEach * pvz;
+    Ldisk += mEach * rr * vc;
     made.push(f);
-  }
+  };
+  for (let k = 0; k < nIn; k++) one(false, mIn / nIn);
+  for (let k = 0; k < nOut; k++) one(true, mOut / nOut);
   // the disc carries no net linear momentum of its own; the remnant keeps the pair's
-  sx /= n; sy /= n; sz /= n;
-  for (const f of made) { f.vx += vx - sx; f.vy += vy - sy; f.vz += vz - sz; if (heavy) refreshRoche(f); w.add(f); }
+  sx /= disk; sy /= disk; sz /= disk;
+  for (const f of made) { f.vx += vx - sx; f.vy += vy - sy; f.vz += vz - sz; if (f.source) refreshRoche(f); w.add(f); }
+  // what the disc did not take spins the merged body up — the five-hour day the young Earth was left with
+  const Lrest = Math.max(0, Limp - Ldisk);
+  setSpin(T, [spinL[0] + Lrest * lx, spinL[1] + Lrest * ly, spinL[2] + Lrest * lz]);
+  // A third or so of the disc starts as rock vapour (Canup 2004); it drags on
+  // the moonlets until it condenses, about a year. The spin axis just set is
+  // the impact's own, which is the plane the vapour turns in.
+  w.addVapour(T, 0.3 * disk, T.r, Math.max(rMax, 10 * T.r), 1);
   w.massChanged(T);
   w.structural();
   w.emit({ kind: 'merge', x: cx, y: cy, z: cz, size: T.r * 6, energy: 1, t: w.time,
     name: `Graze and merge — ${fmtMass(disk)} thrown into orbit` });
 }
 
-/** Inside the Roche limit of something much heavier: the body comes apart and its pieces follow their own orbits. */
+/** moment-of-inertia factor I / (m r²): centrally condensed worlds and stars sit below a uniform ball's 0.4 */
+function inertiaK(b: Body) { return b.cls === 'star' ? 0.08 : b.cls === 'gas' ? 0.25 : 0.33; }
+
+/** spin angular momentum as a vector along the body's pole, times `k` */
+export function spinVector(b: Body, k = 1): [number, number, number] {
+  const L = k * inertiaK(b) * b.m * b.r * b.r * b.spin;
+  const t = b.tilt, n = b.node;
+  return [L * Math.sin(t) * Math.sin(n), -L * Math.sin(t) * Math.cos(n), L * Math.cos(t)];
+}
+
+/** Give a body this spin angular momentum, no faster than it can turn without flying apart. */
+export function setSpin(b: Body, L: [number, number, number]) {
+  const n = Math.hypot(L[0], L[1], L[2]);
+  if (!(n > 0)) return;
+  const wMax = Math.sqrt(G * b.m / b.r ** 3);
+  b.spin = Math.min(wMax, n / (inertiaK(b) * b.m * b.r * b.r));
+  b.tilt = Math.acos(Math.max(-1, Math.min(1, L[2] / n)));
+  b.node = Math.atan2(L[0] / n, -L[1] / n);
+}
+
+/**
+ * Tides. Inside its Roche distance a body is pulled apart harder than its own
+ * gravity holds it, but how much it loses depends on how deep the pass goes,
+ * measured by the penetration factor β = r_t / r_p, where r_t = R (M/m)^⅓ is the
+ * tidal radius and r_p the closest approach. Fluid bodies (stars, giants, any
+ * world big enough to be round) start losing their outer layers at β ≈ 0.5
+ * and are destroyed outright past β ≈ 0.9 (Guillochon & Ramirez-Ruiz 2013);
+ * rubble piles hold on a little deeper.
+ *
+ * A pass is handled in two stages. Crossing the Roche distance only works out
+ * where this pass will do its damage. The body is torn at that point: the
+ * tidal radius for a full disruption, the periapsis for a partial one. That
+ * matters, because the spread in orbital energy across the body, which sets
+ * how long the debris stream is and how fast it falls back, is set where it
+ * comes apart: ΔE ≈ G M R / r².
+ */
 export function disrupt(w: World, b: Body, by: Body) {
   const rx = b.x - by.x, ry = b.y - by.y, rz = b.z - by.z;
   const vx = b.vx - by.vx, vy = b.vy - by.vy, vz = b.vz - by.vz;
-  const r2 = rx * rx + ry * ry + rz * rz;
+  const r2 = rx * rx + ry * ry + rz * rz, r = Math.sqrt(r2);
+  const mu = G * (by.m + b.m);
+  const hx = ry * vz - rz * vy, hy = rz * vx - rx * vz, hz = rx * vy - ry * vx;
+  const h2 = hx * hx + hy * hy + hz * hz;
+  const eps = (vx * vx + vy * vy + vz * vz) / 2 - mu / r;
+  const e = Math.sqrt(Math.max(0, 1 + (2 * eps * h2) / (mu * mu)));
+  const rp = Math.min(r, h2 / (mu * (1 + e)));
+  const fac = rocheFactor(b) || 2.44;
+  const rRoche = b.rocheK * Math.cbrt(by.m);
+  const rt = rRoche / fac;
+  const fluid = fac > 2;
+  const q = rp / rRoche;
+  const qFull = fluid ? 0.455 : 0.6, qOnset = fluid ? 0.85 : 0.95;
+  const x = Math.max(0, Math.min(1, (qOnset - q) / (qOnset - qFull)));
+  // A body that stays inside — a nearly circular orbit, apoapsis within the
+  // limit — has no way out: it overflows its Roche lobe every orbit and comes
+  // apart. One only passing through loses what lies beyond its Lagrange points.
+  const ra = eps < 0 ? h2 / (mu * Math.max(1e-9, 1 - e)) : Infinity;
+  const trapped = ra < rRoche;
+  const frac = q <= qFull || trapped ? 1 : 0.98 * x * x;
+  const full = frac > 0.7;
+
+  if (b.tidalHost !== by.id || b.tidalR <= 0) {
+    if (b.tidalHost === by.id) return; // this pass has already done its work
+    b.tidalHost = by.id;
+    b.tidalT = w.time;
+    if (frac < 0.01) { b.tidalR = 0; return; } // too shallow to lose anything
+    const rBreak = full ? (trapped ? r : Math.max(rt, rp * 1.02)) : rp * 1.05;
+    b.tidalR = rBreak;
+    if (r > rBreak) return;
+  }
+  b.tidalR = 0;
+  b.tidalT = w.time;
+
   // spin-locked: the pieces keep the angular rate the body had about its host
-  const omega: [number, number, number] = [(ry * vz - rz * vy) / r2, (rz * vx - rx * vz) / r2, (rx * vy - ry * vx) / r2];
+  const omega: [number, number, number] = [hx / r2, hy / r2, hz / r2];
   const gas = b.cls === 'star' || b.cls === 'gas';
   const color = b.cls === 'star' ? 0xffc080 : b.cls === 'gas' ? 0xd8b890 : b.cls === 'ice' ? 0xc8d8e8 : 0x9a8070;
-  spawnFragments(w, { mass: b.m, n: b.cls === 'star' ? 900 : b.cls === 'gas' ? 600 : b.cls === 'debris' ? 60 : b.r > 200 * KM ? 1200 : 400, cls: gas ? 'gasp' : 'debris',
-    x: b.x, y: b.y, z: b.z, vx: b.vx, vy: b.vy, vz: b.vz, rIn: 0, rOut: b.r, vMin: 0, vMax: 0,
-    heat: gas ? 0.9 : 0.3, color, omega, rho: b.cls === 'debris' ? b.dens : b.density });
-  w.kill(b);
-  w.structural();
-  w.emit({ kind: 'disrupt', x: b.x, y: b.y, z: b.z, size: b.r * 4, energy: 0.6, t: w.time, body: by, name: `${b.name} was torn apart by ${by.name}` });
+  const rho = b.cls === 'debris' ? b.dens : b.density;
+  const big = by.cls === 'bh' && by.m > 1e3;
+
+  if (full) {
+    spawnFragments(w, { mass: b.m, n: b.cls === 'star' ? (big ? 1500 : 900) : b.cls === 'gas' ? 800 : b.cls === 'debris' && !b.source ? 60 : b.r > 200 * KM ? 1200 : 400, cls: gas ? 'gasp' : 'debris',
+      x: b.x, y: b.y, z: b.z, vx: b.vx, vy: b.vy, vz: b.vz, rIn: 0, rOut: b.r, vMin: 0, vMax: 0,
+      heat: gas ? 0.9 : 0.5, color, omega, rho });
+    w.kill(b);
+    w.structural();
+    const beta = rt / rp;
+    w.emit({ kind: 'disrupt', x: b.x, y: b.y, z: b.z, size: b.r * 4, energy: 0.6, t: w.time, body: by,
+      name: `${b.name} was torn apart by ${by.name}${beta > 1.5 ? ` (β = ${beta.toFixed(1)})` : ''}` });
+    return;
+  }
+
+  // Partial: the layers beyond its inner and outer Lagrange points are pulled
+  // off on both sides, the near side into a tail that leads, more tightly bound
+  // than the body, and the far side into one that trails, less bound.
+  const dm = frac * b.m;
+  const ux = rx / r, uy = ry / r, uz = rz / r;
+  // what is left must not be touching what it lost, or it would sweep it straight back up
+  const solid = b.cls === 'rock' || b.cls === 'ice' || b.cls === 'debris';
+  const rNew = solid ? radiusFromDensity(b.m - dm, rho) : b.r;
+  const rL = Math.max(1.08 * rNew, r * Math.cbrt(b.m / (3 * by.m)));
+  const made = spawnFragments(w, { mass: dm, n: Math.max(40, Math.min(600, Math.round(frac * 1500))), cls: gas ? 'gasp' : 'debris',
+    x: b.x, y: b.y, z: b.z, vx: b.vx, vy: b.vy, vz: b.vz, rIn: rL, rOut: rL * 1.25, vMin: 0, vMax: 0,
+    heat: gas ? 0.8 : 0.5, color, omega, rho, recoil: b, bipolar: [ux, uy, uz] });
+  const lost = made.reduce((t, p) => t + p.m, 0);
+  if (lost <= 0) return;
+  b.m -= lost;
+  // a rocky world keeps its density; a giant or a star swells a little as it is
+  // unloaded, so it is drawn no smaller
+  if (solid) b.r = radiusFromDensity(b.m, rho);
+  b.heat = Math.min(1, b.heat + frac * 2);
+  refreshRoche(b);
+  w.massChanged(b);
+  w.emit({ kind: 'strip', x: b.x, y: b.y, z: b.z, size: b.r * 3, energy: Math.min(1, frac * 3), t: w.time, body: b,
+    name: `${by.name}'s tides stripped ${Math.round(frac * 100)}% of ${b.name}` });
+}
+
+/** A tidal pass is over once the body is well clear, or has gone once round inside. */
+export function tidalReset(w: World, b: Body) {
+  const by = w.sources.find(s => s.id === b.tidalHost);
+  if (!by || !by.alive) { b.tidalHost = 0; b.tidalR = 0; return; }
+  const r = Math.hypot(b.x - by.x, b.y - by.y, b.z - by.z);
+  const rRoche = b.rocheK * Math.cbrt(by.m);
+  const period = 2 * Math.PI * Math.sqrt(r ** 3 / (G * (by.m + b.m)));
+  if (r > 1.15 * rRoche || (b.tidalR === 0 && w.time - b.tidalT > period)) { b.tidalHost = 0; b.tidalR = 0; }
 }
 
 const VSN = 5000 * KMS, VIA = 10000 * KMS;
@@ -584,4 +759,21 @@ export function cometActivity(w: World, c: Body, stars: Body[], dt: number) {
   spawnFragments(w, { mass: lose, n: Math.min(n, 40), cls: 'gasp', x: c.x, y: c.y, z: c.z, vx: c.vx, vy: c.vy, vz: c.vz,
     rIn: c.r, rOut: c.r * 2, vMin: 0.3 * ve, vMax: ve, heat: 0.2, color: 0x90c8ff, beta: 0.9 + 0.8 * rnd(),
     bias: [-sx, -sy, -sz], biasK: 1.2 });
+}
+
+/**
+ * Shatter a body outright: a catastrophic disruption, its pieces leaving at a
+ * little over its escape speed. Heavy enough pieces keep their own gravity,
+ * so what is left can gather again into a rubble pile.
+ */
+export function shatterBody(w: World, b: Body) {
+  const vesc = Math.sqrt(2 * G * b.m / Math.max(b.r, 1e-12));
+  const gas = b.cls === 'gas';
+  const heavy = !gas && b.m > 1e-12;
+  const color = gas ? 0xd8b890 : b.cls === 'ice' ? 0xc8d8e8 : b.look.c2;
+  spawnFragments(w, { mass: b.m, n: heavy ? 40 : 500, source: heavy, cls: gas ? 'gasp' : 'debris', x: b.x, y: b.y, z: b.z, vx: b.vx, vy: b.vy, vz: b.vz,
+    rIn: b.r * 0.4, rOut: b.r * 1.6, vMin: 0.7 * vesc, vMax: 1.6 * vesc, heat: 1, color, rho: b.cls === 'debris' ? b.dens : b.density });
+  w.kill(b);
+  w.structural();
+  w.emit({ kind: 'impact', x: b.x, y: b.y, z: b.z, size: b.r * 6, energy: 1, t: w.time, body: b, name: `${b.name} was shattered` });
 }

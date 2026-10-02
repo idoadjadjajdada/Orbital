@@ -288,12 +288,21 @@ export class Hermite {
         f += fG;
         g += -4 * rv * inv2 * fG;
       }
+      let prx = 0, pry = 0, prz = 0;
       if (beta > 0 && s.star && s.star.L > 0) {
         const fR = beta * G * s.star.L * inv3;
         f -= fR;
         g -= -3 * rv * inv2 * fR;
+        // Poynting–Robertson drag: the light is aberrated by the grain's own
+        // motion, a drag of order v/c that makes dust spiral into its star
+        // (βGL / r²c)(−ṙ r̂ − v): with d = star − grain and dv = v_star − v_grain,
+        // ṙ = d·dv / r and this is (βGL / r³c)(ṙ d + r dv)
+        const k = fR / C, rdot = rv * inv, r = 1 / inv;
+        prx = k * (rdot * dx + r * dvx);
+        pry = k * (rdot * dy + r * dvy);
+        prz = k * (rdot * dz + r * dvz);
       }
-      ax += f * dx; ay += f * dy; az += f * dz;
+      ax += f * dx + prx; ay += f * dy + pry; az += f * dz + prz;
       jx += f * dvx + g * dx; jy += f * dvy + g * dy; jz += f * dvz + g * dz;
 
       if (gwB && s.compact && v2 > 0) {
@@ -334,7 +343,9 @@ export class Hermite {
             if (d2 < rc * rc && this.contact(b, s)) break;
           }
           if (rocheK > 0 && ms > 10 * mi) {
-            const rr = rocheK * Math.cbrt(ms);
+            // first the Roche distance, where tides start to win; once a pass is
+            // under way, the distance at which this pass actually tears it
+            const rr = b.tidalHost === s.id ? b.tidalR : rocheK * Math.cbrt(ms);
             if (r2 < rr * rr) this.hits.push({ a: b, b: s, kind: 'roche' });
           }
         }

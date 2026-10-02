@@ -1,7 +1,7 @@
 import type { App, P3 } from '../app';
 import type { Body } from '../physics/body';
 
-type Mode = 'none' | 'pan' | 'press-body' | 'grab' | 'aim' | 'touch2';
+type Mode = 'none' | 'pan' | 'press-body' | 'grab' | 'aim' | 'touch2' | 'ruler' | 'push' | 'bombard' | 'erase';
 
 /**
  * Pointer and keyboard for a flat, top-down view. One finger or the left
@@ -82,6 +82,7 @@ export class Input {
     this.last = { ...p };
     if (e.button === 1 || e.button === 2) { this.mode = 'pan'; return; }
     const hit = this.app.view.pick(p.x, p.y);
+    if (this.app.tool !== 'hand' && this.toolDown(p, hit)) return;
     if (hit) { this.mode = 'press-body'; this.pressBody = hit; return; }
     if (this.app.armed) {
       this.mode = 'aim';
@@ -104,6 +105,10 @@ export class Input {
     this.last = { ...p };
     const moved = Math.hypot(p.x - this.start.x, p.y - this.start.y);
     switch (this.mode) {
+      case 'ruler': if (this.app.ruler) this.app.ruler.b = this.app.view.pick(p.x, p.y) ?? this.app.view.unproject(p.x, p.y); break;
+      case 'push': this.pushMove(p); break;
+      case 'erase': this.app.brush = { ...p }; this.app.eraseAt(p.x, p.y, 14); break;
+      case 'bombard': break;
       case 'touch2': this.pinchMove(); break;
       case 'pan': this.panBy(dx, dy); break;
       case 'press-body': if (moved > 6 && this.pressBody) this.grab(this.pressBody, p.x, p.y); break;
@@ -131,6 +136,10 @@ export class Input {
     }
     const moved = Math.hypot(this.last.x - this.start.x, this.last.y - this.start.y);
     switch (this.mode) {
+      case 'ruler': if (moved < 6 && !this.pressBody) this.app.ruler = null; break;
+      case 'push': if (moved >= 6) this.app.applyPush(); else { this.app.push = null; this.app.view.setAim(null, null); } break;
+      case 'bombard': this.app.bombard = null; break;
+      case 'erase': this.app.brush = null; break;
       case 'press-body': {
         const b = this.pressBody;
         const now = performance.now(), lt = this.lastTap;
@@ -161,6 +170,53 @@ export class Input {
     }
     this.mode = 'none';
     this.pressBody = null;
+  }
+
+  /** The pointer went down with a tool other than the hand. Returns true if the tool took it. */
+  private toolDown(p: { x: number; y: number }, hit: Body | null): boolean {
+    const app = this.app;
+    switch (app.tool) {
+      case 'ruler':
+        this.mode = 'ruler';
+        this.pressBody = hit;
+        app.ruler = { a: hit ?? app.view.unproject(p.x, p.y), b: hit ?? app.view.unproject(p.x, p.y) };
+        return true;
+      case 'push': {
+        const b = hit ?? app.selected;
+        if (!b) { app.onToast('Push: press on a body and drag the way you want it to go'); return true; }
+        app.select(b);
+        this.mode = 'push';
+        app.push = { b, dv: { x: 0, y: 0, z: 0 } };
+        return true;
+      }
+      case 'bombard': {
+        const t = hit ?? app.hostAt(app.view.unproject(p.x, p.y));
+        if (!t) return true;
+        app.remember(`bombarding ${t.name}`);
+        app.select(t);
+        this.mode = 'bombard';
+        app.bombard = { target: t, acc: 0 };
+        return true;
+      }
+      case 'erase':
+        app.remember('erasing');
+        this.mode = 'erase';
+        app.brush = { ...p };
+        app.eraseAt(p.x, p.y, 14);
+        return true;
+    }
+    return false;
+  }
+
+  private pushMove(p: { x: number; y: number }) {
+    const pu = this.app.push;
+    if (!pu) return;
+    // 60 CSS px of drag is the body's whole orbital speed; small drags are fine adjustments
+    const k = this.app.pushScale(pu.b);
+    const dx = (p.x - this.start.x) / 60, dy = -(p.y - this.start.y) / 60;
+    pu.dv = { x: dx * k, y: dy * k, z: 0 };
+    const now = performance.now();
+    if (now - this.lastAim > 45) { this.lastAim = now; this.app.previewPush(pu.b, pu.dv); }
   }
 
   private cancelAim() { this.aimStart = null; this.aimVel = null; this.app.aim(null, null, null); }
@@ -227,12 +283,20 @@ export class Input {
       case 'Minus': case 'NumpadSubtract': this.zoomAt(1 / 1.4, this.canvas.clientWidth / 2, this.canvas.clientHeight / 2); break;
       case 'KeyT': app.flags.trails = !app.flags.trails; break;
       case 'KeyO': app.flags.orbits = !app.flags.orbits; break;
-      case 'KeyZ': app.flags.zones = !app.flags.zones; break;
       case 'KeyL': app.flags.labels = !app.flags.labels; break;
       case 'KeyA': app.flags.auto = !app.flags.auto; break;
       case 'KeyF': app.follow(app.selected ?? null); break;
       case 'KeyC': app.clear(); break;
-      case 'Escape': app.select(null); app.armed = null; this.cancelAim(); break;
+      case 'Escape': app.select(null); app.armed = null; app.tool = 'hand'; app.ruler = null; this.cancelAim(); break;
+      case 'KeyZ':
+        if (e.metaKey || e.ctrlKey) { e.preventDefault(); app.undo(); break; }
+        app.flags.zones = !app.flags.zones; break;
+      case 'KeyH': app.tool = 'hand'; break;
+      case 'KeyR': app.tool = app.tool === 'ruler' ? 'hand' : 'ruler'; break;
+      case 'KeyP': app.tool = app.tool === 'push' ? 'hand' : 'push'; break;
+      case 'KeyM': app.tool = app.tool === 'bombard' ? 'hand' : 'bombard'; break;
+      case 'KeyE': app.tool = app.tool === 'erase' ? 'hand' : 'erase'; break;
+      case 'KeyB': app.openBuilder(); break;
       case 'Delete': case 'Backspace': app.deleteSelected(); break;
       default: return;
     }

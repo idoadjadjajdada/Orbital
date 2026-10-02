@@ -1,6 +1,10 @@
-import { iconOf, type App, type Flag } from '../app';
-import type { Style } from '../physics/body';
-import { CATALOG, SHELVES, type Shelf } from '../physics/catalog';
+import { iconOf, type App, type Flag, type Tool } from '../app';
+import { Builder } from './builder';
+import { buildCustom } from '../physics/custom';
+import { bakeShaped, drawCells } from '../pixel/shaped';
+import { GRID } from '../physics/materials';
+import type { Body } from '../physics/body';
+import { CATALOG, SHELVES, makeBody, type Shelf } from '../physics/catalog';
 import { PRESETS } from '../physics/presets';
 import { osculating, relative, norm } from '../physics/orbit';
 import { fmtMass, fmtLength, fmtDuration, sig, KMS, M_EARTH, M_JUP, densityOf } from '../physics/units';
@@ -13,11 +17,27 @@ const KIND: Record<string, string> = {
 };
 const PHASE: Record<string, string> = { proto: 'pre-main-sequence', ms: 'main sequence', giant: 'giant branch', agb: 'asymptotic giant branch', remnant: 'remnant' };
 
+/** a body's icon: its drawn outline if it holds one, otherwise the round sprite */
+function shapedIcon(b: Body): string {
+  if (b.shape && !b.shape.packed && b.shape.roundGoal < 0.95) {
+    let ext = 1;
+    for (const v of b.shape.outline) ext = Math.max(ext, v);
+    const sp = bakeShaped(b.shape, Math.round(40 / ext), 0.4, [-0.6, 0.5, 0.65], [1.1, 1.08, 1.04], 0);
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = sp.size;
+    cv.getContext('2d')!.putImageData(new ImageData(sp.data, sp.size, sp.size), 0, 0);
+    return cv.toDataURL();
+  }
+  return iconOf(b);
+}
+
 export class Hud {
   private shelf: Shelf = 'Worlds';
   private icons = new Map<string, string>();
   private lastInspect = 0;
   private toastBox = $('toasts');
+  builder!: Builder;
+  private ownIcon: { key: string; url: string } | null = null;
 
   constructor(private app: App) {
     for (const e of CATALOG) {
@@ -25,14 +45,23 @@ export class Hud {
         star: e.cls === 'star' ? { m0: e.m, age: 0, phase: e.key === 'redgiant' || e.key === 'supergiant' || e.key === 'hypergiant' ? 'giant' as const : 'ms' as const, L: 1,
           teff: ({ protostar: 4300, reddwarf: 3200, kdwarf: 4500, sun: 5772, fstar: 6600, astar: 9900, bstar: 15000, ostar: 38000, bluesg: 12000,
             redgiant: 3400, supergiant: 3600, hypergiant: 3500, lbv: 25000 } as Record<string, number>)[e.key] ?? 5772, coreM: 0 } : undefined };
-      this.icons.set(e.key, iconOf(b));
+      this.icons.set(e.key, e.shape ? shapedIcon(makeBody(e.key, 7)) : iconOf(b));
     }
     this.buildPresets();
     this.buildShelves();
     this.buildToggles();
     this.buildInspector();
-    this.buildForge();
+    this.builder = new Builder(app, () => { this.updateForge(); this.arm('custom'); });
     this.buildClock();
+    this.buildTools();
+    this.buildFind();
+    app.openBuilder = () => this.builder.open();
+    $('undoBtn').onclick = () => app.undo();
+    app.onUndo = label => {
+      const b = $<HTMLButtonElement>('undoBtn');
+      b.disabled = !label;
+      b.title = label ? `Undo ${label} (Ctrl/⌘ Z)` : 'Nothing to undo';
+    };
     $('helpBtn').onclick = () => { $('help').hidden = !$('help').hidden; };
     $('hClose').onclick = () => { $('help').hidden = true; };
     $('clear').onclick = () => app.clear();
@@ -47,6 +76,50 @@ export class Hud {
         const c = list[n - 1];
         if (c) this.arm(app.armed === c.key ? null : c.key);
       }
+    });
+  }
+
+  private static HINT: Record<string, string> = {
+    hand: 'Move: tap to select, drag a body to carry it, drag space to look around.',
+    ruler: 'Ruler: drag between two points; start or end on a body to measure from it as it moves.',
+    push: 'Push: press on a body and drag — a full-length drag is its whole orbital speed. The dotted line is the new path.',
+    bombard: 'Bombard: press and hold on a world to rain small rocks on it. Watch the craters build up, or the scars on a giant.',
+    erase: 'Erase: rub over bodies and debris to remove them.',
+  };
+
+  private buildTools() {
+    for (const el of document.querySelectorAll<HTMLElement>('[data-tool]')) {
+      el.onclick = () => {
+        const t = el.dataset.tool as Tool;
+        this.app.tool = t;
+        if (t !== 'ruler') this.app.ruler = null;
+        this.toast(Hud.HINT[t]);
+        this.sync();
+      };
+    }
+  }
+
+  private buildFind() {
+    const menu = $('findMenu'), q = $<HTMLInputElement>('findQ'), list = $('findList');
+    const fill = () => {
+      const s = q.value.trim().toLowerCase();
+      const hits = this.app.world.sources.concat(this.app.visual.filter(b => !b.source))
+        .filter((b, i, a) => b.alive && a.indexOf(b) === i && b.name !== 'debris' && b.name !== 'moonlet' && (!s || b.name.toLowerCase().includes(s)))
+        .sort((a, b) => b.m - a.m).slice(0, 40);
+      list.innerHTML = '';
+      for (const b of hits) {
+        const el = document.createElement('button');
+        el.innerHTML = `<b>${b.name}</b><span>${KIND[b.cls] ?? ''}</span>`;
+        el.onclick = () => { this.app.select(b); this.app.follow(b); menu.hidden = true; };
+        list.appendChild(el);
+      }
+      if (!hits.length) list.innerHTML = '<div class="mgroup">Nothing by that name</div>';
+    };
+    q.oninput = fill;
+    q.onkeydown = e => { if (e.key === 'Enter') (list.querySelector('button') as HTMLElement | null)?.click(); if (e.key === 'Escape') menu.hidden = true; };
+    $('findBtn').onclick = () => { menu.hidden = !menu.hidden; $('presetMenu').hidden = true; if (!menu.hidden) { q.value = ''; fill(); q.focus(); } };
+    document.addEventListener('pointerdown', e => {
+      if (!menu.hidden && !menu.contains(e.target as Node) && e.target !== $('findBtn')) menu.hidden = true;
     });
   }
 
@@ -104,8 +177,9 @@ export class Hud {
     const f = document.createElement('div');
     f.className = 'card';
     f.dataset.key = 'custom';
-    f.innerHTML = `<img src="${this.forgeIcon()}" alt=""><span>Forge…</span><kbd>&nbsp;</kbd>`;
-    f.onclick = () => { $('forge').hidden = false; this.updateForge(); };
+    f.innerHTML = `<img src="${this.forgeIcon()}" alt=""><span>Build…</span><kbd>B</kbd>`;
+    f.title = 'Draw your own world from materials, or set up a star';
+    f.onclick = () => this.builder.open();
     box.appendChild(f);
     this.syncCards();
   }
@@ -119,6 +193,7 @@ export class Hud {
     if (key) {
       const e = CATALOG.find(c => c.key === key);
       if (e) this.toast(`${e.name}: ${e.blurb} Drag from space to throw it, tap to place it.`);
+      else if (key === 'custom') this.toast(`${this.app.custom.name || 'Your body'} is ready: drag from space to throw it, tap to place it.`);
     }
   }
 
@@ -136,6 +211,7 @@ export class Hud {
 
   sync() {
     for (const el of document.querySelectorAll<HTMLElement>('.tog')) el.classList.toggle('on', this.app.flags[el.dataset.flag as Flag]);
+    for (const el of document.querySelectorAll<HTMLElement>('[data-tool]')) el.classList.toggle('on', el.dataset.tool === this.app.tool);
     $<HTMLInputElement>('warp').value = String(this.app.warpLog);
     $('pause').textContent = this.app.paused ? '▶' : '❚❚';
     this.syncCards();
@@ -149,6 +225,10 @@ export class Hud {
       this.inspect(true);
     };
     $('iDelete').onclick = () => this.app.deleteSelected();
+    $('iCirc').onclick = () => { if (this.app.selected) this.app.circularize(this.app.selected); };
+    $('iRev').onclick = () => { if (this.app.selected) this.app.reverse(this.app.selected); };
+    $('iShatter').onclick = () => { if (this.app.selected) this.app.shatter(this.app.selected); };
+    for (const el of document.querySelectorAll<HTMLElement>('[data-proj]')) el.onclick = () => { this.proj = el.dataset.proj as 'flat' | 'moll' | 'cut'; this.inspect(true); };
   }
 
   private inspect(force = false) {
@@ -159,14 +239,19 @@ export class Hud {
     const box = $('inspector');
     if (!b || !b.alive) { box.hidden = true; return; }
     box.hidden = false;
-    const icon = this.icons.get(b.kind) ?? this.icons.get(b.cls === 'star' ? 'sun' : b.cls === 'bh' ? 'bh' : b.cls === 'debris' ? 'asteroid' : 'terran');
+    let icon = this.icons.get(b.kind) ?? this.icons.get(b.cls === 'star' ? 'sun' : b.cls === 'bh' ? 'bh' : b.cls === 'debris' ? 'asteroid' : 'terran');
+    if (b.kind === 'custom' && b.cls !== 'star') {
+      const key = `${b.id}|${Math.round((b.shape?.round ?? 1) * 10)}|${b.shape?.packed}`;
+      if (this.ownIcon?.key !== key) this.ownIcon = { key, url: shapedIcon(b) };
+      icon = this.ownIcon.url;
+    }
     $<HTMLImageElement>('iIcon').src = icon ?? '';
     $('iName').textContent = b.name;
     let kind = KIND[b.cls] ?? b.cls;
     if (b.star && b.cls === 'star') kind += ` · ${PHASE[b.star.phase]}`;
     $('iKind').textContent = kind;
     const rows: [string, string][] = [];
-    rows.push(['Mass', `${fmtMass(b.m)}${b.m < 0.08 && b.m > 1e-3 * M_EARTH ? ` · ${sig(b.m / (b.m > 0.05 * M_JUP ? M_EARTH : M_JUP))} ${b.m > 0.05 * M_JUP ? 'M⊕' : 'M♃'}` : ''}`]);
+    rows.push(['Mass', `${fmtMass(b.m)}${b.m < 0.08 && b.m >= 0.05 * M_JUP ? ` · ${sig(b.m / M_EARTH)} M⊕` : ''}`]);
     rows.push([b.cls === 'bh' ? 'Horizon' : 'Radius', fmtLength(b.r, b.cls === 'star')]);
     if (b.cls !== 'bh') rows.push(['Density', `${sig(densityOf(b.m, b.r))} g/cm³`]);
     const host = this.app.hostOf(b);
@@ -204,6 +289,7 @@ export class Hud {
     }
     if (b.sizeGuess) rows.push(['Note', 'mass estimated, not measured']);
     if (!b.source && !b.isParticle) rows.push(['Gravity', 'too small to pull on others']);
+    this.drawMap(b);
     const dl = $('iStats');
     dl.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
     for (const a of dl.querySelectorAll<HTMLElement>('a[data-id]')) {
@@ -214,49 +300,99 @@ export class Hud {
     $('iFollow').classList.toggle('on', this.app.focus === b);
   }
 
-  // ---- forge ----
-  private buildForge() {
-    const c = this.app.custom;
-    const style = $<HTMLSelectElement>('fStyle'), mass = $<HTMLInputElement>('fMass'), rho = $<HTMLInputElement>('fRho');
-    const c1 = $<HTMLInputElement>('fC1'), c2 = $<HTMLInputElement>('fC2');
-    const defaults: Partial<Record<Style, [number, number, number]>> = {
-      terran: [0x1d4f8c, 0x4f8a3c, 5.5], rocky: [0x6a5a48, 0x9aa070, 5.0], barren: [0x5d5a57, 0xb8b2a8, 3.3], desert: [0x8a3e1c, 0xd08a52, 4.0],
-      ocean: [0x0c3a78, 0x2a7cc0, 3.0], ice: [0x6a9cc0, 0xeaf6ff, 1.8], lava: [0x1c0e0c, 0xff6a1a, 5.0], iron: [0x403c3a, 0x8a8480, 8.0],
-      carbon: [0x15141a, 0x4a4450, 4.5], gas: [0xb08860, 0xf0e0c8, 1.3], icegiant: [0x2a50c0, 0x6aa0f0, 1.6], star: [0, 0, 1.4],
-    };
-    const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`;
-    style.onchange = () => {
-      c.style = style.value as Style;
-      const d = defaults[c.style];
-      if (d) { c.c1 = d[0]; c.c2 = d[1]; c.rho = d[2]; c1.value = hex(d[0]); c2.value = hex(d[1]); rho.value = String(d[2]); }
-      if (c.style === 'gas') { c.massLog = 2.5; mass.value = '2.5'; }
-      if (c.style === 'icegiant') { c.massLog = 1.2; mass.value = '1.2'; }
-      this.updateForge();
-    };
-    mass.oninput = () => { c.massLog = Number(mass.value); this.updateForge(); };
-    rho.oninput = () => { c.rho = Number(rho.value); this.updateForge(); };
-    c1.oninput = () => { c.c1 = parseInt(c1.value.slice(1), 16); this.updateForge(); };
-    c2.oninput = () => { c.c2 = parseInt(c2.value.slice(1), 16); this.updateForge(); };
-    $('fSeed').onclick = () => { c.seed = Math.floor(Math.random() * 1e6); this.updateForge(); };
-    $('fUse').onclick = () => { this.arm('custom'); $('forge').hidden = true; this.toast('Custom body ready: drag from space to throw it.'); };
-    $('fClose').onclick = () => { $('forge').hidden = true; };
+  // ---- the inspector's map ----
+  private proj: 'flat' | 'moll' | 'cut' = 'flat';
+
+  /**
+   * The selected world unrolled: an equirectangular map (or Mollweide's
+   * equal-area globe) of its surface as it is now, craters included, with the
+   * night side dark. A hand-drawn body can also be cut open to show what it
+   * was built from.
+   */
+  private drawMap(b: Body) {
+    const box = $('iMapBox');
+    const surf = this.app.view.surfaceOf(b, this.app.world.sources);
+    const canCut = !!b.shape;
+    if (!surf && !canCut) { box.hidden = true; return; }
+    box.hidden = false;
+    $('iCut').hidden = !canCut;
+    if (this.proj === 'cut' && !canCut) this.proj = 'flat';
+    if (!surf && this.proj !== 'cut') this.proj = 'cut';
+    for (const el of document.querySelectorAll<HTMLElement>('[data-proj]')) el.classList.toggle('on', el.dataset.proj === this.proj);
+    const cv = $<HTMLCanvasElement>('iMap');
+    const ctx = cv.getContext('2d')!;
+    if (this.proj === 'cut' && b.shape) {
+      $('iMapT').textContent = b.shape.packed ? 'Cross-section, settled' : 'Cross-section';
+      cv.width = cv.height = GRID * 2;
+      cv.style.aspectRatio = '1 / 1';
+      cv.style.width = '50%';
+      cv.style.alignSelf = 'center';
+      drawCells(ctx, b.shape.cells, 2, b.shape.marks);
+      return;
+    }
+    cv.style.aspectRatio = '2 / 1';
+    cv.style.width = '100%';
+    if (!surf) return;
+    $('iMapT').textContent = b.craters.length ? `Surface · ${b.craters.length} ${b.cls === 'gas' ? 'scars' : 'craters'}` : 'Surface';
+    const { map, frame, L } = surf;
+    const W = map.w, H = map.h;
+    if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+    const img = ctx.createImageData(W, H);
+    // the light in the body's own frame
+    let Ll: number[] | null = null;
+    if (L) {
+      const n = Math.hypot(L[0], L[1], L[2]) || 1;
+      const l = [L[0] / n, L[1] / n, L[2] / n];
+      Ll = frame.map(e => e[0] * l[0] + e[1] * l[1] + e[2] * l[2]);
+    }
+    const moll = this.proj === 'moll';
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        let lat: number, lon: number;
+        if (moll) {
+          // inverse Mollweide: the ellipse fills the canvas
+          const X = ((x + 0.5) / W * 2 - 1) * 2 * Math.SQRT2, Y = (1 - (y + 0.5) / H * 2) * Math.SQRT2;
+          if ((X * X) / 8 + (Y * Y) / 2 > 1) continue;
+          const th = Math.asin(Y / Math.SQRT2);
+          lat = Math.asin((2 * th + Math.sin(2 * th)) / Math.PI);
+          lon = Math.PI + (Math.PI * X) / (2 * Math.SQRT2 * Math.cos(th));
+        } else {
+          lat = (0.5 - (y + 0.5) / H) * Math.PI;
+          lon = ((x + 0.5) / W) * 2 * Math.PI;
+        }
+        // the map is stored south to north
+        const j = Math.min(H - 1, Math.max(0, Math.floor((lat / Math.PI + 0.5) * H)));
+        const i = Math.min(W - 1, Math.max(0, Math.floor((((lon / (2 * Math.PI)) % 1) + 1) % 1 * W)));
+        const k = j * W + i;
+        let r = map.rgb[k * 3], g = map.rgb[k * 3 + 1], bl = map.rgb[k * 3 + 2];
+        const e = map.emit[k] + (b.heat > 0.3 ? b.heat * 0.6 : 0);
+        if (Ll) {
+          const nx = Math.cos(lat) * Math.cos(lon), ny = Math.cos(lat) * Math.sin(lon), nz = Math.sin(lat);
+          const mu = nx * Ll[0] + ny * Ll[1] + nz * Ll[2];
+          const lit = mu > 0.04 ? 1 : mu > -0.04 ? 0.6 : 0.3;
+          r *= lit; g *= lit; bl *= lit;
+        }
+        if (e > 0) { r = Math.max(r, e); g = Math.max(g, e * 0.45); bl = Math.max(bl, e * 0.12); }
+        const o = (y * W + x) * 4;
+        img.data[o] = r * 255; img.data[o + 1] = g * 255; img.data[o + 2] = bl * 255; img.data[o + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
   }
 
+  // ---- builder ----
   private forgeIcon() {
     const c = this.app.custom;
-    if (c.style === 'star') return iconOf({ look: { style: 'star', seed: c.seed, c1: 0, c2: 0 }, heat: 0, cls: 'star', tilt: 0, star: { m0: 1, age: 0, phase: 'ms', L: 1, teff: 5772 * Math.pow(this.app.customStarMass(), 0.55), coreM: 0 } });
-    return iconOf({ look: { style: c.style, seed: c.seed, c1: c.c1, c2: c.c2, atmo: c.style === 'terran' || c.style === 'ocean' ? 0x7ab0ff : undefined }, heat: c.style === 'lava' ? 0.8 : 0, cls: 'rock', tilt: 0.3 });
+    const b = buildCustom(c);
+    if (!b) return this.icons.get('asteroid') ?? '';
+    return shapedIcon(b);
   }
 
   private updateForge() {
-    const c = this.app.custom;
-    $<HTMLImageElement>('fPrev').src = this.forgeIcon();
-    const star = c.style === 'star';
-    $('fMassV').textContent = star ? `${sig(this.app.customStarMass())} M☉` : fmtMass(Math.pow(10, c.massLog) * M_EARTH);
-    $('fRhoV').textContent = star ? 'set by the star' : `${sig(c.rho)} g/cm³`;
-    $<HTMLInputElement>('fRho').disabled = star;
     const card = document.querySelector<HTMLImageElement>('.card[data-key="custom"] img');
-    if (card) card.src = $<HTMLImageElement>('fPrev').src;
+    if (card) card.src = this.forgeIcon();
+    const name = document.querySelector<HTMLElement>('.card[data-key="custom"] span');
+    if (name) name.textContent = this.app.custom.name || 'Custom';
   }
 
   toast(msg: string) {
@@ -281,6 +417,11 @@ export class Hud {
     for (const el of document.querySelectorAll<HTMLElement>('.tog')) el.classList.toggle('on', a.flags[el.dataset.flag as Flag]);
     const n = a.world.sources.length, p = a.world.particleCount;
     $('stats').textContent = `${n} bodies · ${p} particles`;
+    const rt = a.rulerText();
+    const rb = $('rulerBox');
+    rb.hidden = !rt;
+    if (rt && rb.textContent !== rt) rb.textContent = rt;
+    for (const el of document.querySelectorAll<HTMLElement>('[data-tool]')) el.classList.toggle('on', el.dataset.tool === a.tool);
     this.inspect();
   }
 }

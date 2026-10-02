@@ -1,4 +1,5 @@
 import { schwarzschild, densityOf } from './units';
+import type { Shape } from './materials';
 
 /** What a body is made of — this decides how it collides, tears and evolves. */
 export type Cls =
@@ -85,12 +86,19 @@ export class Body {
   hostId = 0;        // cached orbital host (analysis.ts), 0 = none
   /** Roche distance from a source of mass M is rocheK · ∛M; 0 = cannot be torn apart */
   rocheK = 0;
+  /** a tidal pass under way: the source it is passing, the distance at which it
+   *  comes apart on this pass (0 = already dealt with), and when it began */
+  tidalHost = 0;
+  tidalR = 0;
+  tidalT = 0;
   /** for fragments and particles: the bulk density (g/cm³) of what they came from */
   dens = 3;
   /** mass is an estimate from an assumed size and density, not a measurement */
   sizeGuess = false;
   /** craters, in the body's own rotating frame: unit direction, angular radius (rad), sim time made */
   craters: { x: number; y: number; z: number; a: number; t: number }[] = [];
+  /** a hand-drawn body: its outline and what it is made of, while it holds a shape */
+  shape?: Shape;
   /** compact objects: mass swallowed since the renderer last looked, and the angular momentum it brought */
   swallowed = 0;
   lx = 0; ly = 0; lz = 0;

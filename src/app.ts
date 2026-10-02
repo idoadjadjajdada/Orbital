@@ -2,17 +2,25 @@ import { World } from './physics/world';
 import type { Body, Look, Cls, StarState } from './physics/body';
 import { assignHosts, hostOfPoint } from './physics/analysis';
 import { buildPreset, PRESETS } from './physics/presets';
-import { makeBody, refreshRoche } from './physics/catalog';
-import { G, M_EARTH, radiusFromDensity } from './physics/units';
+import { makeBody, ENTRY } from './physics/catalog';
+import { addTorus } from './physics/disks';
+import { SHAPES } from './physics/materials';
+import { buildCustom } from './physics/custom';
+import { G, KMS, GCC, fmtLength, sig, schwarzschild } from './physics/units';
+import { takeSnapshot, restoreSnapshot, type Snapshot } from './physics/snapshot';
+import { shatterBody } from './physics/events';
+import { Body as BodyClass } from './physics/body';
 import { predict } from './physics/predict';
-import { newStar, structure, teffOf } from './physics/stellar';
-import { Body as BodyClass, type Style } from './physics/body';
 import { Renderer, PIX } from './pixel/renderer';
 import { bakeSprite } from './pixel/sprites';
 import { buildMap } from './pixel/surface';
 
 export type Flag = 'trails' | 'orbits' | 'zones' | 'labels' | 'auto';
-export interface CustomSpec { style: Style; massLog: number; rho: number; c1: number; c2: number; seed: number; }
+export type Tool = 'hand' | 'ruler' | 'push' | 'bombard' | 'erase';
+/** an end of the ruler: a fixed point, or a body it follows */
+export type End = P3 | Body;
+export type { CustomSpec } from './physics/custom';
+import type { CustomSpec } from './physics/custom';
 export interface P3 { x: number; y: number; z: number }
 
 /** A small pixel-art picture of a body, for the shelf and the inspector. */
@@ -29,6 +37,11 @@ export function iconOf(b: { look: Look; heat: number; cls: Cls; star?: StarState
   return cv.toDataURL();
 }
 
+const densityMass = (r: number, rho: number) => (4 / 3) * Math.PI * r ** 3 * rho * GCC;
+function fmtSeconds(s: number) {
+  return s < 1 ? `${sig(s * 1000, 2)} ms` : s < 120 ? `${sig(s, 3)} s` : s < 7200 ? `${sig(s / 60, 3)} min` : s < 2 * 86400 ? `${sig(s / 3600, 3)} h` : s < 2 * 31557600 ? `${sig(s / 86400, 3)} d` : `${sig(s / 31557600, 3)} yr`;
+}
+
 export class App {
   world = new World();
   view: Renderer;
@@ -43,7 +56,7 @@ export class App {
   warpLog = -0.6;
   paused = false;
   armed: string | null = null;
-  custom: CustomSpec = { style: 'terran', massLog: 0, rho: 5.5, c1: 0x1d4f8c, c2: 0x4f8a3c, seed: 1 };
+  custom: CustomSpec = { mode: 'world', cells: SHAPES[1].make(), sizeLog: Math.log10(400), name: 'My world', dayH: 7, starMass: 1, starAge: 0.3, seed: 1 };
 
   /** measured sim-years per real second */
   rate = 0;
@@ -51,6 +64,17 @@ export class App {
   onSelect: (b: Body | null) => void = () => {};
   onToast: (msg: string) => void = () => {};
   onFrame: () => void = () => {};
+
+  tool: Tool = 'hand';
+  ruler: { a: End; b: End } | null = null;
+  /** a push being drawn: the body and the change of velocity so far */
+  push: { b: Body; dv: P3 } | null = null;
+  /** impactors raining on a body while the pointer is held */
+  bombard: { target: Body; acc: number } | null = null;
+  brush: { x: number; y: number } | null = null;
+  private undoStack: Snapshot[] = [];
+  onUndo: (label: string | null) => void = () => {};
+  openBuilder: () => void = () => {};
 
   /** a body being carried by the pointer: where the hand is, relative to what it was near */
   held: { b: Body; target: P3; vel: P3; host: Body | null } | null = null;
@@ -96,9 +120,35 @@ export class App {
     this.view.scaleGoal = (Math.min(this.view.W, this.view.H) * 0.45) / r;
   }
 
+  // ---------------------------------------------------------------- undo
+  /** Remember the world as it is, before a change the user makes. */
+  remember(label: string) {
+    if (!this.world.bodies.length) return;
+    this.undoStack.push(takeSnapshot(this.world, label));
+    if (this.undoStack.length > 10) this.undoStack.shift();
+    this.onUndo(label);
+  }
+  get canUndo() { return this.undoStack.length > 0; }
+  undo() {
+    const s = this.undoStack.pop();
+    if (!s) return;
+    const selId = this.selected?.id, focId = this.focus?.id, c = this.centre();
+    this.held = null;
+    restoreSnapshot(this.world, s);
+    this.hosts = assignHosts(this.world.sources);
+    this.view.clearTrails();
+    const byId = (id?: number) => (id ? this.world.bodies.find(b => b.id === id) ?? null : null);
+    this.focus = byId(focId);
+    this.pan = this.focus ? { x: 0, y: 0, z: 0 } : c;
+    this.select(byId(selId));
+    this.onToast(`Undid: ${s.label}`);
+    this.onUndo(this.undoStack.at(-1)?.label ?? null);
+  }
+
   loadPreset(key: string) {
     const info = PRESETS.find(p => p.key === key);
     if (!info) return;
+    this.remember('loading a system');
     this.presetKey = key;
     this.select(null);
     this.focus = null;
@@ -115,6 +165,7 @@ export class App {
   }
 
   clear() {
+    this.remember('clearing');
     this.select(null);
     const c = this.centre();
     this.focus = null;
@@ -156,35 +207,125 @@ export class App {
   deleteSelected() {
     const b = this.selected;
     if (!b) return;
+    this.remember(`deleting ${b.name}`);
     this.world.kill(b);
     this.world.structural();
   }
 
-  /** A new body from the armed catalogue entry or the forge. */
+  // ---------------------------------------------------------------- tools
+  /** relative to what it goes round */
+  private rel(b: Body) {
+    const h = this.hostOf(b);
+    return { h, vx: b.vx - (h?.vx ?? 0), vy: b.vy - (h?.vy ?? 0), vz: b.vz - (h?.vz ?? 0) };
+  }
+
+  /** Put a body on a circular orbit about its host, in the plane and direction it already goes round. */
+  circularize(b: Body) {
+    const { h } = this.rel(b);
+    if (!h) { this.onToast(`${b.name} is not going round anything`); return; }
+    this.remember(`circularizing ${b.name}`);
+    const rx = b.x - h.x, ry = b.y - h.y, rz = b.z - h.z;
+    const r = Math.hypot(rx, ry, rz);
+    let lx = ry * (b.vz - h.vz) - rz * (b.vy - h.vy), ly = rz * (b.vx - h.vx) - rx * (b.vz - h.vz), lz = rx * (b.vy - h.vy) - ry * (b.vx - h.vx);
+    let ln = Math.hypot(lx, ly, lz);
+    if (!(ln > 0)) { lx = 0; ly = 0; lz = 1; ln = 1; }
+    lx /= ln; ly /= ln; lz /= ln;
+    // the direction of travel: L × r̂
+    const tx = (ly * rz - lz * ry) / r, ty = (lz * rx - lx * rz) / r, tz = (lx * ry - ly * rx) / r;
+    const vc = Math.sqrt((G * (h.m + b.m)) / r);
+    b.setVel(h.vx + tx * vc, h.vy + ty * vc, h.vz + tz * vc);
+    this.world.moved(b);
+  }
+
+  /** Turn a body round: same speed, the other way. */
+  reverse(b: Body) {
+    const { h, vx, vy, vz } = this.rel(b);
+    this.remember(`reversing ${b.name}`);
+    b.setVel((h?.vx ?? 0) - vx, (h?.vy ?? 0) - vy, (h?.vz ?? 0) - vz);
+    this.world.moved(b);
+  }
+
+  /**
+   * Break a body up as if struck by something big enough to shatter it: the
+   * pieces fly apart at a little over its escape speed, so they disperse
+   * rather than fall straight back together, and carry its momentum exactly.
+   */
+  shatter(b: Body) {
+    if (b.compact || b.cls === 'star' || b.isParticle && !b.source) { this.onToast(`${b.name} cannot be shattered`); return; }
+    this.remember(`shattering ${b.name}`);
+    shatterBody(this.world, b);
+  }
+
+  applyPush() {
+    const p = this.push;
+    this.push = null;
+    this.view.setAim(null, null);
+    if (!p || !p.b.alive) return;
+    this.remember(`pushing ${p.b.name}`);
+    p.b.vx += p.dv.x; p.b.vy += p.dv.y; p.b.vz += p.dv.z;
+    this.world.moved(p.b);
+  }
+
+  /** the predicted path of a body if it were pushed by dv */
+  previewPush(b: Body, dv: P3) {
+    const probe = Object.assign(Object.create(Object.getPrototypeOf(b)), b) as Body;
+    probe.vx = b.vx + dv.x; probe.vy = b.vy + dv.y; probe.vz = b.vz + dv.z;
+    const others = this.world.sources.filter(s => s !== b);
+    const pr = predict(others, probe, this.hostOf(b), 8);
+    this.view.setAim(pr.points, pr.impact);
+  }
+
+  /** Small rocks from every side, a few each frame, to watch them crater. */
+  private rain(dtReal: number) {
+    const s = this.bombard;
+    if (!s || !s.target.alive) { this.bombard = null; return; }
+    const T = s.target;
+    s.acc += dtReal * 40;
+    const n = Math.floor(s.acc);
+    s.acc -= n;
+    for (let k = 0; k < n; k++) {
+      const z = 2 * Math.random() - 1, ph = 2 * Math.PI * Math.random(), q = Math.sqrt(1 - z * z);
+      const dir = [q * Math.cos(ph), q * Math.sin(ph), z * 0.3];
+      const dn = Math.hypot(dir[0], dir[1], dir[2]);
+      const d = [dir[0] / dn, dir[1] / dn, dir[2] / dn];
+      const R0 = T.r * 1.6;
+      // come in at escape speed plus a few km/s, a little off-centre
+      const vesc = Math.sqrt((2 * G * T.m) / R0);
+      const v = Math.sqrt(vesc * vesc + (6 * KMS) ** 2);
+      const off = (Math.random() - 0.5) * 0.8;
+      const ix = -d[0] - d[1] * off, iy = -d[1] + d[0] * off, iz = -d[2];
+      const inn = Math.hypot(ix, iy, iz);
+      // a rock a few hundredths the target's size: big enough to see the crater
+      const rr = T.r * (0.004 + 0.02 * Math.random() ** 2);
+      const m = densityMass(rr, 2.6);
+      const p = new BodyClass({ name: 'impactor', kind: 'fragment', cls: 'debris', m, r: rr, source: false, spin: 0,
+        look: { style: 'rocky', seed: 0, c1: 0xb0a090, c2: 0xb0a090 } });
+      p.setPos(T.x + d[0] * R0, T.y + d[1] * R0, T.z + d[2] * R0);
+      p.setVel(T.vx + (ix / inn) * v, T.vy + (iy / inn) * v, T.vz + (iz / inn) * v);
+      p.dens = 2.6;
+      this.world.add(p);
+    }
+  }
+
+  /** delete everything under a brush, a CSS-pixel position */
+  eraseAt(cssX: number, cssY: number, radiusCss: number) {
+    const v = this.view;
+    const x = cssX / PIX, y = cssY / PIX, rr = radiusCss / PIX;
+    let n = 0;
+    for (const b of this.world.bodies) {
+      if (!b.alive) continue;
+      const dx = v.sx(b.x) - x, dy = v.sy(b.y) - y;
+      if (dx * dx + dy * dy < rr * rr) { this.world.kill(b); n++; }
+    }
+    if (n) this.world.structural();
+  }
+
+  /** A new body from the armed catalogue entry or the builder. */
   spawnArmed(): Body | null {
     if (!this.armed) return null;
     if (this.armed !== 'custom') return makeBody(this.armed);
-    const c = this.custom;
-    if (c.style === 'star') {
-      const b = makeBody('sun', c.seed, 'Custom star');
-      b.star = newStar(this.customStarMass(), 0.1);
-      const st = structure(b.star);
-      b.m = st.m; b.r = st.r; b.star.L = st.L; b.star.teff = teffOf(st.L, st.r);
-      refreshRoche(b);
-      return b;
-    }
-    const m = Math.pow(10, c.massLog) * M_EARTH;
-    const cls = c.style === 'gas' || c.style === 'icegiant' ? 'gas' : c.style === 'ice' || c.style === 'ocean' ? 'ice' : 'rock';
-    const b = new BodyClass({
-      name: 'Custom world', kind: 'custom', cls, m, r: radiusFromDensity(m, c.rho),
-      look: { style: c.style, seed: c.seed, c1: c.c1, c2: c.c2, atmo: c.style === 'terran' || c.style === 'ocean' ? 0x7ab0ff : c.style === 'gas' || c.style === 'icegiant' ? c.c2 : undefined },
-      spin: (2 * Math.PI * 365.25) / 1.2,
-    });
-    if (c.style === 'lava') b.heat = 0.8;
-    refreshRoche(b);
-    return b;
+    return buildCustom(this.custom);
   }
-  customStarMass() { return Math.pow(10, -1.1 + ((this.custom.massLog + 4) / 7.6) * 2.9); }
 
   /** velocity a thrown body gets for a drag of `drag` (world AU) starting at `p` near `host` */
   throwVelocity(p: P3, drag: P3, host: Body | null): P3 {
@@ -219,9 +360,14 @@ export class App {
   place(p: P3, v: P3) {
     const b = this.spawnArmed();
     if (!b) return null;
+    this.remember(`placing ${b.name}`);
     b.setPos(p.x, p.y, p.z);
     b.setVel(v.x, v.y, v.z);
     this.world.add(b);
+    if (this.armed && ENTRY.get(this.armed)?.extra === 'torus') {
+      const rs = schwarzschild(b.m);
+      addTorus(this.world, b, 40 * rs, 400 * rs, 1e-4 * b.m, 1500);
+    }
     this.hosts = assignHosts(this.world.sources);
     return b;
   }
@@ -238,6 +384,7 @@ export class App {
       this.world.moved(b);
     }
 
+    if (this.bombard && !this.paused) this.rain(dtReal);
     let got = 0;
     if (!this.paused) {
       got = this.world.step(this.warp * dtReal, now + 11);
@@ -255,7 +402,7 @@ export class App {
         collapse: `${name ?? 'A core'} collapsed into a black hole`,
         nebula: `${name ?? 'A giant'} shed its envelope as a planetary nebula`,
         disrupt: name ?? 'Torn apart by tides',
-        impact: 'Catastrophic impact', merge: name ?? 'Merger', crater: '', graze: 'Hit-and-run', swallow: 'Swallowed',
+        impact: name ?? 'Catastrophic impact', merge: name ?? 'Merger', crater: '', graze: 'Hit-and-run', swallow: 'Swallowed', strip: name ?? 'Tidally stripped', evaporate: name ?? 'A black hole evaporated', airburst: '',
       }[e.kind];
       if (msg && (e.energy > 0.3 || e.kind !== 'merge')) this.onToast(msg);
     }
@@ -267,6 +414,7 @@ export class App {
     if (this.frameNo % 120 === 0) for (const b of this.testHosts.keys()) if (!b.alive) this.testHosts.delete(b);
 
     this.view.setCentre(this.centre(), dtReal);
+    this.view.overlay = this.overlay;
     this.view.render({
       bodies: this.world.bodies, visual: this.visual, sources: this.world.sources,
       hostOf: this.hostOf, hillOf: this.hillOf, flags: this.flags, selected: this.selected, focus: this.focus,
@@ -274,6 +422,63 @@ export class App {
     });
     this.updateLabels();
     this.onFrame();
+  }
+
+  /** what the tools draw on top: the ruler, the push arrow, the eraser */
+  private overlay = (ctx: CanvasRenderingContext2D) => {
+    const v = this.view;
+    const pos = (e: End) => ('alive' in e ? { x: e.x, y: e.y, z: e.z } : e);
+    if (this.ruler) {
+      const a = pos(this.ruler.a), b = pos(this.ruler.b);
+      const ax = v.sx(a.x), ay = v.sy(a.y), bx = v.sx(b.x), by = v.sy(b.y);
+      ctx.strokeStyle = 'rgba(143,180,255,0.95)';
+      ctx.setLineDash([4, 2]);
+      ctx.beginPath(); ctx.moveTo(Math.round(ax) + 0.5, Math.round(ay) + 0.5); ctx.lineTo(Math.round(bx) + 0.5, Math.round(by) + 0.5); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#8fb4ff';
+      for (const [x, y] of [[ax, ay], [bx, by]]) ctx.fillRect(Math.round(x) - 1, Math.round(y) - 1, 3, 3);
+    }
+    if (this.push && this.push.b.alive) {
+      const b = this.push.b, dv = this.push.dv;
+      const k = this.pushScale(b);
+      const x0 = v.sx(b.x), y0 = v.sy(b.y), x1 = x0 + (dv.x / k) * 60 / PIX, y1 = y0 - (dv.y / k) * 60 / PIX;
+      ctx.strokeStyle = '#ffd27a';
+      ctx.beginPath(); ctx.moveTo(Math.round(x0) + 0.5, Math.round(y0) + 0.5); ctx.lineTo(Math.round(x1) + 0.5, Math.round(y1) + 0.5); ctx.stroke();
+      const a = Math.atan2(y1 - y0, x1 - x0);
+      ctx.fillStyle = '#ffd27a';
+      for (let i = 0; i < 4; i++) for (const s of [-1, 1]) ctx.fillRect(Math.round(x1 - Math.cos(a + s * 0.5) * i), Math.round(y1 - Math.sin(a + s * 0.5) * i), 1, 1);
+    }
+    if (this.brush && this.tool === 'erase') {
+      ctx.strokeStyle = 'rgba(255,122,106,0.8)';
+      ctx.beginPath(); ctx.arc(this.brush.x / PIX, this.brush.y / PIX, 14 / PIX * 2, 0, 2 * Math.PI); ctx.stroke();
+    }
+  };
+
+  /** speed (AU/yr) that one unit of push-arrow stands for: the body's own orbital speed, so a push is always in proportion */
+  pushScale(b: Body) {
+    const h = this.hostOf(b);
+    if (!h) return Math.max(KMS, Math.hypot(b.vx, b.vy, b.vz) * 0.3);
+    const r = Math.hypot(b.x - h.x, b.y - h.y, b.z - h.z);
+    return Math.sqrt((G * h.m) / r);
+  }
+
+  /** what the ruler says */
+  rulerText(): string | null {
+    if (!this.ruler) return null;
+    const pos = (e: End) => ('alive' in e ? e : null);
+    const ea = pos(this.ruler.a), eb = pos(this.ruler.b);
+    const a = ea ?? (this.ruler.a as P3), b = eb ?? (this.ruler.b as P3);
+    const d = Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+    // body to body: surface to surface as well as centre to centre
+    const gap = ea && eb ? d - ea.r - eb.r : null;
+    const light = d * 499.004784; // light takes 499 s to cross an AU
+    let t = `${fmtLength(d)} · light ${fmtSeconds(light)}`;
+    if (gap !== null && gap > 0 && gap < d * 0.999) t += ` · gap ${fmtLength(gap)}`;
+    if (ea && eb) {
+      const dv = Math.hypot(ea.vx - eb.vx, ea.vy - eb.vy, ea.vz - eb.vz);
+      t += ` · relative speed ${sig(dv / KMS, 3)} km/s`;
+    }
+    return t;
   }
 
   private updateLabels() {

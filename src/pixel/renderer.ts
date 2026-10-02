@@ -7,6 +7,8 @@ import { blackbody } from '../physics/stellar';
 import { bakeSprite, bodyFrame, starRGB, type V3 } from './sprites';
 import { buildMap, paintCrater, type SurfaceMap } from './surface';
 import { bayer } from './noise';
+import { bakeShaped } from './shaped';
+import { chip } from '../physics/materials';
 
 /** CSS pixels per art pixel: the size of one chunky pixel */
 export const PIX = 2;
@@ -81,6 +83,8 @@ export class Renderer {
   private flashes: { e: SimEvent; t0: number; dur: number }[] = [];
   private aim: { pts: [number, number, number][]; impact: [number, number, number] | null } | null = null;
   private bakeBudget = 0;
+  /** drawn last, over everything: the tools' marks */
+  overlay: ((ctx: CanvasRenderingContext2D) => void) | null = null;
 
   constructor(readonly canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d', { alpha: false })!;
@@ -136,7 +140,7 @@ export class Renderer {
   accRate(b: Body) { return this.jet.get(b)?.rate ?? 0; }
   setAim(pts: [number, number, number][] | null, impact: [number, number, number] | null) { this.aim = pts ? { pts, impact } : null; }
   flash(e: SimEvent, now: number) {
-    const big = e.kind === 'supernova' || e.kind === 'ia' || e.kind === 'kilonova';
+    const big = e.kind === 'supernova' || e.kind === 'ia' || e.kind === 'kilonova' || e.kind === 'evaporate';
     this.flashes.push({ e, t0: now, dur: e.kind === 'crater' ? 1 : big ? 6 : 2.5 });
   }
   forget(b: Body) { this.sprites.delete(b); this.maps.delete(b); this.trails.delete(b); this.jet.delete(b); this.spinVis.delete(b); }
@@ -166,6 +170,19 @@ export class Renderer {
     return { L: [best.x - b.x, best.y - b.y, best.z - b.z], col: [0.55 + 0.6 * c[0], 0.55 + 0.6 * c[1], 0.55 + 0.6 * c[2]] };
   }
 
+  /**
+   * What the inspector's map needs: the surface as the renderer holds it
+   * (craters and all), the body's turning frame right now, and where its
+   * light comes from, so the map can show day and night.
+   */
+  surfaceOf(b: Body, sources: Body[]): { map: SurfaceMap; frame: [V3, V3, V3]; L: V3 | null } | null {
+    const e = this.maps.get(b);
+    if (!e) return null;
+    const stars = sources.filter(x => (x.cls === 'star' || x.cls === 'wd') && (x.star?.L ?? 0) > 0);
+    const { L } = this.lightFor(b, stars);
+    return { map: e.map, frame: bodyFrame(bodyAxis(b), this.spinVis.get(b) ?? 0), L };
+  }
+
   // ---------------------------------------------------------------- frame
   render(s: DrawState) {
     const ctx = this.ctx;
@@ -173,6 +190,9 @@ export class Renderer {
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
     ctx.drawImage(this.sky, 0, 0);
+    // Only what lies far behind a hole is lensed: the sky. Everything simulated
+    // is near the hole's own plane, beside it rather than behind it.
+    this.drawLensing(s.sources);
     const stars = s.sources.filter(b => b.cls === 'star' && b.star && b.star.L > 0 || (b.cls === 'wd' && (b.star?.L ?? 0) > 0));
 
     // ---- habitable zones ----
@@ -227,7 +247,7 @@ export class Renderer {
     this.drawFlashes(s.timeReal);
     this.drawSelection(s);
     this.drawAim();
-    this.drawLensing(s.sources);
+    this.overlay?.(ctx);
   }
 
   private drawOrbit(b: Body, host: Body, sel: boolean) {
@@ -394,8 +414,9 @@ export class Renderer {
     // the surface map, and craters painted into it as they happen
     let entry = this.maps.get(b);
     const isWorld = b.cls !== 'star' && b.cls !== 'wd' && b.cls !== 'ns' && b.cls !== 'bh';
-    if (isWorld && (!entry || entry.style !== b.look.style)) {
-      entry = { map: buildMap(b.look), style: b.look.style, seen: new Set() };
+    const lookKey = `${b.look.style}|${b.look.c1}|${b.look.c2}`;
+    if (isWorld && (!entry || entry.style !== lookKey)) {
+      entry = { map: buildMap(b.look), style: lookKey, seen: new Set() };
       this.maps.set(b, entry);
     }
     const [fx, fy, fz] = bodyFrame(axis, sv);
@@ -403,7 +424,14 @@ export class Renderer {
     if (entry && b.craters.length) {
       for (const c of b.craters) {
         const local: V3 = [c.x * fx[0] + c.y * fx[1] + c.z * fx[2], c.x * fy[0] + c.y * fy[1] + c.z * fy[2], c.x * fz[0] + c.y * fz[1] + c.z * fz[2]];
-        if (entry.map.gas) {
+        if (b.shape && !b.shape.packed) {
+          if (!entry.seen.has(c)) {
+            entry.seen.add(c);
+            const lx = c.x * Math.cos(sv) + c.y * Math.sin(sv), ly = -c.x * Math.sin(sv) + c.y * Math.cos(sv);
+            chip(b.shape, Math.atan2(ly, lx), c.a);
+            this.sprites.delete(b);
+          }
+        } else if (entry.map.gas) {
           const k = Math.exp(-(s.simTime - c.t) / 0.08);
           if (k > 0.05) scars.push({ d: local, a: Math.max(c.a, 0.06), k });
         } else if (!entry.seen.has(c)) {
@@ -418,6 +446,24 @@ export class Renderer {
     const dpx = Math.max(2, Math.round(d.r * 2));
     const bakeD = Math.min(dpx, 360);
     const { L, col } = this.lightFor(b, stars);
+    if (b.shape && !b.shape.packed) {
+      const sh = b.shape;
+      const lqs = L ? `${Math.round(Math.atan2(L[1], L[0]) * 8)}` : 'n';
+      const keyS = `S|${bakeD}|${lqs}|${Math.round((sv / (2 * Math.PI)) * Math.min(72, bakeD * 2))}|${Math.round(sh.round * 40)}|${Math.round(b.heat * 8)}|${b.craters.length}`;
+      let c = this.sprites.get(b);
+      if (!c || (c.key !== keyS && (this.bakeBudget > 0 || Math.abs(c.d - bakeD) > bakeD * 0.3))) {
+        const sp = bakeShaped(sh, bakeD, sv, L, col, b.heat);
+        this.bakeBudget -= sp.size * sp.size;
+        const cv = c?.canvas && c.size === sp.size ? c.canvas : document.createElement('canvas');
+        cv.width = cv.height = sp.size;
+        cv.getContext('2d')!.putImageData(new ImageData(sp.data, sp.size, sp.size), 0, 0);
+        c = { key: keyS, canvas: cv, size: sp.size, d: bakeD };
+        this.sprites.set(b, c);
+      }
+      const k = dpx / c.d, sz = c.size * k;
+      ctx.drawImage(c.canvas, Math.round(d.sx - sz / 2), Math.round(d.sy - sz / 2), Math.round(sz), Math.round(sz));
+      return;
+    }
     const lq = L ? (() => { const n = Math.hypot(L[0], L[1], L[2]); return `${Math.round(Math.atan2(L[1], L[0]) * 10)},${Math.round((L[2] / n) * 8)}`; })() : 'none';
     const spinQ = Math.round((sv / (2 * Math.PI)) * Math.min(96, bakeD * 2));
     const timeQ = b.cls === 'star' ? Math.floor(s.timeReal * 3) : 0;
@@ -558,7 +604,7 @@ export class Renderer {
   }
 
   /**
-   * A point-mass lens on what has been drawn. The view looks down from a
+   * A point-mass lens on the background sky. The view looks down from a
    * height equal to its own width, which sets the Einstein radius √(2 r_s D):
    * a pixel at distance ρ from the hole shows what lies at ρ − θE²/ρ.
    */

@@ -1,6 +1,7 @@
 import { Body, type Cls, type Look, type Style } from './body';
 import { KM, M_EARTH, M_JUP, M_MOON, MSUN_KG, R_EARTH, R_JUP, radiusFromDensity, schwarzschild, DAY, HOUR } from './units';
 import { newStar, structure, wdRadius, NS_RADIUS, giantLife, teffOf, SUPERWIND } from './stellar';
+import { SHAPES, GRID, shapeStats, makeShape } from './materials';
 
 export type Shelf = 'Small' | 'Worlds' | 'Giants' | 'Stars' | 'Remnants' | 'Special';
 export const SHELVES: Shelf[] = ['Small', 'Worlds', 'Giants', 'Stars', 'Remnants', 'Special'];
@@ -19,6 +20,12 @@ export interface Entry {
   tilt?: number;      // degrees (visual)
   look: Omit<Look, 'seed'>;
   blurb: string;
+  /** a ready-made outline (materials.ts) for bodies too small to be round, painted in one material */
+  shape?: { key: string; mat: number };
+  /** remnants: how long it has been cooling, yr */
+  cooled?: number;
+  /** something placed with it: an accretion torus round a quasar */
+  extra?: 'torus';
 }
 
 const kg = (x: number) => x / MSUN_KG;
@@ -30,7 +37,7 @@ const nearEnd = (m0: number, yearsLeft: number) => 1 + 1 - yearsLeft / giantLife
 
 export const CATALOG: Entry[] = [
   // ---- Small ----
-  { key: 'comet', name: 'Comet', shelf: 'Small', cls: 'ice', m: kg(2.2e14), r: 5.5 * KM, day: 52 * HOUR,
+  { key: 'comet', name: 'Comet', shelf: 'Small', cls: 'ice', m: kg(2.2e14), r: 5.5 * KM, day: 52 * HOUR, shape: { key: 'potato', mat: 6 },
     look: look('ice', 0x5a5550, 0x9a948c), blurb: "Halley's mass and size: a dirty snowball 11 km across." },
   { key: 'asteroid', name: 'Asteroid', shelf: 'Small', cls: 'rock', m: kg(2.59e20), r: 262.7 * KM, day: 5.34 * HOUR,
     look: look('barren', 0x6e665e, 0xa69c8e), blurb: 'Vesta: the second-largest thing in the main belt.' },
@@ -39,10 +46,17 @@ export const CATALOG: Entry[] = [
   { key: 'dwarf', name: 'Dwarf planet', shelf: 'Small', cls: 'ice', m: kg(1.303e22), r: 1188.3 * KM, day: 6.39 * DAY, tilt: 122,
     look: look('ice', 0x8a6a50, 0xe8d8c4), blurb: 'Pluto: nitrogen ice over a rocky core.' },
 
-  { key: 'metal', name: 'Metal asteroid', shelf: 'Small', cls: 'rock', m: kg(2.29e19), r: 113 * KM, day: 4.2 * HOUR,
+  { key: 'metal', name: 'Metal asteroid', shelf: 'Small', cls: 'rock', m: kg(2.29e19), r: 113 * KM, day: 4.2 * HOUR, shape: { key: 'potato', mat: 1 },
     look: look('iron', 0x6a6460, 0xb4aea8), blurb: 'Psyche: a 226 km lump of iron and nickel, perhaps a planet’s exposed core.' },
-  { key: 'kbo', name: 'Kuiper object', shelf: 'Small', cls: 'ice', m: kg(7.5e14), r: 9 * KM, day: 15.9 * HOUR,
+  { key: 'kbo', name: 'Kuiper object', shelf: 'Small', cls: 'ice', m: kg(7.5e14), r: 9 * KM, day: 15.9 * HOUR, shape: { key: 'contact', mat: 6 },
     look: look('ice', 0x6a3a2a, 0xb06a4a), blurb: 'Arrokoth: two lumps of reddened ice that touched gently 4.5 billion years ago.' },
+  { key: 'kleopatra', name: 'Dog-bone asteroid', shelf: 'Small', cls: 'rock', m: kg(2.97e18), r: 61 * KM, day: 5.39 * HOUR, shape: { key: 'dogbone', mat: 1 },
+    look: look('iron', 0x5a5450, 0xa8a29c), blurb: '216 Kleopatra: a 270 km metal bone with two little moons, strong enough to keep its shape.' },
+  { key: 'rubble', name: 'Rubble pile', shelf: 'Small', cls: 'rock', m: kg(3.5e10), r: 0.165 * KM, day: 4.3 * HOUR, shape: { key: 'potato', mat: 5 },
+    look: look('barren', 0x5a5248, 0x9a8e7e), blurb: 'Itokawa: boulders and gravel held together by almost nothing. Tides pull it apart easily.' },
+  { key: 'centaur', name: 'Ringed centaur', shelf: 'Small', cls: 'ice', m: kg(7e18), r: 124 * KM, day: 7 * HOUR,
+    look: look('ice', 0x3a3430, 0x6a625a, { rings: { inner: 3.1, outer: 3.25, color: 0xb0a898, opacity: 0.5 } }),
+    blurb: 'Chariklo: 250 km across, between Saturn and Uranus, with two narrow rings of its own.' },
   // ---- Worlds ----
   { key: 'terran', name: 'Earth-like', shelf: 'Worlds', cls: 'rock', m: M_EARTH, r: R_EARTH, day: 23.93 * HOUR, tilt: 23.4,
     look: look('terran', 0x1d4f8c, 0x4f8a3c, { atmo: 0x6aa8ff }), blurb: 'One Earth: oceans, continents, a thin blue sky.' },
@@ -63,6 +77,8 @@ export const CATALOG: Entry[] = [
   { key: 'core', name: 'Stripped core', shelf: 'Worlds', cls: 'rock', m: 10 * M_EARTH, rho: 7.5, day: 1 * DAY,
     look: look('iron', 0x5a3a30, 0xc06a3a), blurb: 'The heavy heart of a giant that lost its gas to its star.' },
 
+  { key: 'hycean', name: 'Hycean world', shelf: 'Worlds', cls: 'ice', m: 8.6 * M_EARTH, r: 2.6 * R_EARTH, day: 33 * DAY,
+    look: look('ocean', 0x0a3058, 0x3a8ab0, { atmo: 0xa0d0e8 }), blurb: 'K2-18 b: perhaps a deep ocean under a hydrogen sky, 8.6 Earths at 2.6 Earth widths.' },
   { key: 'eyeball', name: 'Eyeball world', shelf: 'Worlds', cls: 'ice', m: 1.2 * M_EARTH, rho: 4.5, day: 10 * DAY,
     look: look('ocean', 0x10406a, 0xe8f4ff, { atmo: 0x9ac8ff }), blurb: 'Tidally locked to a red dwarf: frozen almost everywhere, one ocean facing its sun.' },
   // ---- Giants ----
@@ -110,6 +126,8 @@ export const CATALOG: Entry[] = [
     look: look('star', 0, 0), blurb: 'A star wider than Jupiter’s orbit, a few thousand years from collapse.' },
   { key: 'lbv', name: 'Eta Carinae-class', shelf: 'Stars', cls: 'star', m: 100, ageFrac: 0.6, day: 5 * DAY,
     look: look('star', 0, 0), blurb: 'A hundred suns, five million times the light. Too heavy to explode: it will collapse.' },
+  { key: 'tzo', name: 'Thorne–Żytkow object', shelf: 'Stars', cls: 'star', m: 15, ageFrac: nearEnd(15, 20000), day: 30 * 365.25 * DAY,
+    look: look('star', 0, 0), blurb: 'A red supergiant with a neutron star sunk in its core: the strangest kind of star proposed, perhaps HV 2112.' },
   // ---- Remnants ----
   { key: 'wd', name: 'White dwarf', shelf: 'Remnants', cls: 'wd', m: 0.6, day: 1 * HOUR,
     look: look('wd', 0, 0), blurb: "0.6 suns in an Earth's width. Push it past 1.38 and it detonates." },
@@ -127,10 +145,26 @@ export const CATALOG: Entry[] = [
     look: look('wd', 0, 0), blurb: '1.36 suns in the size of the Moon — a whisker under the Chandrasekhar limit.' },
   { key: 'imbh', name: 'Intermediate BH', shelf: 'Remnants', cls: 'bh', m: 1e3, day: 1,
     look: look('bh', 0, 0), blurb: 'A thousand suns: the missing link between stellar and supermassive holes.' },
+  { key: 'blackdwarf', name: 'Black dwarf', shelf: 'Remnants', cls: 'wd', m: 0.6, day: 1 * HOUR, cooled: 1e15,
+    look: look('wd', 0, 0), blurb: 'A white dwarf after a quadrillion years: cold, dark carbon. The universe is too young for one to exist yet.' },
+  { key: 'hewd', name: 'Helium white dwarf', shelf: 'Remnants', cls: 'wd', m: 0.3, day: 2 * HOUR, cooled: 3e8,
+    look: look('wd', 0, 0), blurb: 'A light white dwarf whose companion stripped it before it could burn helium.' },
+  { key: 'msp', name: 'Millisecond pulsar', shelf: 'Remnants', cls: 'ns', m: 1.6, day: (1 / 716) / 3600 * HOUR,
+    look: look('ns', 0, 0, { pulsar: true }), blurb: 'PSR J1748−2446ad: spun up to 716 turns a second by gas from a companion.' },
+  { key: 'quark', name: 'Quark star', shelf: 'Remnants', cls: 'ns', m: 1.4, r: 9 * KM, day: 1 / 3600 * HOUR,
+    look: look('ns', 0, 0), blurb: 'Hypothetical: a neutron star whose core has dissolved into free quarks, smaller and denser still.' },
+  { key: 'gwbh', name: 'Merged black hole', shelf: 'Remnants', cls: 'bh', m: 62, day: 1,
+    look: look('bh', 0, 0), blurb: 'The 62-sun hole left by GW150914, the first black-hole merger ever heard: three suns went out as gravitational waves.' },
   // ---- Special ----
+  { key: 'quasar', name: 'Quasar', shelf: 'Special', cls: 'bh', m: 1e8, day: 1, extra: 'torus',
+    look: look('bh', 0, 0), blurb: 'A hundred-million-sun hole with a ring of gas round it: the gas spirals in, heats, and drives the jets.' },
+  { key: 'm87', name: 'M87*', shelf: 'Special', cls: 'bh', m: 6.5e9, day: 1,
+    look: look('bh', 0, 0), blurb: 'The first black hole ever imaged: 6.5 billion suns, a shadow wider than the solar system.' },
+  { key: 'microbh', name: 'Evaporating BH', shelf: 'Special', cls: 'bh', m: 1e-22, day: 1,
+    look: look('bh', 0, 0), blurb: 'A black hole of 200,000 tonnes, smaller than a proton: Hawking radiation boils it away in about twenty years.' },
   { key: 'rogue', name: 'Rogue planet', shelf: 'Special', cls: 'gas', m: M_JUP, r: R_JUP, day: 10 * HOUR,
     look: look('gas', 0x2a2830, 0x5a5670), blurb: 'A Jupiter thrown out of its system, cold and dark, drifting between the stars.' },
-  { key: 'oumuamua', name: 'Interstellar object', shelf: 'Special', cls: 'rock', m: kg(8e9), r: 0.1 * KM, day: 8 * HOUR,
+  { key: 'oumuamua', name: 'Interstellar object', shelf: 'Special', cls: 'rock', m: kg(8e9), r: 0.1 * KM, day: 8 * HOUR, shape: { key: 'cigar', mat: 2 },
     look: look('barren', 0x6a4a3a, 0xa07a5a), blurb: 'ʻOumuamua: a few hundred metres of something from another star. Throw it fast.' },
   { key: 'pbh', name: 'Primordial BH', shelf: 'Special', cls: 'bh', m: 1e-12, day: 1,
     look: look('bh', 0, 0), blurb: 'A hypothetical black hole from the Big Bang, the mass of an asteroid and the size of an atom.' },
@@ -158,6 +192,7 @@ export function makeBody(key: string, seed = Math.floor(Math.random() * 1e9), na
   const e = ENTRY.get(key);
   if (!e) throw new Error(`no catalogue entry ${key}`);
   let r = e.r ?? (e.rho ? radiusFromDensity(e.m, e.rho) : 0);
+  const preset = e.shape ? SHAPES.find(x => x.key === e.shape!.key) : undefined;
   let m = e.m;
   let star;
   if (e.cls === 'star') {
@@ -167,8 +202,9 @@ export function makeBody(key: string, seed = Math.floor(Math.random() * 1e9), na
     star.L = st.L; star.phase = st.phase;
   } else if (e.cls === 'wd' || e.cls === 'ns' || e.cls === 'bh') {
     star = { m0: e.m, age: 1e6, phase: 'remnant' as const, L: 0, teff: 0, coreM: e.m };
-    r = e.cls === 'wd' ? wdRadius(m) : e.cls === 'ns' ? NS_RADIUS : schwarzschild(m);
-    if (e.cls === 'wd') star.L = 30 * (1 + 1e6 / 1e5) ** -1.4;
+    star.age = e.cooled ?? 1e6;
+    r = e.cls === 'wd' ? wdRadius(m) : e.cls === 'ns' ? e.r ?? NS_RADIUS : schwarzschild(m);
+    if (e.cls === 'wd') star.L = 30 * (1 + star.age / 1e5) ** -1.4;
   }
   const b = new Body({
     name: name ?? e.name, kind: key, cls: e.cls, look: { ...e.look, seed }, m, r,
@@ -176,6 +212,14 @@ export function makeBody(key: string, seed = Math.floor(Math.random() * 1e9), na
   });
   if (star) star.teff = e.cls === 'ns' ? 1e6 : e.cls === 'bh' ? 0 : teffOf(star.L, r);
   if (e.key === 'lava') b.heat = 1;
+  if (preset && e.shape) {
+    // the outline in its material, sized so its equivalent radius is the body's
+    const cells = preset.make().map(c => (c ? e.shape!.mat : 0));
+    const n = cells.reduce((k, c) => k + (c ? 1 : 0), 0);
+    const sizeKm = (r / KM) * GRID / Math.sqrt(n / Math.PI);
+    const st = shapeStats(cells, sizeKm);
+    b.shape = makeShape(cells, st);
+  }
   refreshRoche(b);
   return b;
 }
