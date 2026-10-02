@@ -1,4 +1,4 @@
-import { Body } from './body';
+import { Body, freshId } from './body';
 import type { World } from './world';
 
 /**
@@ -12,6 +12,13 @@ export interface Snapshot {
   time: number;
   bodies: Body[];
   parts: { cls: Body['cls']; kind: string; name: string; c1: number; source: boolean; f: Float64Array }[];
+}
+
+/** a deep copy of a body, as a new body with its own id */
+export function copyBody(b: Body): Body {
+  const c = copy(b);
+  c.id = freshId();
+  return c;
 }
 
 function copy(b: Body): Body {

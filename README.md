@@ -37,16 +37,26 @@ their measured profiles and shadow the planet and are shadowed by it.
 | `Space` `[` `]` | pause · slower · faster |
 | `T` `O` `Z` `L` `A` | trails · orbits · zones · labels · auto-orbit |
 | `F` `Esc` `Del` `1`–`9` | follow · deselect · delete · pick from the shelf |
-| `H` `R` `P` `M` `E` | tools: move · ruler · push · bombard · erase |
+| `S` `H` `P` `G` `X` `K` | tools: select · move · push · attract · repel · laser |
+| `N` `M` `D` `R` `E` | tools: blast · bombard · clone · ruler · erase (same key again: put it down) |
 | `B` · `Ctrl`/`⌘` `Z` | build a body · undo |
 
-**Tools** (left edge). *Ruler*: drag between two points; start or end on a
-body and it follows it, reading distance, light-time, the gap between
-surfaces and the relative speed. *Push*: drag from a body to change its
-velocity; a full-length drag is its whole orbital speed, and the dotted line
-is the new path. *Bombard*: hold on a world to rain small rocks on it and
-watch it crater (or scar, on a giant). *Erase*: rub out bodies and debris.
-Every change you make can be undone.
+**Tools** (left edge). Tap a tool again, or press `Esc`, to put it down.
+*Select* (the default): tap to select, double-tap to follow, drag to look
+around; it never moves anything. *Move*: drag a body and let go to throw it.
+*Push*: drag from a body to change its velocity; a full-length drag is its
+whole orbital speed, and the dotted line is the new path. *Attract* and
+*Repel*: hold for a gravity well that pulls everything nearby in (with a
+little drag, so what it catches gathers and collides) or throws it away; drag
+to move it. *Laser*: hold on a body, or press and drag to aim — rock boils off
+the lit face as a hot plume that pushes the body like a rocket; a moon goes in
+seconds, a world in tens, and what is left flies apart. *Blast*: tap for an
+explosion that throws everything nearby outward and shatters worlds near the
+middle. *Bombard*: hold on a world to rain small rocks on it and watch it
+crater. *Clone*: tap a body, then tap (or drag to throw) to place copies.
+*Ruler*: drag between two points or bodies for distance, light-time, gap and
+relative speed. *Erase*: rub out bodies and debris. Stars and black holes are
+too big for the hand tools. Every change you make can be undone.
 
 **Inspector.** Select a body for its orbit and physical data, a map of its
 surface as it is now — craters included, night side dark — flat or as an

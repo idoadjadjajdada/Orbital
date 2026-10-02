@@ -1,7 +1,9 @@
 import type { App, P3 } from '../app';
 import type { Body } from '../physics/body';
+import { blast } from '../tools';
+import { PIX } from '../pixel/renderer';
 
-type Mode = 'none' | 'pan' | 'press-body' | 'grab' | 'aim' | 'touch2' | 'ruler' | 'push' | 'bombard' | 'erase';
+type Mode = 'none' | 'pan' | 'press-body' | 'grab' | 'aim' | 'touch2' | 'ruler' | 'push' | 'bombard' | 'erase' | 'field' | 'laser';
 
 /**
  * Pointer and keyboard for a flat, top-down view. One finger or the left
@@ -82,7 +84,7 @@ export class Input {
     this.last = { ...p };
     if (e.button === 1 || e.button === 2) { this.mode = 'pan'; return; }
     const hit = this.app.view.pick(p.x, p.y);
-    if (this.app.tool !== 'hand' && this.toolDown(p, hit)) return;
+    if (this.app.tool !== 'hand' && this.app.tool !== 'select' && this.toolDown(p, hit)) return;
     if (hit) { this.mode = 'press-body'; this.pressBody = hit; return; }
     if (this.app.armed) {
       this.mode = 'aim';
@@ -111,7 +113,23 @@ export class Input {
       case 'bombard': break;
       case 'touch2': this.pinchMove(); break;
       case 'pan': this.panBy(dx, dy); break;
-      case 'press-body': if (moved > 6 && this.pressBody) this.grab(this.pressBody, p.x, p.y); break;
+      case 'press-body':
+        // the Move tool picks bodies up; everything else slides the view
+        if (moved > 6 && this.pressBody) { if (this.app.tool === 'hand') this.grab(this.pressBody, p.x, p.y); else { this.mode = 'pan'; this.panBy(p.x - this.start.x, p.y - this.start.y); } }
+        break;
+      case 'field': if (this.app.field) this.app.field.css = { ...p }; break;
+      case 'laser': {
+        const l = this.app.laser;
+        if (!l) break;
+        // dragging off a body aims the beam by hand from where it was coming from
+        if (l.target && moved > 6) {
+          const v = this.app.view;
+          l.css.fx = v.sx(l.from.x) * PIX; l.css.fy = v.sy(l.from.y) * PIX;
+          l.target = null;
+        }
+        if (!l.target) { l.css.tx = p.x; l.css.ty = p.y; }
+        break;
+      }
       case 'grab': this.carry(p.x, p.y); break;
       case 'aim': {
         if (!this.aimStart) break;
@@ -139,6 +157,8 @@ export class Input {
       case 'ruler': if (moved < 6 && !this.pressBody) this.app.ruler = null; break;
       case 'push': if (moved >= 6) this.app.applyPush(); else { this.app.push = null; this.app.view.setAim(null, null); } break;
       case 'bombard': this.app.bombard = null; break;
+      case 'field': this.app.field = null; break;
+      case 'laser': this.app.laser = null; break;
       case 'erase': this.app.brush = null; break;
       case 'press-body': {
         const b = this.pressBody;
@@ -198,6 +218,37 @@ export class Input {
         app.bombard = { target: t, acc: 0 };
         return true;
       }
+      case 'attract': case 'repel':
+        app.remember(app.tool === 'attract' ? 'attracting' : 'repelling');
+        this.mode = 'field';
+        app.field = { at: app.view.unproject(p.x, p.y), css: { ...p }, sign: app.tool === 'attract' ? 1 : -1 };
+        return true;
+      case 'laser': {
+        app.remember('firing the laser');
+        this.mode = 'laser';
+        const at = app.view.unproject(p.x, p.y);
+        // pressed on a body: fire at it from just off its edge, below it on the screen
+        const off = { x: 0, y: -Math.max((hit?.r ?? 0) * 3, 60 * app.view.perCss), z: 0 };
+        app.laser = { target: hit, off, css: { fx: p.x, fy: p.y, tx: p.x, ty: p.y }, from: at, to: at, hit: null, end: at, m0: new WeakMap() };
+        if (!hit) app.onToast('Laser: drag to aim the beam');
+        return true;
+      }
+      case 'blast':
+        app.remember('a blast');
+        blast(app, app.view.unproject(p.x, p.y));
+        this.mode = 'none';
+        return true;
+      case 'clone':
+        if (hit) {
+          app.cloneOf = hit;
+          app.armed = 'clone';
+          app.select(hit);
+          app.onToast(`Copying ${hit.name}: tap to place, drag to throw`);
+          return true;
+        }
+        if (app.armed === 'clone' && app.cloneOf) return false;
+        app.onToast('Clone: tap a body to copy it');
+        return true;
       case 'erase':
         app.remember('erasing');
         this.mode = 'erase';
@@ -290,15 +341,21 @@ export class Input {
       case 'KeyA': app.flags.auto = !app.flags.auto; break;
       case 'KeyF': app.follow(app.selected ?? null); break;
       case 'KeyC': app.clear(); break;
-      case 'Escape': app.select(null); app.armed = null; app.tool = 'hand'; app.ruler = null; this.cancelAim(); break;
+      case 'Escape': app.select(null); app.armed = null; app.tool = 'select'; app.ruler = null; app.field = null; app.laser = null; this.cancelAim(); break;
       case 'KeyZ':
         if (e.metaKey || e.ctrlKey) { e.preventDefault(); app.undo(); break; }
         app.flags.zones = !app.flags.zones; break;
-      case 'KeyH': app.tool = 'hand'; break;
-      case 'KeyR': app.tool = app.tool === 'ruler' ? 'hand' : 'ruler'; break;
-      case 'KeyP': app.tool = app.tool === 'push' ? 'hand' : 'push'; break;
-      case 'KeyM': app.tool = app.tool === 'bombard' ? 'hand' : 'bombard'; break;
-      case 'KeyE': app.tool = app.tool === 'erase' ? 'hand' : 'erase'; break;
+      case 'KeyS': app.setTool('select'); break;
+      case 'KeyH': app.setTool('hand'); break;
+      case 'KeyR': app.setTool('ruler'); break;
+      case 'KeyP': app.setTool('push'); break;
+      case 'KeyG': app.setTool('attract'); break;
+      case 'KeyX': app.setTool('repel'); break;
+      case 'KeyK': app.setTool('laser'); break;
+      case 'KeyN': app.setTool('blast'); break;
+      case 'KeyM': app.setTool('bombard'); break;
+      case 'KeyD': app.setTool('clone'); break;
+      case 'KeyE': app.setTool('erase'); break;
       case 'KeyB': app.openBuilder(); break;
       case 'Delete': case 'Backspace': app.deleteSelected(); break;
       default: return;

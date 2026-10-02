@@ -15,9 +15,11 @@ import { Renderer, PIX } from './pixel/renderer';
 import { bakeSprite } from './pixel/sprites';
 import { buildMap } from './pixel/surface';
 import { Pad, BTN } from './ui/gamepad';
+import { fieldStep, laserStep, drawTools, type Laser } from './tools';
+import { copyBody } from './physics/snapshot';
 
 export type Flag = 'trails' | 'orbits' | 'zones' | 'labels' | 'auto';
-export type Tool = 'hand' | 'ruler' | 'push' | 'bombard' | 'erase';
+export type Tool = 'select' | 'hand' | 'ruler' | 'push' | 'attract' | 'repel' | 'laser' | 'blast' | 'bombard' | 'clone' | 'erase';
 /** an end of the ruler: a fixed point, or a body it follows */
 export type End = P3 | Body;
 export type { CustomSpec } from './physics/custom';
@@ -66,7 +68,21 @@ export class App {
   onToast: (msg: string) => void = () => {};
   onFrame: () => void = () => {};
 
-  tool: Tool = 'hand';
+  tool: Tool = 'select';
+  /** pick a tool; picking the one in hand again puts it down (back to Select) */
+  setTool(t: Tool) {
+    this.tool = this.tool === t && t !== 'select' ? 'select' : t;
+    if (this.tool !== 'ruler') this.ruler = null;
+    if (this.tool !== 'clone' && this.armed === 'clone') { this.armed = null; this.cloneOf = null; }
+    this.field = null;
+    this.laser = null;
+  }
+  /** the attract or repel well while it is held */
+  field: { at: P3; css: { x: number; y: number }; sign: number } | null = null;
+  /** the laser while it is firing */
+  laser: Laser | null = null;
+  /** the body the clone tool copies */
+  cloneOf: Body | null = null;
   ruler: { a: End; b: End } | null = null;
   /** a push being drawn: the body and the change of velocity so far */
   push: { b: Body; dv: P3 } | null = null;
@@ -354,6 +370,15 @@ export class App {
   /** A new body from the armed catalogue entry or the builder. */
   spawnArmed(): Body | null {
     if (!this.armed) return null;
+    if (this.armed === 'clone') {
+      const c = this.cloneOf;
+      if (!c) return null;
+      const b = copyBody(c);
+      b.name = `${c.name.replace(/ \(copy( \d+)?\)$/, '')} (copy)`;
+      b.held = false;
+      b.partnerId = 0;
+      return b;
+    }
     if (this.armed !== 'custom') return makeBody(this.armed);
     return buildCustom(this.custom);
   }
@@ -418,6 +443,9 @@ export class App {
     }
 
     if (this.bombard && !this.paused) this.rain(dtReal);
+    if (this.field) this.field.at = this.view.unproject(this.field.css.x, this.field.css.y);
+    if (this.field && !this.paused) fieldStep(this, this.field.at, this.field.sign, dtReal);
+    if (this.laser) laserStep(this, this.laser, dtReal);
     let got = 0;
     if (!this.paused) {
       got = this.world.step(this.warp * dtReal, now + 11);
@@ -521,6 +549,7 @@ export class App {
       ctx.fillStyle = '#ffd27a';
       for (let i = 0; i < 4; i++) for (const s of [-1, 1]) ctx.fillRect(Math.round(x1 - Math.cos(a + s * 0.5) * i), Math.round(y1 - Math.sin(a + s * 0.5) * i), 1, 1);
     }
+    drawTools(this, ctx, this.field, this.laser);
     if (this.brush && this.tool === 'erase') {
       ctx.strokeStyle = 'rgba(255,122,106,0.8)';
       ctx.beginPath(); ctx.arc(this.brush.x / PIX, this.brush.y / PIX, 14 / PIX * 2, 0, 2 * Math.PI); ctx.stroke();

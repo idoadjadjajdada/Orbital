@@ -129,7 +129,13 @@ export class Hud {
   }
 
   private static HINT: Record<string, string> = {
-    hand: 'Move: tap to select, drag a body to carry it, drag space to look around.',
+    select: 'Select: tap a body to select it, double-tap to follow it, drag to look around.',
+    hand: 'Move: drag a body to carry it and let go to throw it. Tap Move again to put it down.',
+    attract: 'Attract: press and hold to pull everything nearby in. Drag to move the pull. Hold long enough and what it gathers collides.',
+    repel: 'Repel: press and hold to push everything nearby away.',
+    laser: 'Laser: hold on a body to boil it away, or press and drag to aim the beam. What it boils off pushes the body like a rocket.',
+    blast: 'Blast: tap to set off an explosion. It throws everything nearby outward and shatters worlds near the middle.',
+    clone: 'Clone: tap a body to copy it, then tap empty space to place copies (drag to throw them).',
     ruler: 'Ruler: drag between two points; start or end on a body to measure from it as it moves.',
     push: 'Push: press on a body and drag — a full-length drag is its whole orbital speed. The dotted line is the new path.',
     bombard: 'Bombard: press and hold on a world to rain small rocks on it. Watch the craters build up, or the scars on a giant.',
@@ -139,10 +145,8 @@ export class Hud {
   private buildTools() {
     for (const el of document.querySelectorAll<HTMLElement>('[data-tool]')) {
       el.onclick = () => {
-        const t = el.dataset.tool as Tool;
-        this.app.tool = t;
-        if (t !== 'ruler') this.app.ruler = null;
-        this.toast(Hud.HINT[t]);
+        this.app.setTool(el.dataset.tool as Tool);
+        if (this.app.tool !== 'select' || el.dataset.tool === 'select') this.toast(Hud.HINT[this.app.tool]);
         this.sync();
       };
     }

@@ -48,6 +48,8 @@ export interface StarState {
 }
 
 let nextId = 1;
+/** a new body id */
+export function freshId() { return nextId++; }
 
 export class Body {
   id = nextId++;

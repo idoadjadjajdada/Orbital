@@ -76,10 +76,16 @@
   </aside>
 
   <nav class="hud tools" id="tools" aria-label="Tools">
-    <button data-tool="hand" class="on" title="Move (H): select, drag bodies, throw what you picked"><b>✋</b><span>Move</span></button>
-    <button data-tool="ruler" title="Ruler (R): drag between two points or bodies"><b>📏</b><span>Ruler</span></button>
+    <button data-tool="select" class="on" title="Select (S): tap to select, drag to look around. Tap a tool again to put it down"><b>⌖</b><span>Select</span></button>
+    <button data-tool="hand" title="Move (H): drag bodies, throw what you picked"><b>✋</b><span>Move</span></button>
     <button data-tool="push" title="Push (P): drag from a body to change its velocity"><b>➚</b><span>Push</span></button>
+    <button data-tool="attract" title="Attract (G): hold to pull everything nearby in"><b>🧲</b><span>Attract</span></button>
+    <button data-tool="repel" title="Repel (X): hold to push everything nearby away"><b>✺</b><span>Repel</span></button>
+    <button data-tool="laser" title="Laser (K): hold on a body, or drag to aim, to boil it away"><b>⚡</b><span>Laser</span></button>
+    <button data-tool="blast" title="Blast (N): tap to set off an explosion"><b>💥</b><span>Blast</span></button>
     <button data-tool="bombard" title="Bombard (M): hold on a body to rain small rocks on it"><b>☄</b><span>Bombard</span></button>
+    <button data-tool="clone" title="Clone (D): tap a body, then tap to place copies"><b>⧉</b><span>Clone</span></button>
+    <button data-tool="ruler" title="Ruler (R): drag between two points or bodies"><b>📏</b><span>Ruler</span></button>
     <button data-tool="erase" title="Erase (E): rub out bodies and debris"><b>⌫</b><span>Erase</span></button>
   </nav>
   <div class="hud ruler" id="rulerBox" hidden></div>
@@ -147,7 +153,8 @@
       <tr><td><kbd>Space</kbd> <kbd>[</kbd> <kbd>]</kbd></td><td>pause · slower · faster</td></tr>
       <tr><td><kbd>T</kbd> <kbd>O</kbd> <kbd>Z</kbd> <kbd>L</kbd> <kbd>A</kbd></td><td>trails · orbits · zones · labels · auto-orbit</td></tr>
       <tr><td><kbd>F</kbd> <kbd>Esc</kbd> <kbd>Del</kbd> <kbd>1</kbd>–<kbd>9</kbd></td><td>follow · deselect · delete · pick from shelf</td></tr>
-      <tr><td><kbd>H</kbd> <kbd>R</kbd> <kbd>P</kbd> <kbd>M</kbd> <kbd>E</kbd></td><td>tools: move · ruler · push · bombard · erase</td></tr>
+      <tr><td><kbd>S</kbd> <kbd>H</kbd> <kbd>P</kbd> <kbd>G</kbd> <kbd>X</kbd> <kbd>K</kbd></td><td>tools: select · move · push · attract · repel · laser</td></tr>
+      <tr><td><kbd>N</kbd> <kbd>M</kbd> <kbd>D</kbd> <kbd>R</kbd> <kbd>E</kbd></td><td>tools: blast · bombard · clone · ruler · erase (the same key again puts it down)</td></tr>
       <tr><td><kbd>B</kbd> · <kbd>Ctrl/⌘</kbd> <kbd>Z</kbd></td><td>build a body · undo</td></tr>
       <tr><td><kbd>V</kbd></td><td>fly through it in 3D, and back to the map</td></tr>
       <tr><td>In 3D</td><td>click to look · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly · <kbd>Space</kbd> <kbd>C</kbd> up, down · <kbd>Q</kbd> <kbd>E</kbd> roll · <kbd>Shift</kbd> boost · wheel or <kbd>+</kbd> <kbd>−</kbd> throttle · click selects · <kbd>T</kbd> go to it</td></tr>

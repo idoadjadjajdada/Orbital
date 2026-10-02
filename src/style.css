@@ -152,7 +152,7 @@ kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-
   .menu button { padding: 11px 12px; }
 }
 
-.tools { left: calc(16px + env(safe-area-inset-left)); top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 5px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.tools { left: calc(16px + env(safe-area-inset-left)); top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; max-height: calc(100vh - 200px); overflow-y: auto; scrollbar-width: none; gap: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 5px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
 .tools button { display: flex; flex-direction: column; align-items: center; gap: 1px; width: 52px; padding: 6px 0 4px; background: none; border: 1px solid transparent; border-radius: 9px; cursor: pointer; touch-action: manipulation; }
 .tools button b { font-size: 17px; line-height: 1; font-weight: 400; filter: grayscale(0.4); }
 .tools button span { font-size: 10px; color: var(--dim); }
@@ -166,7 +166,8 @@ kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-
 .find button { display: flex; justify-content: space-between; gap: 8px; }
 .find button span { white-space: nowrap; }
 @media (max-width: 720px) {
-  .tools { top: auto; bottom: calc(160px + env(safe-area-inset-bottom)); transform: none; left: 8px; flex-direction: row; }
+  .tools { top: auto; bottom: calc(160px + env(safe-area-inset-bottom)); transform: none; left: 8px; right: 8px; flex-direction: row; overflow-x: auto; scrollbar-width: none; }
+  .tools button { flex: none; }
   .tools button { width: 44px; }
 }
 
