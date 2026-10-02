@@ -180,8 +180,13 @@ export class Renderer {
    * light comes from, so the map can show day and night.
    */
   surfaceOf(b: Body, sources: Body[]): { map: SurfaceMap; frame: [V3, V3, V3]; L: V3 | null } | null {
-    const e = this.maps.get(b);
-    if (!e) return null;
+    let e = this.maps.get(b);
+    // not drawn yet (the 3D view is showing): make its map now
+    if (!e) {
+      if (b.cls === 'star' || b.cls === 'wd' || b.cls === 'ns' || b.cls === 'bh' || b.look.craft) return null;
+      e = { map: buildMap(b.look), style: `${b.look.style}|${b.look.c1}|${b.look.c2}`, seen: new Set() };
+      this.maps.set(b, e);
+    }
     const stars = sources.filter(x => (x.cls === 'star' || x.cls === 'wd') && (x.star?.L ?? 0) > 0);
     const { L } = this.lightFor(b, stars);
     return { map: e.map, frame: bodyFrame(bodyAxis(b), this.spinVis.get(b) ?? 0), L };

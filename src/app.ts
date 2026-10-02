@@ -74,6 +74,33 @@ export class App {
   brush: { x: number; y: number } | null = null;
   private undoStack: Snapshot[] = [];
   onUndo: (label: string | null) => void = () => {};
+  /** the view from inside: loaded the first time it is asked for */
+  mode3d = false;
+  v3: import('./three/view3d').View3D | null = null;
+  private warp2d = -0.6;
+  onMode: () => void = () => {};
+
+  /** Switch between the map and the 3D view. In 3D the clock runs at one second a second unless the cheat says otherwise. */
+  async toggle3D() {
+    if (!this.mode3d) {
+      if (!this.v3) {
+        const { View3D } = await import('./three/view3d');
+        this.v3 = new View3D(this);
+      }
+      this.mode3d = true;
+      this.warp2d = this.warpLog;
+      this.warpLog = Math.log10(1 / (365.25 * 86400));
+      this.armed = null;
+      this.view.setAim(null, null);
+      this.v3.enter();
+    } else {
+      this.mode3d = false;
+      this.v3?.exit();
+      this.warpLog = this.warp2d;
+    }
+    document.body.classList.toggle('mode3d', this.mode3d);
+    this.onMode();
+  }
   openBuilder: () => void = () => {};
 
   /** a body being carried by the pointer: where the hand is, relative to what it was near */
@@ -411,6 +438,11 @@ export class App {
     this.visual = this.world.bodies.filter(b => b.alive && (b.source || !b.isParticle));
     if (this.frameNo % 120 === 0) for (const b of this.testHosts.keys()) if (!b.alive) this.testHosts.delete(b);
 
+    if (this.mode3d && this.v3) {
+      this.v3.frame(dtReal);
+      this.onFrame();
+      return;
+    }
     this.view.setCentre(this.centre(), dtReal);
     this.view.overlay = this.overlay;
     this.view.render({

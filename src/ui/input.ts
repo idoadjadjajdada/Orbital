@@ -275,6 +275,9 @@ export class Input {
     const tag = (e.target as HTMLElement)?.tagName;
     if (tag === 'INPUT' || tag === 'SELECT') return;
     const app = this.app;
+    if (e.code === 'KeyV' && !e.metaKey && !e.ctrlKey) { void app.toggle3D(); return; }
+    // in 3D the flying controls own the keyboard
+    if (app.mode3d) return;
     switch (e.code) {
       case 'Space': e.preventDefault(); if (!e.repeat) app.paused = !app.paused; break;
       case 'BracketLeft': app.warpLog = Math.max(-7.5, app.warpLog - 0.25); break;

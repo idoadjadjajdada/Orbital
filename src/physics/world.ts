@@ -51,7 +51,7 @@ export class World {
   }
 
   clear() {
-    for (const b of this.bodies) this.onRemove?.(b);
+    for (const b of this.bodies) { b.alive = false; this.onRemove?.(b); }
     this.bodies = [];
     this.sources = [];
     this.events = [];

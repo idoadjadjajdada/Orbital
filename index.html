@@ -34,6 +34,8 @@
       <button class="chip" id="findBtn" title="Find a body by name">Find</button>
       <button class="chip" id="undoBtn" title="Undo (Ctrl/⌘ Z)" disabled>↶ Undo</button>
       <button class="chip" id="clear" title="Clear (C)">Clear</button>
+      <button class="chip" id="modeBtn" title="Fly through it in 3D (V)">3D</button>
+      <button class="chip icon" id="setBtn" title="Settings">⚙</button>
       <button class="chip icon" id="helpBtn" title="Controls">?</button>
     </div>
     <div class="row toggles">
@@ -125,6 +127,14 @@
     </div>
   </div>
 
+  <div class="hud help" id="settings" hidden>
+    <div class="fhead">Settings <button class="icon close" id="sClose">✕</button></div>
+    <div class="bsub">Cheats</div>
+    <label class="cheat">Time speed <span id="cheatV"></span><input type="range" id="cheatWarp" min="-9" max="4" step="0.01" /></label>
+    <div class="row"><button class="chip" id="cheatReal">Real time</button></div>
+    <p>In 3D the clock runs at one second a second, as it would for you. This lets you hurry it up or slow it down, there or on the map.</p>
+  </div>
+
   <div class="hud help" id="help" hidden>
     <div class="fhead">Controls <button class="icon close" id="hClose">✕</button></div>
     <table>
@@ -139,6 +149,8 @@
       <tr><td><kbd>F</kbd> <kbd>Esc</kbd> <kbd>Del</kbd> <kbd>1</kbd>–<kbd>9</kbd></td><td>follow · deselect · delete · pick from shelf</td></tr>
       <tr><td><kbd>H</kbd> <kbd>R</kbd> <kbd>P</kbd> <kbd>M</kbd> <kbd>E</kbd></td><td>tools: move · ruler · push · bombard · erase</td></tr>
       <tr><td><kbd>B</kbd> · <kbd>Ctrl/⌘</kbd> <kbd>Z</kbd></td><td>build a body · undo</td></tr>
+      <tr><td><kbd>V</kbd></td><td>fly through it in 3D, and back to the map</td></tr>
+      <tr><td>In 3D</td><td>click to look · <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly · <kbd>Space</kbd> <kbd>C</kbd> up, down · <kbd>Q</kbd> <kbd>E</kbd> roll · <kbd>Shift</kbd> boost · wheel or <kbd>+</kbd> <kbd>−</kbd> throttle · click selects · <kbd>T</kbd> go to it</td></tr>
     </table>
     <p>Everything is at real scale and real time. Seen from above. Bodies are drawn at their true size once you are close enough, and never smaller than a few pixels — the physics underneath is fully 3D. Nothing is skipped: rings settle, discs drain and stars die only as fast as the clock runs.</p>
   </div>

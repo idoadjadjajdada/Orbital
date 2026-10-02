@@ -102,6 +102,22 @@ try {
     ok(`${key} places and runs`, await page.evaluate(() => window.orbital.world.bodies.length > 0 && isFinite(window.orbital.world.time)));
   }
 
+  // the view from inside
+  await page.evaluate(() => { const a = window.orbital; a.loadPreset('earth'); a.select(a.world.sources.find(b => b.name === 'Earth')); });
+  await page.keyboard.press('KeyV');
+  await page.waitForTimeout(2500);
+  ok('V opens the 3D view at real time', await page.evaluate(() => window.orbital.mode3d && Math.abs(window.orbital.warp * 31557600 - 1) < 1e-6 && !document.getElementById('c3').hidden));
+  const p0 = await page.evaluate(() => window.orbital.v3.where());
+  await page.keyboard.down('KeyW'); await page.waitForTimeout(800); await page.keyboard.up('KeyW');
+  ok('W flies forward', await page.evaluate(p => { const q = window.orbital.v3.where(); return Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) > 0; }, p0));
+  await page.evaluate(() => { const a = window.orbital; a.select(a.world.sources.find(b => b.name === 'Moon')); });
+  await page.keyboard.press('KeyT');
+  await page.waitForTimeout(4000);
+  ok('T flies to the selection', await page.evaluate(() => window.orbital.v3.nearest().b?.name === 'Moon'));
+  await page.keyboard.press('KeyV');
+  await page.waitForTimeout(300);
+  ok('V goes back to the map', await page.evaluate(() => !window.orbital.mode3d && document.getElementById('c3').hidden));
+
   ok('still no errors', errs.length === 0, errs.join(' | '));
   await page.close();
 
