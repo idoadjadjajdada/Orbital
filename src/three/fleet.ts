@@ -61,8 +61,10 @@ export interface Craft {
   mesh: THREE.Object3D;
   /** the craft it came from (a rover off a lander) */
   parent?: number;
-  /** the controls, while you drive it: forward and turn (−1–1) */
+  /** the controls, while you drive it: forward and turn (−1–1); whether you have it (no autopilot then), and its speed, m/s */
   drive: { f: number; s: number };
+  manual: boolean;
+  speed: number;
 }
 
 let nextId = 1;
@@ -137,7 +139,7 @@ export class Fleet {
     const c: Craft = {
       id: nextId++, kind, name: `${NAMES[kind]} ${n}`, b, state: 'cruise', t: 0, age: 0,
       from: shipAt.clone(), cruiseT: 0, orbit: null, n: where, head: rng(nextId, 2)() * 6.28, alt: 0, vz: 0,
-      log: [], profile: [], odo: 0, cover: 0, build: 0, status: 'on its way', mesh: this.model(kind), drive: { f: 0, s: 0 },
+      log: [], profile: [], odo: 0, cover: 0, build: 0, status: 'on its way', mesh: this.model(kind), drive: { f: 0, s: 0 }, manual: false, speed: 0,
       parent: parent?.id,
     };
     const dist = shipAt.length() - R;
@@ -249,9 +251,9 @@ export class Fleet {
         const fwd = c.orbit && c.state === 'orbit' ? new THREE.Vector3(-Math.sin(c.orbit.ph), Math.cos(c.orbit.ph), 0).applyQuaternion(c.orbit.plane) : this.arrival(c).sub(c.from).normalize();
         m.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), fwd, up.clone().negate()));
       } else {
-        const qb = bodyQuat(c.b);
-        const n = new THREE.Vector3(...c.n);
-        m.quaternion.copy(qb).multiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), n)).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -c.head));
+        // standing on the ground, its nose along its heading (a rover's, on the slope it is on)
+        m.quaternion.copy(bodyQuat(c.b)).multiply(this.attitude(c));
+        if (c.kind === 'rover') m.traverse(o => { if (o.name === 'wheel') o.rotation.x = -c.odo / 0.26; });
       }
       const chute = m.getObjectByName('chute');
       if (chute) chute.visible = c.state === 'descent' && this.air(c.b).bar > 0.005 && c.vz < 200;
@@ -355,6 +357,23 @@ export class Fleet {
     if (c.kind === 'lander' && (b.look.real === 'Mars' || b.look.real === 'Moon')) this.note(c, b.look.real === 'Mars' ? 'Seismometer: a marsquake every few days (InSight heard 1,319)' : 'Seismometer: deep moonquakes, ringing for an hour each');
   }
 
+  /** a craft's attitude on the ground, body frame: up along the ground (tilted with the slope for a rover), nose along its heading */
+  attitude(c: Craft) {
+    const [e, nn] = tangent(c.n), R = c.b.r * AU_M;
+    const fwd = new THREE.Vector3(...nn).multiplyScalar(Math.cos(c.head)).addScaledVector(new THREE.Vector3(...e), -Math.sin(c.head));
+    let up = new THREE.Vector3(...c.n);
+    if (c.kind === 'rover') {
+      // the slope under its wheels: heights a wheelbase ahead and behind, and either side
+      const at = (d: number, h: number) => this.heightAt(c.b, this.offset(c.n, d, h, R), 0.5);
+      const pitch = (at(1.4, c.head) - at(1.4, c.head + Math.PI)) / 2.8, roll = (at(1.1, c.head - Math.PI / 2) - at(1.1, c.head + Math.PI / 2)) / 2.2;
+      const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
+      up = up.clone().addScaledVector(fwd, -pitch).addScaledVector(right, -roll).normalize();
+    }
+    const f = fwd.addScaledVector(up, -fwd.dot(up)).normalize();
+    const back = f.clone().negate(), x = new THREE.Vector3().crossVectors(up, back);
+    return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, up, back));
+  }
+
   private surface(c: Craft, dt: number) {
     const b = c.b, R = b.r * AU_M;
     if (c.kind === 'base') {
@@ -362,17 +381,22 @@ export class Fleet {
       return;
     }
     if (c.kind !== 'rover') return;
-    // the rover drives: under your hand, or on its own between waypoints
-    const auto = c.drive.f === 0 && c.drive.s === 0;
-    let f = c.drive.f, turn = c.drive.s;
-    if (auto) { f = 0.6; turn = Math.sin(c.age * 0.13 + c.id) * 0.25; }
-    c.head += turn * dt * 0.8;
-    const next = this.offset(c.n, f * 3 * dt, c.head, R);
+    // the rover drives: under your hand (throttle and steering, no autopilot), or on its own when nobody has it
+    let want: number, turn: number;
+    if (c.manual) { want = c.drive.f * 4; turn = c.drive.s; }
+    else { want = 1.5; turn = Math.sin(c.age * 0.13 + c.id) * 0.25; }
+    // it speeds up and slows down, and steers by its wheels: a tight turn on the spot is slow
+    const acc = Math.abs(want) > Math.abs(c.speed) || Math.sign(want) !== Math.sign(c.speed) ? 3 : 4;
+    c.speed += Math.max(-acc * dt, Math.min(acc * dt, want - c.speed));
+    if (Math.abs(c.speed) < 0.01 && want === 0) c.speed = 0;
+    c.head += turn * dt * 0.9 * (Math.abs(c.speed) > 0.3 ? Math.sign(c.speed) : 0.5);
+    if (c.speed === 0) return;
+    const next = this.offset(c.n, c.speed * dt, c.head, R);
     this.heightAt(b, next, 0.5);
-    if (this.smp.sea) { c.head += Math.PI * 0.5; return; }
+    if (this.smp.sea) { c.speed = 0; if (!c.manual) c.head += Math.PI * 0.5; return; }
     c.n = next;
     const before = Math.floor(c.odo / 60);
-    c.odo += Math.abs(f) * 3 * dt;
+    c.odo += Math.abs(c.speed) * dt;
     if (Math.floor(c.odo / 60) > before) this.sampleStop(c);
   }
 

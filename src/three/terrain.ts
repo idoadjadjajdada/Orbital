@@ -200,10 +200,12 @@ export function groundAt(s: GroundSpec, n: V3, fine: number, out: GroundSample, 
   // fractal hills: from a tenth of the relief at 30 km (less on a small world) down to the finest asked
   const top = Math.min(30000, R * 0.08), A0 = s.relief * (s.scale ? 0.035 : 0.1);
   let rough = 0;
+  // each octave fades in over a factor of two above `fine`, so a vertex never carries detail it is too far apart
+  // to sample: the same ground comes out wherever the vertices fall, as the patch is rebuilt round you
   for (let lam = top, a = A0, k = 0; lam > fine && k < 18; lam *= 0.5, a *= 0.55, k++) {
-    const q = 1 / lam;
+    const q = 1 / lam, w = Math.min(1, (lam - fine) / fine);
     const v = k < 4 ? ridged(px * q + seed, py * q, pz * q, 1) - 0.5 : vnoise(px * q + seed + k * 7.1, py * q, pz * q) - 0.5;
-    h += v * a * 2;
+    h += v * a * 2 * w;
     if (lam < 50) rough += Math.abs(v);
   }
   if (s.lumpy) h += (fbm(n[0] * 2 + seed, n[1] * 2, n[2] * 2, 4) - 0.5) * R * 0.25;
@@ -233,7 +235,7 @@ function craters(px: number, py: number, pz: number, top: number, fine: number, 
   let dh = 0;
   const sd = Math.floor(seed);
   for (let lam = top, k = 0; lam > fine * 2 && k < 14; lam *= 0.5, k++) {
-    const q = 1 / lam;
+    const q = 1 / lam, wk = Math.min(1, (lam - 2 * fine) / (2 * fine));
     const cx = Math.floor(px * q), cy = Math.floor(py * q), cz = Math.floor(pz * q);
     for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (let l = -1; l <= 1; l++) {
       const X = cx + i, Y = cy + j, Z = cz + l;
@@ -246,7 +248,7 @@ function craters(px: number, py: number, pz: number, top: number, fine: number, 
       // older craters are shallower and softer
       const fresh = 0.25 + 0.75 * hash(X + 9, Y + 1, Z + k);
       const depth = 0.2 * 2 * rad * fresh, rim = 0.04 * 2 * rad * fresh;
-      dh += dd < 1 ? rim - (depth + rim) * (1 - dd * dd) : rim * Math.pow((2 - dd), 3);
+      dh += wk * (dd < 1 ? rim - (depth + rim) * (1 - dd * dd) : rim * Math.pow((2 - dd), 3));
     }
   }
   return dh;
@@ -272,8 +274,34 @@ export interface Patch {
   index: Uint32Array;
   /** height of the ground at the middle, m */
   h0: number;
-  /** boulders to scatter: positions (as pos), sizes */
+  /** boulders to scatter: position (as pos), size and a seed for its shape, five numbers each */
   rocks: Float32Array;
+}
+
+/**
+ * Points fixed to a world's ground, near a direction `c`: one candidate per
+ * cell of a square lattice laid on the face of a cube round the world, with
+ * a jitter. The same cells come back whatever `c` is, so what is scattered
+ * this way (boulders, trees, rock formations) stays put as you move. `fn`
+ * gets the point (unit, body frame) and its cell (i, j, face).
+ */
+export function lattice(c: V3, R: number, radius: number, cell: number, fn: (n: V3, i: number, j: number, f: number) => void) {
+  const m = Math.abs(c[0]) >= Math.abs(c[1]) && Math.abs(c[0]) >= Math.abs(c[2]) ? 0 : Math.abs(c[1]) >= Math.abs(c[2]) ? 1 : 2;
+  const sg = c[m] >= 0 ? 1 : -1, a = (m + 1) % 3, b = (m + 2) % 3, f = m * 2 + (sg > 0 ? 0 : 1);
+  const u0 = (c[a] / Math.abs(c[m])) * R, v0 = (c[b] / Math.abs(c[m])) * R;
+  // the face coordinates stretch away from the middle of the face: allow for it
+  const r = radius * 1.8;
+  const i0 = Math.floor((u0 - r) / cell), i1 = Math.floor((u0 + r) / cell), j0 = Math.floor((v0 - r) / cell), j1 = Math.floor((v0 + r) / cell);
+  const d: V3 = [0, 0, 0];
+  for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
+    const u = (i + hash(i, j, f * 7 + 1)) * cell, v = (j + hash(i, j, f * 7 + 2)) * cell;
+    d[m] = sg; d[a] = u / R; d[b] = v / R;
+    const l = Math.hypot(d[0], d[1], d[2]);
+    const n: V3 = [d[0] / l, d[1] / l, d[2] / l];
+    const cos = n[0] * c[0] + n[1] * c[1] + n[2] * c[2];
+    if (Math.acos(Math.min(1, cos)) * R > radius) continue;
+    fn(n, i, j, f);
+  }
 }
 
 /** a tangent basis at a unit vector: east, north */
@@ -305,7 +333,8 @@ export function buildPatch(job: PatchJob): Patch {
   for (let i = 0; i <= N; i++) {
     const dist = i === 0 ? 0 : r0 * Math.pow(ratio, i - 1);
     const step = i === 0 ? r0 : dist * (ratio - 1);
-    const fine = Math.max(0.4, 0.5 * Math.max(step, (2 * Math.PI * dist) / S));
+    // twice the vertex spacing: anything finer would alias, and shift as the patch moves
+    const fine = Math.max(0.4, 2 * Math.max(step, (2 * Math.PI * dist) / S));
     const th = dist / R, ct = Math.cos(th), st = Math.sin(th);
     for (let j = 0; j < S; j++) {
       const ph = (j / S) * 2 * Math.PI + (i % 2) * (Math.PI / S);
@@ -318,12 +347,18 @@ export function buildPatch(job: PatchJob): Patch {
       col[k * 3] = out.r; col[k * 3 + 1] = out.g; col[k * 3 + 2] = out.b;
       sea[k] = out.sea ? 1 : 0;
       // boulders on rocky ground, near the middle
-      // (most small, a few big: a power law, as the boulder counts round lunar craters go)
-      if (!out.sea && dist > 2 && dist < 400 && out.rock > 0.3 && hash(i * 31 + 7, j * 17 + 3, Math.floor(s.look.seed)) < out.rock * 0.06) {
-        rocks.push(P[k * 3], P[k * 3 + 1], P[k * 3 + 2], Math.min(step, 3) * (0.08 + 0.5 * Math.pow(hash(i, j, 5), 3)) * out.rock);
-      }
     }
   }
+  // boulders: most small, a few big — a power law, as the boulder counts round lunar craters go
+  const sd = Math.floor(s.look.seed % 9973);
+  lattice(c, R, 220, 4, (n, i, j, f) => {
+    const h1 = hash(i * 3 + 1, j * 7 + 2, f * 13 + sd);
+    if (h1 > 0.09) return;
+    const h = groundAt(s, n, 1, out, paint, det);
+    if (out.sea || h1 > 0.09 * out.rock) return;
+    const rr = R + h;
+    rocks.push(n[0] * rr - c[0] * R, n[1] * rr - c[1] * R, n[2] * rr - c[2] * R, 3 * (0.08 + 0.55 * Math.pow(hash(i, j, f + 5), 3)) * out.rock, hash(i, j, f + 9) * 1e4);
+  });
   // normals from the neighbours across and along the rings
   const nrm = new Float32Array(nv * 3);
   const at = (i: number, j: number) => ((Math.max(0, Math.min(N, i)) * S + ((j % S) + S) % S) * 3);

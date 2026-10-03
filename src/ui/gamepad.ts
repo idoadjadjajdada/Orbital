@@ -14,6 +14,13 @@ export class Pad {
   rt = 0;
   private held: boolean[] = [];
   private was: boolean[] = [];
+  /**
+   * where each axis and trigger sits at rest, from the first reading after the
+   * controller connects. Some controllers and browsers report a trigger as an
+   * axis resting at −1, or a trigger that never quite lets go, which would
+   * otherwise read as held for ever — and zoom or turn the view on its own
+   */
+  private rest: { id: string; axes: number[]; lt: number; rt: number } | null = null;
 
   constructor(onConnect?: (name: string, on: boolean) => void) {
     window.addEventListener('gamepadconnected', e => onConnect?.(short(e.gamepad.id), true));
@@ -33,11 +40,21 @@ export class Pad {
     }
     this.connected = true;
     this.name = short(g.id);
+    if (!this.rest || this.rest.id !== g.id) {
+      this.rest = { id: g.id, axes: g.axes.map(a => (Math.abs(a) > 0.5 ? a : 0)), lt: g.buttons[BTN.LT]?.value ?? 0, rt: g.buttons[BTN.RT]?.value ?? 0 };
+      // a trigger that reads fully pressed at rest is reported back to front: nothing to calibrate from
+      if (this.rest.lt > 0.9) this.rest.lt = 0;
+      if (this.rest.rt > 0.9) this.rest.rt = 0;
+    }
+    const r = this.rest;
+    // an axis that rests far off centre is a trigger, not half a stick: leave it out of the sticks
+    const ax = (k: number) => (r.axes[k] ? 0 : g!.axes[k] ?? 0);
     this.held = g.buttons.map(b => b.pressed);
-    this.ls = stick(g.axes[0] ?? 0, g.axes[1] ?? 0);
-    this.rs = stick(g.axes[2] ?? 0, g.axes[3] ?? 0);
-    this.lt = trig(g.buttons[BTN.LT]?.value ?? 0);
-    this.rt = trig(g.buttons[BTN.RT]?.value ?? 0);
+    this.ls = stick(ax(0), ax(1));
+    this.rs = stick(ax(2), ax(3));
+    const tr = (v: number, z: number) => trig(z > 0.06 ? Math.max(0, (v - z) / (1 - z)) : v);
+    this.lt = tr(g.buttons[BTN.LT]?.value ?? 0, r.lt);
+    this.rt = tr(g.buttons[BTN.RT]?.value ?? 0, r.rt);
   }
 
   /** held now */

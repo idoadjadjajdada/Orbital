@@ -526,7 +526,8 @@ export class App {
       this.pan.x += p.ls[0] * k;
       this.pan.y -= p.ls[1] * k;
     }
-    const z = (p.rt - p.lt) * 2.5 - p.rs[1] * 2.5;
+    // the triggers zoom; so does the right stick, pushed well over (a worn stick resting just past its dead zone would creep)
+    const z = (p.rt - p.lt) * 2.5 - (Math.abs(p.rs[1]) > 0.3 ? p.rs[1] : 0) * 2.5;
     if (z) v.scale = v.scaleGoal = Math.min(1e13, Math.max(1e-4, v.scale * Math.exp(z * dt)));
     if (p.hit(BTN.RIGHT)) this.cycle(1, this.centre());
     if (p.hit(BTN.LEFT)) this.cycle(-1, this.centre());

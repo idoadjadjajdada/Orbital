@@ -800,8 +800,8 @@ export class View3D {
       const p = new THREE.Vector3(n[0] * r, n[1] * r, n[2] * r).applyQuaternion(bodyQuat(b));
       return [b.x + p.x / AU_M, b.y + p.y / AU_M, b.z + p.z / AU_M] as V3;
     };
-    this.travel = { b: null, at: over, stop: 20 / AU_M, name };
-    this.app.onToast(`Flying to ${name}: L lands when you are there`);
+    this.travel = { b: null, at: over, stop: 20 / AU_M, name, land: true };
+    this.app.onToast(`Flying to ${name}, to land there`);
   }
 
   /** a rover off a landed lander */
@@ -816,6 +816,8 @@ export class View3D {
   viewCraft(id: number) {
     const c = this.fleet.byId(id);
     if (!c) return;
+    const was = this.craftView ? this.fleet.byId(this.craftView.id) : null;
+    if (was && was !== c) { was.drive = { f: 0, s: 0 }; was.manual = false; }
     const back = this.mode === 'craft' ? this.craftView?.back ?? 'pilot' : this.mode;
     const dist = c.kind === 'station' ? 160 : c.kind === 'base' ? 110 : c.kind === 'orbiter' ? 30 : c.kind === 'lander' ? 16 : c.kind === 'rover' ? 10 : 14;
     // from orbit, looking down past it to the world
@@ -827,7 +829,7 @@ export class View3D {
 
   leaveCraft() {
     const v = this.craftView;
-    if (v) { const c = this.fleet.byId(v.id); if (c) c.drive = { f: 0, s: 0 }; }
+    if (v) { const c = this.fleet.byId(v.id); if (c) { c.drive = { f: 0, s: 0 }; c.manual = false; } }
     this.mode = v?.back ?? 'pilot';
     this.craftView = null;
   }
@@ -844,10 +846,12 @@ export class View3D {
   private placeCraft() {
     const v = this.craftView!, c = this.fleet.byId(v.id);
     if (!c) { this.leaveCraft(); return false; }
-    if (c.kind === 'rover') { const inp = this.controls.walkInput(); c.drive = { f: inp.f, s: -inp.s }; }
+    if (c.kind === 'rover') { const inp = this.controls.walkInput(); c.drive = { f: inp.f, s: -inp.s }; c.manual = c.state === 'surface'; }
     const loc = this.fleet.local(c), U = loc.clone().normalize();
     // a horizontal reference: the craft's heading on the ground, or its way along the orbit
-    let fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(c.mesh.quaternion);
+    // (on the ground, its heading, not its body, so the camera does not rock with every bump)
+    let fwd = c.state === 'surface' ? (() => { const [e, nn] = tangent(c.n); return new THREE.Vector3(...nn).multiplyScalar(Math.cos(c.head)).addScaledVector(new THREE.Vector3(...e), -Math.sin(c.head)).applyQuaternion(bodyQuat(c.b)); })()
+      : new THREE.Vector3(0, 0, -1).applyQuaternion(c.mesh.quaternion);
     fwd.addScaledVector(U, -fwd.dot(U));
     if (fwd.lengthSq() < 1e-8) fwd = new THREE.Vector3(...tangent([U.x, U.y, U.z])[1]);
     fwd.normalize();
@@ -1020,7 +1024,9 @@ export class View3D {
   private placeSurf() {
     const S = this.surf, b = S.b!, spec = this.ground.spec;
     if (!spec) return;
-    const h = this.ground.heightAt(S.n, 0.3), g0 = this.ground.last_sample.sea ? 0 : h;
+    const h = this.ground.heightAt(S.n, 0.3), cave = this.ground.formationAt(S.n).cave;
+    // in a cave, its level floor; elsewhere the ground (or the sea's surface)
+    const g0 = cave ?? (this.ground.last_sample.sea ? 0 : h);
     const r = spec.R + g0 + S.y + 1.7;
     const p = new THREE.Vector3(S.n[0] * r, S.n[1] * r, S.n[2] * r).applyQuaternion(bodyQuat(b));
     S.nav.anchor = b;
@@ -1047,7 +1053,7 @@ export class View3D {
       const next: V3 = [m[0] / l, m[1] / l, m[2] / l];
       this.ground.heightAt(next, 0.5);
       if (this.ground.last_sample.sea) { if (performance.now() - this.seaToast > 4000) { this.seaToast = performance.now(); this.app.onToast('The water’s edge: you would need a boat'); } }
-      else S.n = next;
+      else if (!this.ground.formationAt(next).blocked) S.n = next;
     }
     S.speed = Math.hypot(inp.f, inp.s) * sp;
     if (inp.jump && !air) S.vy = 3.4;
@@ -1400,6 +1406,8 @@ export class View3D {
       for (let k = 0; k < 3; k++) v[k] += (want[k] - v[k]) * Math.min(1, dt * 4);
     }
     for (let k = 0; k < 3; k++) n.off[k] += (v[k] * dt) / AU_M;
+    // low over a world, the ship turns with it, so it hovers over the same ground (Mars's turns 240 m/s at the equator)
+    this.carry(n, dt);
     // a giant's winds carry the ship along
     if (this.giant.body && this.giant.inside > 0) {
       const w = this.giant.windVec, k = Math.min(1, this.giant.inside) * dt / AU_M;
@@ -1415,6 +1423,23 @@ export class View3D {
       if (out) { this.throughNatural(near.b, out); return; }
     }
     this.clear(n, SHIP_CLEAR);
+  }
+
+  /**
+   * near a solid world's ground, carry a mover round with the ground as the
+   * world turns: fully below 30 km, fading out by 150 km
+   */
+  private carry(m: Mover, dt: number) {
+    const b = this.ground.body;
+    if (!b || m.anchor !== b || !b.spin) return;
+    const p = posOf(m);
+    const r = new THREE.Vector3((p[0] - b.x) * AU_M, (p[1] - b.y) * AU_M, (p[2] - b.z) * AU_M);
+    const alt = r.length() - b.r * AU_M;
+    const k = alt < 30e3 ? 1 : alt > 150e3 ? 0 : 1 - (alt - 30e3) / 120e3;
+    if (k <= 0) return;
+    const w = new THREE.Vector3(...bodyAxis(b)).multiplyScalar(b.spin / YR);
+    const vg = new THREE.Vector3().crossVectors(w, r).multiplyScalar(k * dt / AU_M);
+    m.off[0] += vg.x; m.off[1] += vg.y; m.off[2] += vg.z;
   }
 
   /** never inside anything: keep a mover `gap` m above the nearest surface */
@@ -1538,6 +1563,7 @@ export class View3D {
     const want = this.controls.thrust(4 * this.controls.throttle, this.suit.quat);
     for (let k = 0; k < 3; k++) v[k] += (want[k] - v[k]) * Math.min(1, dt * 1.5);
     for (let k = 0; k < 3; k++) s.off[k] += (v[k] * dt) / AU_M;
+    this.carry(s, dt);
     this.clear(s, 2);
     // down onto the ground: on your feet
     const o = this.overGround(s);
@@ -1609,13 +1635,14 @@ export class View3D {
     else if (this.mode === 'craft') {
       const c = this.craftView ? this.fleet.byId(this.craftView.id) : null;
       where = c ? `${c.name} · ${c.b.name} · ${c.status}` : 'Craft';
-      if (c?.kind === 'rover') speed = `${(Math.abs(c.drive.f) * 3).toFixed(1)} m/s · ${(c.odo / 1000).toFixed(2)} km driven`;
+      if (c?.kind === 'rover') speed = `${Math.abs(c.speed).toFixed(1)} m/s${c.speed < -0.05 ? ' reversing' : ''} · ${(c.odo / 1000).toFixed(2)} km driven`;
       else if (c?.state === 'descent') speed = `${(c.alt / 1000).toFixed(1)} km up · falling ${c.vz.toFixed(0)} m/s`;
       else if (c?.orbit) speed = `${((c.orbit.r - c.b.r * AU_M) / 1000).toFixed(0)} km orbit`;
     }
     else if (this.mode === 'surface') {
       const S = this.surf, [la, lo] = latLonOf(S.n);
-      where = `On ${S.b?.name ?? 'the ground'} · ${Math.abs(la).toFixed(3)}°${la >= 0 ? 'N' : 'S'} ${Math.abs(lo).toFixed(3)}°${lo >= 0 ? 'E' : 'W'}`;
+      const inCave = this.ground.formationAt(S.n).cave !== null;
+      where = `${inCave ? 'In a cave on' : 'On'} ${S.b?.name ?? 'the ground'} · ${Math.abs(la).toFixed(3)}°${la >= 0 ? 'N' : 'S'} ${Math.abs(lo).toFixed(3)}°${lo >= 0 ? 'E' : 'W'}`;
       speed = `${S.speed.toFixed(1)} m/s on foot`;
     }
     else {

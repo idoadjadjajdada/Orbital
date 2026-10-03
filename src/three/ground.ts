@@ -4,10 +4,11 @@ import { AU_M } from '../physics/units';
 import { bodyFrame, type V3 } from '../pixel/sprites';
 import { bodyAxis } from '../pixel/renderer';
 import { hash } from '../pixel/noise';
-import { groundSpec, groundAt, buildPatch, patchSize, tangent, groundPainter, type GroundSpec, type Patch, type PatchJob, type GroundSample } from './terrain';
+import { groundSpec, groundAt, buildPatch, patchSize, tangent, groundPainter, lattice, type GroundSpec, type Patch, type PatchJob, type GroundSample } from './terrain';
 import { detailFor } from '../pixel/surface';
 import { atmosphere, life, gravity, rng, type Atmosphere, type Life } from './science';
 import { sitesOn, earthBiome, speciesIn, type Site, type Biome } from './sites';
+import { formationsNear, formationMesh, setCaveDaylight, localXZ, blocked, inCave, type Formation } from './formations';
 import { apolloMesh, flagMesh, lrvMesh, landerMesh, roverMesh, veneraMesh, huygensMesh, probeMesh, alienMesh } from './craftmesh';
 
 /**
@@ -191,6 +192,9 @@ export class Ground {
   private floraAt: V3 | null = null;
   private critters: Critter[] = [];
   private found = new Set<string>();
+  /** rock formations near you: what they are and their meshes, and where the list was last made */
+  private forms = new Map<string, { fm: Formation; obj: THREE.Group }>();
+  private formsAt: V3 | null = null;
   private q = new THREE.Quaternion();
   private t = 0;
 
@@ -284,6 +288,9 @@ export class Ground {
     this.floraAt = null;
     for (const c of this.critters) { this.root.remove(c.obj); disposeTree(c.obj); }
     this.critters = [];
+    for (const f of this.forms.values()) { this.root.remove(f.obj); disposeTree(f.obj); }
+    this.forms.clear();
+    this.formsAt = null;
     this.patch = null;
     this.ready = false;
     this.want = null;
@@ -309,16 +316,17 @@ export class Ground {
     (this.mat.uniforms.offset.value as THREE.Vector3).set(mod(p.c[0] * R, L), mod(p.c[1] * R, L), mod(p.c[2] * R, L));
     // boulders
     if (this.rocks) { this.mesh.remove(this.rocks); this.rocks.dispose(); this.rocks = null; }
-    const n = p.rocks.length / 4;
+    const n = p.rocks.length / 5;
     if (n) {
       const rk = new THREE.InstancedMesh(this.rockGeo, this.rockMat, n);
       const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), s = new THREE.Vector3(), at = new THREE.Vector3(), c = new THREE.Color();
       for (let k = 0; k < n; k++) {
-        const sz = p.rocks[k * 4 + 3];
-        e.set(hash(k, 1, 2) * 6, hash(k, 3, 4) * 6, hash(k, 5, 6) * 6);
+        const sz = p.rocks[k * 5 + 3], sd = Math.floor(p.rocks[k * 5 + 4]);
+        // each boulder's shape from its own seed, so it is the same boulder every time the ground is rebuilt
+        e.set(hash(sd, 1, 2) * 6, hash(sd, 3, 4) * 6, hash(sd, 5, 6) * 6);
         q.setFromEuler(e);
-        s.set(sz * (0.8 + 0.6 * hash(k, 7, 1)), sz * (0.5 + 0.4 * hash(k, 8, 1)), sz * (0.8 + 0.6 * hash(k, 9, 1)));
-        at.set(p.rocks[k * 4], p.rocks[k * 4 + 1], p.rocks[k * 4 + 2]);
+        s.set(sz * (0.8 + 0.6 * hash(sd, 7, 1)), sz * (0.5 + 0.4 * hash(sd, 8, 1)), sz * (0.8 + 0.6 * hash(sd, 9, 1)));
+        at.set(p.rocks[k * 5], p.rocks[k * 5 + 1], p.rocks[k * 5 + 2]);
         m.compose(at, q, s);
         rk.setMatrixAt(k, m);
         // the colour of the ground it sits on, darker
@@ -396,6 +404,7 @@ export class Ground {
     this.rockMat.color.setScalar(1);
     // things on the ground, near enough to matter
     if (alt < 60e3) this.placeSites(n, alt);
+    if (alt < 15e3) this.placeForms(n);
     if (alt < 3000) this.life(dt, n);
     else if (this.flora.length || this.critters.length) this.clearLife();
   }
@@ -477,6 +486,49 @@ export class Ground {
     // city lights come on at night
     const night = 1 - this.daylight;
     for (const p of this.placed.values()) p.obj.traverse(o => { const m = (o as THREE.Mesh).material as THREE.MeshLambertMaterial | undefined; if (m && (m as { userData?: { glow?: boolean } }).userData?.glow) m.emissive.setRGB(0.9 * night, 0.7 * night, 0.35 * night); });
+  }
+
+  /** the rock formations within a few kilometres: made when you arrive and again when you have moved on */
+  private placeForms(n: V3) {
+    const spec = this.spec!, R = spec.R;
+    if (!this.formsAt || arc(n, this.formsAt) * R > 400) {
+      this.formsAt = n;
+      const list = formationsNear(spec, n, 3000, gravity(this.body!), m => { const h = this.heightAt(m, 2); return { h: this.sample.sea ? 0 : h, sea: this.sample.sea, rgb: [this.sample.r, this.sample.g, this.sample.b] }; });
+      const keep = new Set(list.map(f => f.key));
+      for (const [k, f] of this.forms) if (!keep.has(k)) { this.root.remove(f.obj); disposeTree(f.obj); this.forms.delete(k); }
+      for (const fm of list) {
+        if (this.forms.has(fm.key)) continue;
+        const obj = formationMesh(fm, spec);
+        const r = R + fm.h - (fm.kind === 'cave' ? 0.6 : 0.4);
+        obj.position.set(fm.n[0] * r, fm.n[1] * r, fm.n[2] * r);
+        // its own frame: x east, y up, z south, turned about its up
+        obj.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(...fm.e), new THREE.Vector3(...fm.n), new THREE.Vector3(...fm.nn).negate()));
+        obj.rotateY(fm.yaw);
+        this.root.add(obj);
+        this.forms.set(fm.key, { fm, obj });
+      }
+    }
+    for (const { fm, obj } of this.forms.values()) {
+      if (fm.kind === 'cave') setCaveDaylight(obj, this.daylight);
+      const d = arc(n, fm.n) * R;
+      if (d < fm.size * 1.2) {
+        const name = fm.kind === 'cave' ? (spec.look.style === 'ice' || /Europa|Enceladus|Pluto|Triton|Ganymede|Callisto|Charon/.test(spec.look.real ?? '') ? 'An ice cave' : /Moon|Mars|Mercury/.test(spec.look.real ?? '') ? 'A lava tube' : 'A cave') : { arch: 'A natural arch', hoodoo: 'A hoodoo', mushroom: 'A mushroom rock', mesa: 'A mesa', blades: 'A field of ice blades', cave: '' }[fm.kind];
+        const key = `form:${fm.key}`;
+        if (!this.found.has(key)) { this.found.add(key); this.onFind(`${name} on ${this.body!.name}`, `${fm.size.toFixed(0)} m across`); }
+      }
+    }
+  }
+
+  /** the formation (if any) a walker at n is up against: blocked by rock, or standing in a cave (and its floor) */
+  formationAt(n: V3): { blocked: boolean; cave: number | null } {
+    const R = this.spec?.R ?? 1;
+    for (const { fm } of this.forms.values()) {
+      if (arc(n, fm.n) * R > fm.size * 2.2) continue;
+      const [x, z] = localXZ(fm, n, R);
+      if (blocked(fm, x, z)) return { blocked: true, cave: null };
+      if (inCave(fm, x, z)) return { blocked: false, cave: fm.cave!.floor };
+    }
+    return { blocked: false, cave: null };
   }
 
   /** put an object on the ground in a direction, standing up */
@@ -621,26 +673,27 @@ export class Ground {
       let a = 0, bN = 0, cN = 0;
       const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), col = new THREE.Color();
       const base = new THREE.Vector3(n[0] * R, n[1] * R, n[2] * R);
-      for (let k = 0; k < 2400 && a < 1200; k++) {
-        const rad = 6 + 300 * Math.sqrt(r()), ang = r() * Math.PI * 2;
-        if (r() > density) continue;
-        const th = rad / R;
-        const dir: V3 = [Math.cos(th) * n[0] + Math.sin(th) * (Math.cos(ang) * e[0] + Math.sin(ang) * nn[0]), Math.cos(th) * n[1] + Math.sin(th) * (Math.cos(ang) * e[1] + Math.sin(ang) * nn[1]), Math.cos(th) * n[2] + Math.sin(th) * (Math.cos(ang) * e[2] + Math.sin(ang) * nn[2])];
+      // on the world's own lattice, so the same trees stand in the same places however often this is redone
+      const sd = Math.floor(b.look.seed % 9973) + 17;
+      lattice(n, R, 300, 11, (dir, i, j, f) => {
+        if (a >= 1200 || hash(i * 5 + 3, j * 11 + 1, f + sd) > density) return;
+        const rad = arc(dir, n) * R;
+        if (rad < 5) return;
         const h = this.heightAt(dir, 2);
-        if (this.sample.sea) continue;
-        const kind = kinds[Math.floor(r() * kinds.length)];
-        const sz = kind.size * (0.5 + 0.7 * r());
+        if (this.sample.sea) return;
+        const kind = kinds[Math.floor(hash(i, j, f + sd + 1) * kinds.length)];
+        const sz = kind.size * (0.5 + 0.7 * hash(i, j, f + sd + 2));
         q.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(...dir));
         p.set(dir[0] * (R + h) - base.x, dir[1] * (R + h) - base.y, dir[2] * (R + h) - base.z);
         s.set(Math.max(0.6, sz * 0.12), sz * 0.6, Math.max(0.6, sz * 0.12));
         m.compose(p, q, s);
         trunk.setMatrixAt(a++, m);
         const top = p.clone().add(new THREE.Vector3(...dir).multiplyScalar(sz * (kind.cone ? 0.25 : 0.45)));
-        col.setHex(kind.col).offsetHSL(0, 0, (r() - 0.5) * 0.12);
+        col.setHex(kind.col).offsetHSL(0, 0, (hash(i, j, f + sd + 3) - 0.5) * 0.12);
         if (kind.cone) { s.set(sz * 0.45, sz * 0.8, sz * 0.45); m.compose(top, q, s); cone.setMatrixAt(cN, m); cone.setColorAt(cN++, col); }
         else { s.set(sz * 0.6, sz * 0.55, sz * 0.6); m.compose(top, q, s); crown.setMatrixAt(bN, m); crown.setColorAt(bN++, col); }
         if (rad < 60 && !this.found.has(kind.name)) { this.found.add(kind.name); this.onFind(kind.name, 'Plant life.'); }
-      }
+      });
       trunk.count = a; crown.count = bN; cone.count = cN;
       for (const im of [trunk, crown, cone]) { im.position.copy(base); im.frustumCulled = false; this.root.add(im); this.flora.push(im); }
     }
