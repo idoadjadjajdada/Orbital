@@ -18,6 +18,7 @@ import { Ground, bodyQuat, latLonOf, arc } from './ground';
 import { tangent } from './terrain';
 import { gravity } from './science';
 import { Fleet, type CraftKind } from './fleet';
+import { Giant, HULL_BAR } from './giant';
 
 /**
  * The sandbox seen from inside it, at true scale. The scene is laid out in
@@ -232,6 +233,9 @@ export class View3D {
   ground: Ground;
   /** the craft the ship has sent out */
   fleet: Fleet;
+  /** inside a giant planet's clouds */
+  giant: Giant;
+  private crushToast = 0;
   /** watching (or driving) one of them: which, the mode to go back to, and the camera round it */
   craftView: { id: number; back: Mode; yaw: number; pitch: number; dist: number } | null = null;
   /** the bay doors, open for a launch: seconds left */
@@ -303,6 +307,7 @@ export class View3D {
     this.ground = new Ground(this.scene);
     this.ground.onFind = (what, note) => this.found(what, note);
     this.fleet = new Fleet(this.scene, () => this.stars());
+    this.giant = new Giant(this.scene, this.glowTex);
     this.fleet.onNews = m => this.app.onToast(m);
     this.markers = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ size: 3, sizeAttenuation: false, vertexColors: true, depthWrite: false }));
     this.markers.frustumCulled = false;
@@ -1088,7 +1093,9 @@ export class View3D {
     const seen = new Set<Body>();
     const tanPx = Math.tan((cam.fov * Math.PI) / 360) / (window.innerHeight / 4);
     const mk: number[] = [], mc: number[] = [];
-    if (!tunnel) for (const b of app.visual) {
+    // deep in a giant's clouds nothing outside can be seen
+    const blind = tunnel || this.giant.inside > 0.97;
+    if (!blind) for (const b of app.visual) {
       const rel: V3 = [(b.x - P[0]) * AU_M, (b.y - P[1]) * AU_M, (b.z - P[2]) * AU_M];
       const dist = Math.hypot(rel[0], rel[1], rel[2]);
       const R = this.visR(b) * AU_M;
@@ -1117,7 +1124,7 @@ export class View3D {
 
     // particles: gas and debris
     const pp: number[] = [], pc: number[] = [];
-    if (!tunnel) for (const p of app.world.bodies) {
+    if (!blind) for (const p of app.world.bodies) {
       if (!p.alive || p.source || !p.isParticle) continue;
       pp.push((p.x - P[0]) * AU_M, (p.y - P[1]) * AU_M, (p.z - P[2]) * AU_M);
       const c = p.look.c1, h = p.heat;
@@ -1142,7 +1149,7 @@ export class View3D {
     else if (this.mode !== 'pilot' && cam.fov !== 75) { cam.fov = 75; cam.updateProjectionMatrix(); }
     // the map covers the view: leave the last frame up rather than draw what nobody can see
     if (!this.nav.open) this.renderer.render(this.scene, cam);
-    this.drawLabels(P, tunnel || this.nav.open);
+    this.drawLabels(P, blind || this.nav.open);
     this.radar.draw();
     this.nav.draw(dtReal);
     this.controls.hud(this.readout());
@@ -1151,11 +1158,19 @@ export class View3D {
   private frameNo = 0;
   /** the world near enough to stand on, its ground and its sky */
   private groundFrame(dt: number, P: V3, stars: Body[], tunnel: boolean) {
-    let b: Body | null = null, best = Infinity;
+    let b: Body | null = null, best = Infinity, gb: Body | null = null, gbest = Infinity;
     if (!tunnel) for (const x of this.app.visual) {
-      if (!Ground.solid(x)) continue;
       const d = (Math.hypot(x.x - P[0], x.y - P[1], x.z - P[2]) - x.r) * AU_M;
+      if (Giant.is(x)) { if (d < gbest) { gbest = d; gb = x; } continue; }
+      if (!Ground.solid(x)) continue;
       if (d < best) { best = d; b = x; }
+    }
+    // a giant's clouds, if you are in or near them
+    {
+      const rel = gb ? new THREE.Vector3((gb.x - P[0]) * AU_M, (gb.y - P[1]) * AU_M, (gb.z - P[2]) * AU_M) : new THREE.Vector3();
+      let sun: THREE.Vector3 | null = null, f = 0;
+      if (gb) for (const s of stars) { const q = s.star!.L / ((s.x - gb.x) ** 2 + (s.y - gb.y) ** 2 + (s.z - gb.z) ** 2); if (q > f) { f = q; sun = new THREE.Vector3(s.x - P[0], s.y - P[1], s.z - P[2]).normalize(); } }
+      this.giant.frame(dt, gb, rel, stars, sun, gb ? this.objs.get(gb)?.tex ?? null : null);
     }
     const rel = b ? new THREE.Vector3((b.x - P[0]) * AU_M, (b.y - P[1]) * AU_M, (b.z - P[2]) * AU_M) : new THREE.Vector3();
     let sun: THREE.Vector3 | null = null, rgb: V3 = [1, 1, 1];
@@ -1170,7 +1185,7 @@ export class View3D {
   }
 
   /** inside a giant's clouds: how deep into the fog (0–1) and its colour; null outside */
-  giantFog(): { inside: number; fog: THREE.Color } | null { return null; }
+  giantFog(): { inside: number; fog: THREE.Color } | null { return this.giant.body && this.giant.inside > 0 ? { inside: this.giant.inside, fog: this.giant.fog } : null; }
 
   /** where the viewer is and which way it looks, and where the ship is drawn from there */
   private place() {
@@ -1207,6 +1222,8 @@ export class View3D {
     // a shudder going into the throat
     const w = sh.worm;
     this.shake = w && (w.phase === 'enter' || w.phase === 'tunnel' && w.t < 0.6) ? 0.006 : w?.phase === 'tunnel' ? 0.0015 : 0;
+    // buffeted in a giant's winds
+    if (!w && this.giant.inside > 0.2) this.shake = Math.max(this.shake, Math.min(0.004, Math.abs(this.giant.wind) / 60000) * this.giant.inside + this.giant.flash * 0.002);
     if (this.shake && this.mode !== 'scope') cam.quaternion.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler((Math.random() - 0.5) * this.shake, (Math.random() - 0.5) * this.shake, 0)));
     cam.position.set(0, 0, 0);
     const g = sh.hull.group;
@@ -1367,6 +1384,11 @@ export class View3D {
       for (let k = 0; k < 3; k++) v[k] += (want[k] - v[k]) * Math.min(1, dt * 4);
     }
     for (let k = 0; k < 3; k++) n.off[k] += (v[k] * dt) / AU_M;
+    // a giant's winds carry the ship along
+    if (this.giant.body && this.giant.inside > 0) {
+      const w = this.giant.windVec, k = Math.min(1, this.giant.inside) * dt / AU_M;
+      n.off[0] += w.x * k; n.off[1] += w.y * k; n.off[2] += w.z * k;
+    }
     const spd = Math.hypot(v[0], v[1], v[2]);
     this.logbook.metres += spd * dt;
     this.logbook.top = Math.max(this.logbook.top, spd);
@@ -1386,7 +1408,13 @@ export class View3D {
     if (!b || alt >= gap) return;
     const d: V3 = [p[0] - b.x, p[1] - b.y, p[2] - b.z];
     const dl = Math.hypot(d[0], d[1], d[2]) || 1;
-    const R = this.visR(b) + gap / AU_M + (b === this.ground.body ? this.groundUnder(b, p) / AU_M : 0);
+    let R = this.visR(b) + gap / AU_M + (b === this.ground.body ? this.groundUnder(b, p) / AU_M : 0);
+    // into a giant, down to what the hull can take
+    if (Giant.is(b)) {
+      if (b !== this.giant.body || alt > -this.giant.crush + gap) return;
+      R = this.visR(b) - (this.giant.crush - gap) / AU_M;
+      if (performance.now() - this.crushToast > 5000) { this.crushToast = performance.now(); this.app.onToast(`The hull is at ${HULL_BAR.toLocaleString('en-US')} bar: it will go no deeper`); }
+    }
     const a = m.anchor;
     m.off = [b.x + (d[0] / dl) * R - (a?.x ?? 0), b.y + (d[1] / dl) * R - (a?.y ?? 0), b.z + (d[2] / dl) * R - (a?.z ?? 0)];
     const v = m.vel, vin = (v[0] * d[0] + v[1] * d[1] + v[2] * d[2]) / dl;
@@ -1520,7 +1548,9 @@ export class View3D {
    */
   speed() {
     const { alt } = this.nearest(posOf(this.ship.nav));
-    const cap = this.ship.cap(alt);
+    const cap = this.ship.cap(Math.abs(alt));
+    // in a giant's clouds: a pace to match the depth, so a few minutes takes you down through the decks
+    if (this.giant.body && this.giant.depth > -20e3 && this.ship.odLevel <= 0) return Math.min(cap, Math.max(300, Math.abs(this.giant.depth) * 0.25 + 300) * this.controls.throttle);
     if (this.ship.odLevel > 0) return cap * Math.min(1, this.controls.throttle);
     return Math.min(cap, Math.max(1, Math.min(isFinite(alt) ? alt : 1e9, 1e16)) * 0.5 * this.controls.throttle);
   }
@@ -1587,6 +1617,8 @@ export class View3D {
       const bar = a.bar > 0 && a.H > 0 ? a.bar * Math.exp(-Math.max(0, z) / (a.H * 1000)) : a.bar;
       near = `${this.mode === 'surface' ? `${z.toFixed(0)} m elevation` : `${G.body.name} · ${fmtLength(Math.max(0, alt) / AU_M)} up`} · ${g.toFixed(g < 0.1 ? 3 : 2)} g · ${bar > 1e-4 ? `${bar.toPrecision(3)} bar` : 'vacuum'} · ${Math.round(a.T - 273.15)} °C${G.daylight < 0.2 ? ' · night' : ''}`;
     }
+    const gs = this.giant.status();
+    if (gs) near = gs;
     return {
       mode: this.mode, where, speed, drive, target: tgt,
       near,
