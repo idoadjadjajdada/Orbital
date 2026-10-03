@@ -146,12 +146,12 @@ export class Controls3D {
     window.addEventListener('keyup', e => this.key(e, false));
     window.addEventListener('blur', () => this.keys.clear());
     this.barEl.addEventListener('click', e => { if ((e.target as HTMLElement).closest('[data-help]')) this.sheet(); });
-    this.useEl.addEventListener('click', () => this.v.prompt?.act());
+    this.useEl.addEventListener('click', () => { if (!this.v.panels.open && !this.v.asleep) this.v.prompt?.act(); });
     this.sheetEl.addEventListener('click', e => { if ((e.target as HTMLElement).closest('.close')) this.sheet(false); });
 
     const cv = v.canvas;
     cv.addEventListener('click', () => {
-      if (!this.v.active || this.v.nav.open) return;
+      if (!this.v.active || this.v.nav.open || this.v.panels.open) return;
       if (document.pointerLockElement === cv) this.primary();
       else if (matchMedia('(pointer: fine)').matches) cv.requestPointerLock?.();
     });
@@ -248,6 +248,7 @@ export class Controls3D {
 
   /** a tap on the view: on foot it uses what is in front of you, otherwise it selects what is under the finger */
   private tap(x: number, y: number) {
+    if (this.v.panels.open || this.v.asleep) return;
     if (this.v.mode === 'walk') this.v.prompt?.act();
     else this.app().select(this.v.pick(x, y));
   }
@@ -309,7 +310,7 @@ export class Controls3D {
       + order.map(m => `<div class="col${m === this.v.mode ? ' now' : ''}"><div class="bsub">${TITLE[m]}</div><table>`
         + BINDS[m].map(b => `<tr><td>${b.t}</td><td>${glyphs(b.k, 'kb')}</td><td>${glyphs(b.p, 'pad')}</td></tr>`).join('')
         + `</table></div>`).join('')
-      + `</div>${this.dev === 'touch' ? `<p>${TOUCH_HELP}</p>` : ''}<p>${pad ? 'Showing the keyboard and the controller.' : 'Plug in a controller and its buttons show here too.'} Use the helm to fly; leave it to walk the ship, which flies on by itself — the autopilot and wormholes included. The airlock is off the commons to port; outside, the ship holds station until you call it.</p>`;
+      + `</div>${this.dev === 'touch' ? `<p>${TOUCH_HELP}</p>` : ''}<p>${pad ? 'Showing the keyboard and the controller.' : 'Plug in a controller and its buttons show here too.'} Use the helm to fly; leave it to walk the ship, which flies on by itself — the autopilot and wormholes included. The airlock is off the commons to port; outside, the ship holds station until you call it.</p><p>Around the ship: the bridge has the helm, the nav table, the comms log and a sensor sweep. Off the forward passage are the quarters (a bunk to sleep eight hours away, the captain's log) and the lab (a survey of the target and a globe of it). The commons has the galley, the telescope and a shelf of souvenirs. In engineering, route the reactor's power; a hatch there leads down to the hangar, where the lander waits for its refit and the landing survey says where it could set down.</p>`;
   }
 
   /** a touch button */
@@ -338,7 +339,9 @@ export class Controls3D {
     if (tag === 'INPUT' || tag === 'SELECT') return;
     if (!down) { this.keys.delete(e.code); return; }
     this.dev = 'kb';
+    if (v.asleep) return;
     if (v.nav.open) { v.nav.key(e); return; }
+    if (v.panels.open) { v.panels.key(e); return; }
     if (e.code === 'KeyH' && !e.repeat) { this.sheet(); return; }
     if (e.code === 'Escape') {
       if (!this.sheetEl.hidden) this.sheet(false);
@@ -383,7 +386,7 @@ export class Controls3D {
 
   update(dt: number) {
     const k = this.keys, p = this.app().pad, v = this.v;
-    if (v.nav.open || !this.sheetEl.hidden && this.dev !== 'pad') return;
+    if (v.nav.open || v.panels.open || v.asleep || !this.sheetEl.hidden && this.dev !== 'pad') return;
     if (v.mode === 'pilot' || v.mode === 'eva') {
       const roll = (k.has('KeyQ') || p.on(BTN.LB) ? 1 : 0) - (k.has('KeyE') || p.on(BTN.RB) ? 1 : 0);
       if (roll) v.turn(0, 0, roll * dt * 1.4);
@@ -441,7 +444,7 @@ export class Controls3D {
 
   /** the velocity the pilot (or the suit) is asking for, world frame, m/s, given which way it faces */
   thrust(speed: number, q: THREE.Quaternion): V3 {
-    if (this.v.nav.open) return [0, 0, 0];
+    if (this.v.nav.open || this.v.panels.open) return [0, 0, 0];
     const k = this.keys, p = this.app().pad;
     let f = (k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0) - this.stick.y - p.ls[1];
     let s = (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0) + this.stick.x + p.ls[0];
@@ -457,7 +460,7 @@ export class Controls3D {
   /** on foot: forward and sideways (−1–1), running, jumping */
   walkInput() {
     const k = this.keys, p = this.app().pad;
-    if (this.v.nav.open) return { f: 0, s: 0, run: false, jump: false };
+    if (this.v.nav.open || this.v.panels.open || this.v.asleep) return { f: 0, s: 0, run: false, jump: false };
     let f = (k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0) - this.stick.y - p.ls[1];
     let s = (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0) + this.stick.x + p.ls[0];
     const l = Math.hypot(f, s);

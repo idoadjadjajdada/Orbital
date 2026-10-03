@@ -9,6 +9,8 @@ const launch = { args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-u
 if (process.env.CHROMIUM_PATH) launch.executablePath = process.env.CHROMIUM_PATH;
 const browser = await chromium.launch(launch);
 let fails = 0;
+/** wait (up to a few seconds) for a condition in the page: frames can be slow in a software renderer */
+const until = (pg, fn, arg) => pg.waitForFunction(fn, arg, { timeout: 8000 }).then(() => true, () => false);
 const ok = (name, cond, extra = '') => { if (!cond) fails++; console.log(`${cond ? '  ok  ' : 'FAIL  '}${name}${extra ? `  [${extra}]` : ''}`); };
 
 try {
@@ -92,7 +94,7 @@ try {
   await page.click('[data-tool="ruler"]');
   ok('picking a tool again puts it down', await page.evaluate(() => window.orbital.tool === 'select'));
   // where the Moon is on screen, in CSS px, and a point beside it
-  const moonAt = () => page.evaluate(() => { const a = window.orbital, m = a.world.sources.find(b => b.name === 'Moon'), r = a.view.canvas?.getBoundingClientRect?.() ?? { left: 0, top: 0 }; return [a.view.sx(m.x) * 2 + r.left, a.view.sy(m.y) * 2 + r.top]; });
+  const moonAt = () => page.evaluate(() => { const a = window.orbital, m = a.world.sources.find(b => b.name === 'Moon'), r = a.view.canvas.getBoundingClientRect(), k = r.width / a.view.W; return [a.view.sx(m.x) * k + r.left, a.view.sy(m.y) * k + r.top]; });
   const relV = () => page.evaluate(() => { const a = window.orbital, m = a.world.sources.find(b => b.name === 'Moon'), e = a.world.sources.find(b => b.name === 'Earth'); return [m.vx - e.vx, m.vy - e.vy, m.x, m.y]; });
   const fresh = async () => {
     await page.evaluate(() => { const a = window.orbital; a.loadPreset('earth'); a.follow(a.world.sources.find(b => b.name === 'Earth')); a.fitRadius(6e-3); a.view.scale = a.view.scaleGoal; a.warpLog = -3; });
@@ -179,8 +181,7 @@ try {
   await page.keyboard.down('KeyS'); await page.waitForTimeout(600); await page.keyboard.up('KeyS');
   ok('F leaves the helm, and you can walk the ship in the wormhole', await page.evaluate(f => { const v = window.orbital.v3; return v.mode === 'walk' && v.foot.p.z > f + 0.5 && !!v.ship.worm; }, f0));
   await page.evaluate(() => { const v = window.orbital.v3; v.foot.p.set(0, 0, -19.6); v.foot.yaw = 0; v.foot.pitch = -0.6; });
-  await page.waitForTimeout(200);
-  ok('the helm is in reach', await page.evaluate(() => window.orbital.v3.prompt?.label === 'Take the helm'));
+  ok('the helm is in reach', await until(page, () => window.orbital.v3.prompt?.label === 'Take the helm'));
   await page.keyboard.press('KeyF');
   ok('F takes the helm', await page.evaluate(() => window.orbital.v3.mode === 'pilot'));
   await page.waitForFunction(() => !window.orbital.v3.ship.worm, null, { timeout: 30000 });
@@ -198,11 +199,9 @@ try {
   await page.waitForTimeout(800);
   await page.keyboard.press('KeyF');
   await page.evaluate(() => { const v = window.orbital.v3; v.foot.p.set(-7.4, 0, 0); v.foot.yaw = Math.PI / 2; v.foot.pitch = 0; });
-  await page.waitForTimeout(200);
-  ok('the airlock is in reach', await page.evaluate(() => window.orbital.v3.prompt?.label === 'Step outside'));
+  ok('the airlock is in reach', await until(page, () => window.orbital.v3.prompt?.label === 'Step outside'));
   await page.keyboard.press('KeyF');
-  await page.waitForTimeout(200);
-  ok('F steps outside, at the hatch', await page.evaluate(() => window.orbital.v3.mode === 'eva' && window.orbital.v3.prompt?.label === 'Board the ship'));
+  ok('F steps outside, at the hatch', await until(page, () => window.orbital.v3.mode === 'eva' && window.orbital.v3.prompt?.label === 'Board the ship'));
   await page.keyboard.press('KeyF');
   ok('F at the hatch boards the ship', await page.evaluate(() => window.orbital.v3.mode === 'walk'));
   await page.evaluate(() => { window.orbital.v3.foot.yaw = Math.PI / 2; });
@@ -215,6 +214,28 @@ try {
   await page.keyboard.press('KeyG');
   ok('G calls the ship', await page.evaluate(() => window.orbital.v3.travel?.name === 'you'));
   await page.evaluate(() => window.orbital.v3.board());
+  // around the ship: the lab's survey, the power routing, the ladder to the hangar, sleeping
+  await page.evaluate(() => { const v = window.orbital.v3; v.travel = null; v.ship.nav.vel = [0, 0, 0]; v.foot.p.set(2.4, 0, -10.7); v.foot.yaw = -Math.PI / 2; v.foot.pitch = 0; });
+  ok('the survey console is in reach in the lab', await until(page, () => window.orbital.v3.prompt?.label === 'Survey the target'));
+  await page.keyboard.press('KeyF');
+  await page.waitForTimeout(200);
+  ok('F opens the survey, with the target\'s gravity and a landing verdict', await page.evaluate(() => !document.querySelector('.panel3').hidden && /Surface gravity/.test(document.querySelector('.panel3').textContent) && !!document.querySelector('.pland')));
+  await page.keyboard.press('Escape');
+  ok('Escape closes it', await page.evaluate(() => document.querySelector('.panel3').hidden));
+  await page.evaluate(() => window.orbital.v3.use('power'));
+  await page.click('.panel3 [data-id="wormhole"]');
+  ok('power can be routed to the wormhole drive', await page.evaluate(() => window.orbital.v3.ship.power === 'wormhole' && window.orbital.v3.ship.refill() < 40));
+  await page.evaluate(() => { const v = window.orbital.v3; v.ship.power = 'balanced'; v.panels.close(); v.foot.p.set(-3.6, 0, 10.6); v.foot.yaw = 0; v.foot.pitch = -0.5; });
+  ok('the hatch in engineering leads down', await until(page, () => window.orbital.v3.prompt?.label === 'Climb down to the hangar'));
+  await page.keyboard.press('KeyF');
+  await page.waitForTimeout(200);
+  ok('F climbs down to the hangar', await page.evaluate(() => window.orbital.v3.foot.deck === 1 && /hangar/.test(window.orbital.v3.readout().where)));
+  ok('the lander is in the way, the deck round it is not', await page.evaluate(() => { const h = window.orbital.v3.ship.hull; return !h.canStand(0.6, 12.5, 0.3, 1) && h.canStand(-3.6, 10.3, 0.3, 1) && !h.canStand(-3.6, 10.3, 0.3, 2); }));
+  ok('labels are seen through windows, not walls', await page.evaluate(() => { const h = window.orbital.v3.ship.hull, V = window.orbital.v3.camera.position.constructor; const e = new V(0, 1.65, -5); return h.seesOut(e, new V(0, 1, 0)) && !h.seesOut(e, new V(0, 0, 1)) && h.seesOut(new V(0, 1.7, -20), new V(0, 0, -1)); }));
+  const t0 = await page.evaluate(() => { const v = window.orbital.v3; v.climb(0); v.foot.p.set(-3.2, 0, -12.6); return window.orbital.world.time; });
+  await page.evaluate(() => window.orbital.v3.use('bunk'));
+  await page.waitForFunction(() => !window.orbital.v3.asleep, null, { timeout: 15000 });
+  ok('a night in the bunk passes hours and puts the clock back', await page.evaluate(t => { const a = window.orbital; return (a.world.time - t) * 365.25 * 24 > 2 && Math.abs(a.warp * 31557600 - 1) < 1e-6 && a.v3.logbook.sleeps === 1; }, t0));
   await page.evaluate(() => window.orbital.v3.use('helm'));
   // a controller, faked through the Gamepad API
   await page.evaluate(() => {

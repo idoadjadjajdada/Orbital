@@ -66,6 +66,8 @@ export class App {
   presetKey = 'solar';
   onSelect: (b: Body | null) => void = () => {};
   onToast: (msg: string) => void = () => {};
+  /** what has happened lately, newest first, for the ship's comms log */
+  eventLog: { t: number; msg: string; body: Body | null }[] = [];
   onFrame: () => void = () => {};
 
   tool: Tool = 'select';
@@ -203,6 +205,7 @@ export class App {
     this.select(null);
     this.focus = null;
     buildPreset(key, this.world);
+    this.eventLog = [];
     this.hosts = assignHosts(this.world.sources);
     this.view.clearTrails();
     this.focus = this.world.sources.find(b => b.name === info.focus) ?? null;
@@ -222,6 +225,7 @@ export class App {
     this.pan = c;
     this.world.clear();
     this.hosts.clear();
+    this.eventLog = [];
   }
 
   select(b: Body | null) {
@@ -469,6 +473,10 @@ export class App {
         impact: name ?? 'Catastrophic impact', merge: name ?? 'Merger', crater: '', graze: 'Hit-and-run', swallow: 'Swallowed', strip: name ?? 'Tidally stripped', evaporate: name ?? 'A black hole evaporated', airburst: '', gw: name ?? 'Gravitational waves from a merger', flare: name ?? 'Magnetar flare', wormhole: name ?? '',
       }[e.kind];
       if (msg && (e.energy > 0.3 || e.kind !== 'merge')) this.onToast(msg);
+      if (msg) {
+        this.eventLog.unshift({ t: this.world.time, msg, body: e.body ?? null });
+        if (this.eventLog.length > 60) this.eventLog.pop();
+      }
     }
     this.world.events.length = 0;
 

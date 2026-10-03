@@ -18,6 +18,14 @@ export const MOUTH_R = 70, MOUTH_AHEAD = 500;
 /** seconds to come out of the far mouth */
 export const EXIT_T = 2.5;
 
+/** where the reactor's power goes: a balance, more to the engines, or more to the wormhole drive */
+export type Power = 'balanced' | 'engines' | 'wormhole';
+export const POWER: Record<Power, { name: string; spool: number; reach: number; top: number; refill: number; about: string }> = {
+  balanced: { name: 'Balanced', spool: 3, reach: 3, top: 1, refill: JUMP_REFILL, about: 'Overdrive and the wormhole drive share the reactor evenly.' },
+  engines: { name: 'Engines', spool: 1.8, reach: 4.5, top: 1, refill: 100, about: 'Overdrive spools faster and runs closer to worlds; the wormhole drive recharges slowly.' },
+  wormhole: { name: 'Wormhole drive', spool: 5, reach: 2, top: 0.75, refill: 15, about: 'The wormhole drive recharges fast; overdrive is slower to spool and tops out lower.' },
+};
+
 /** something that moves on its own: an offset (AU) from the body it rides with, and a velocity (m/s) relative to it */
 export interface Mover { anchor: Body | null; off: V3; vel: V3 }
 
@@ -71,6 +79,8 @@ export class Ship {
   thrust = 0;
   /** a spacewalker is at the hatch */
   boardable = false;
+  /** where the reactor's power goes */
+  power: Power = 'balanced';
 
   readonly hull: Hull;
   readonly mouthIn: THREE.Group;
@@ -106,9 +116,13 @@ export class Ship {
   cap(alt: number) {
     const a = Math.max(1, isFinite(alt) ? alt : 1e16);
     if (this.odLevel <= 0) return CRUISE;
-    const top = CRUISE * Math.pow(OD_MAX / CRUISE, this.odLevel);
-    return Math.max(CRUISE, Math.min(top, 3 * a * this.odLevel));
+    const P = POWER[this.power];
+    const top = CRUISE * Math.pow(OD_MAX / CRUISE, this.odLevel * P.top);
+    return Math.max(CRUISE, Math.min(top, P.reach * a * this.odLevel));
   }
+
+  /** seconds the wormhole drive takes to recharge, as the power is routed */
+  refill() { return POWER[this.power].refill; }
 
   /** whether a transit can start now */
   ready() { return this.charge >= 1 && !this.worm; }
@@ -122,9 +136,9 @@ export class Ship {
 
   /** advance the overdrive, the capacitor and the flash */
   update(dt: number) {
-    this.odLevel = this.od ? Math.min(1, this.odLevel + dt / 3) : Math.max(0, this.odLevel - dt / 0.8);
+    this.odLevel = this.od ? Math.min(1, this.odLevel + dt / POWER[this.power].spool) : Math.max(0, this.odLevel - dt / 0.8);
     this.flash = Math.max(0, this.flash - dt);
-    if (!this.worm) this.charge = Math.min(1, this.charge + dt / JUMP_REFILL);
+    if (!this.worm) this.charge = Math.min(1, this.charge + dt / this.refill());
   }
 
   /**

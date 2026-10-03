@@ -22,12 +22,23 @@ small screen what is not needed folds away: the less-used buttons sit behind
 shows just a body's name until you open it, and 👁 hides everything to leave
 just the sky.
 
-The view is a flat, top-down pixel-art map. The physics underneath is fully
-3D — tilted orbits, ring planes and moons on their planets' equators are all
-there, seen from above. Each body's surface is baked once into a map in its
-own turning frame and shaded every frame as a sphere lit from the real
-direction of its star, in a few dithered steps; rings are traced against
-their measured profiles and shadow the planet and are shadowed by it.
+The view is a flat, top-down map. The physics underneath is fully 3D —
+tilted orbits, ring planes and moons on their planets' equators are all
+there, seen from above. Each body's surface is painted into a map in its own
+turning frame and shaded every frame as a sphere lit from the real direction
+of its star, with relief from its height map; rings are traced against their
+measured profiles and shadow the planet and are shadowed by it.
+
+**Surfaces are real where they can be.** The Earth's continents, ice caps,
+deserts, lakes and mountain ranges come from Natural Earth (public domain),
+baked by `tools/fetch-earth.py`; the Moon has its maria and rayed craters in
+the right places, Mars its Tharsis volcanoes, Valles Marineris, Hellas and
+polar caps, and Mercury, Venus, Jupiter (bands and the Great Red Spot),
+Saturn, Uranus, Neptune, Io, Europa, Ganymede, Callisto, Titan, Triton,
+Pluto (Sputnik Planitia and Cthulhu), Charon and the other major moons and
+dwarf planets their own painters. Anything else is generated from its style.
+Maps are painted in a background worker and sharpen as a body grows on screen,
+up to 2048 texels round.
 
 ## Playing
 
@@ -86,10 +97,10 @@ ship you can fly, walk around in, and step out of. You ride with whatever pulls
 on you hardest, so worlds do not race away at tens of km/s, and your cruising
 speed is half your height above the nearest surface per second, so the same
 stick skims a moon or crosses a system. The clock runs at one second a second,
-as it would for you; *Settings → Cheats* speeds it up or slows it down. It is
-drawn in the same pixel style: half-resolution, nearest filtering, lighting in
-a few steps, every world wearing the same surface map (craters and all) it has
-on the map. three.js is loaded only when you first open it.
+as it would for you; *Settings → Cheats* speeds it up or slows it down. Every
+world wears the same surface map (craters and all) it has on the map, with
+bump-mapped relief, a soft terminator, glinting seas, drifting clouds and an
+atmosphere at the limb. three.js is loaded only when you first open it.
 
 There are four places to be, and the controls follow you. A bar along the
 bottom shows the main actions for where you are, in the glyphs of whatever you
@@ -115,17 +126,38 @@ leave the helm), − and + above the stick set the throttle, and what you can
 use shows as a big button. Controls you leave alone fade back after a few
 seconds.
 
-**The ship** is about 55 m long. Forward is the **bridge**: the helm, a
-console with live readouts, and a holographic **nav table** showing what is
-round the ship. Aft of it the **commons**, under a skylight: a couch facing the
-port window, a **telescope** at the starboard one (it zooms to a few
-hundredths of a degree, enough to see the Moon's craters from the Earth), a
-shelf of **souvenirs** — a little globe of every world you have flown close to
-— a coffee machine, and the **airlock**. At the back, **engineering**: the
-reactor, pulsing faster the harder the drives work, inside the ring of the
-wormhole drive. Leave the helm and the ship flies on by itself: the autopilot
-and wormholes keep going while you walk about. Nobody at the helm and nothing
-to do, it holds station.
+**The ship** is about 55 m long, on two decks, and its consoles work.
+
+- The **bridge**: the helm, a console with live readouts, a holographic
+  **nav table** showing what is round the ship, the **comms log** (collisions,
+  supernovae, captures — with Select and Go for whatever they happened to) and
+  a **sensor sweep** of the nearest objects, how far and how fast they close.
+- Off the forward passage, the **quarters**: bunks — sleep and eight hours pass
+  in a few seconds while the ship holds station — and a desk with the
+  **captain's log**: distance flown, top speed, transits, worlds visited.
+- Opposite, the **lab**: a **survey** of the target (gravity, escape velocity,
+  temperature, air, ground, and whether a lander could set down there, from
+  measured values for real bodies), a globe wearing its surface, and a sample
+  locker that fills a vial for every world you visit.
+- The **commons**, under a skylight: the galley and coffee machine, a dining
+  table, a couch facing the port window, a **telescope** at the starboard one
+  (it zooms to a few hundredths of a degree, enough to see the Moon's craters
+  from the Earth), a shelf of **souvenirs** — a little globe of every world you
+  have flown close to — a screen saying where the ship is, and the **airlock**.
+- **Engineering**: the reactor, pulsing faster the harder the drives work,
+  inside the ring of the wormhole drive, and the **power routing** console —
+  balanced, engines (overdrive spools faster and runs closer to worlds; the
+  wormhole drive recharges slowly) or wormhole (a 15-second recharge, a slower,
+  lower overdrive). A hatch leads down to…
+- The **hangar**, the belly pod on the lower deck: a lander parked over the bay
+  doors, the **landing survey** of nearby worlds, fuel, suits. The lander is
+  not flight-ready yet — landing is a later update — but its doors and legs
+  are in place.
+
+Signs over the doors say where they go, and labels for worlds show through the
+windows, not the walls. Leave the helm and the ship flies on by itself: the
+autopilot and wormholes keep going while you walk about. Nobody at the helm and
+nothing to do, it holds station.
 
 **Outside** you are in a suit with thrusters: a few metres a second, more
 with the throttle. The ship holds station while you are out; `G` calls it to
@@ -406,8 +438,9 @@ real waves are invisible), and neutron-star mergers a kilonova.
 
 ```
 src/physics/   integrator, forces, collisions, stars, presets — no DOM, fully tested
-src/pixel/     pixel-art renderer: surface maps, sprites, rings, particles, lensing, bursts
-src/three/     the 3D view (three.js, loaded on demand), its flying controls, the ship and its scope
+src/pixel/     the map renderer: surface maps (worlds.ts paints the real ones, built in a worker), sprites, rings, particles, lensing, bursts
+src/pixel/data/earth.ts     generated from Natural Earth by tools/fetch-earth.py
+src/three/     the 3D view (three.js, loaded on demand), its flying controls, the ship (hull.ts), its consoles (panels.ts, survey.ts) and its scope
 src/physics/data/moons.ts   generated from JPL by tools/fetch-moons.py
 src/ui/        input and tools, HUD, the body builder, the belt histogram
 tests/         physics.test.ts (vitest), browser.mjs (Playwright smoke test)

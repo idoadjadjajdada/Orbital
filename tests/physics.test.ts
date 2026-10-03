@@ -14,6 +14,7 @@ import { takeSnapshot, restoreSnapshot } from '../src/physics/snapshot';
 import { tides } from '../src/physics/tides';
 import { placeExtras } from '../src/physics/extras';
 import { ENTRY } from '../src/physics/catalog';
+import { survey } from '../src/three/survey';
 
 const FOREVER = Number.POSITIVE_INFINITY;
 
@@ -575,5 +576,33 @@ describe('circumbinary moons', () => {
     for (let k = 0; k < 200; k++) { w.step(1 / 365.25 / 2, 1e9); w.events.length = 0; }
     const alive = w.bodies.filter(b => b.alive).map(b => b.name);
     for (const n of ['Charon', 'Styx', 'Nix', 'Kerberos', 'Hydra']) expect(alive).toContain(n);
+  });
+});
+
+describe('the lab survey', () => {
+  const w = buildPreset('inner');
+  const get = (n: string) => w.sources.find(b => b.name === n)!;
+  const stars = w.sources.filter(b => b.cls === 'star');
+  it('measures the Earth: 1 g, 11.2 km/s to escape, and somewhere to land', () => {
+    const s = survey(get('Earth'), stars, get('Sun'));
+    expect(s.g).toBeCloseTo(1, 1);
+    expect(s.rows.find(r => r[0] === 'Escape velocity')![1]).toMatch(/^11\.2 km\/s/);
+    expect(s.land.ok).toBe(true);
+  });
+  it('turns the lander away from Venus, the Sun and a gas giant', () => {
+    expect(survey(get('Venus'), stars, null).land.ok).toBe(false);
+    expect(survey(get('Sun'), stars, null).land.ok).toBe(false);
+    const jup = makeBody('jupiter');
+    expect(survey(jup, stars, null).land.ok).toBe(false);
+  });
+  it('estimates a world it has no measurements for, whatever it is called', () => {
+    const b = makeBody('terran');
+    for (const name of ['constructor', '__proto__', 'Earth']) {
+      b.name = name;
+      b.x = 1;
+      const s = survey(b, stars, null);
+      expect(s.rows.every(([k, v]) => typeof k === 'string' && typeof v === 'string')).toBe(true);
+      expect(s.rows.find(r => r[0] === 'Temperature (est.)')).toBeTruthy();
+    }
   });
 });
