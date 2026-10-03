@@ -1,0 +1,436 @@
+import * as THREE from 'three';
+import type { Body } from '../physics/body';
+import { AU_M, MSUN_KG } from '../physics/units';
+import type { V3 } from '../pixel/sprites';
+import { groundSpec, groundAt, tangent, type GroundSpec, type GroundSample } from './terrain';
+import { atmosphere, composition, interior, life, gravity, airAt, giantPressure, giantTemp, cloudDecks, rng, type Atmosphere } from './science';
+import { bodyQuat, dirOf, latLonOf, arc } from './ground';
+import { probeMesh, orbiterMesh, landerMesh, roverMesh, stationMesh, baseMesh } from './craftmesh';
+import { sitesOn } from './sites';
+
+/**
+ * The craft the ship can send out, and what they find.
+ *
+ * - A **probe** falls into an atmosphere on a parachute, reading pressure,
+ *   temperature and the make-up of the air all the way down, until it lands
+ *   or is crushed (in a giant, as Galileo was, below 20 bar); with no air it
+ *   is an impactor.
+ * - An **orbiter** circles a world on a polar orbit and maps it: the gravity
+ *   field gives the layers inside, spectrometers the make-up of the ground
+ *   and the air.
+ * - A **lander** comes down on a world's ground — below the ship, or at a
+ *   named site — and analyses the air and soil and runs the life experiments.
+ * - A **rover** drives off a lander (or is dropped by the ship) and samples
+ *   the ground as it goes; take its controls and drive it.
+ * - A **station** goes into orbit, as the ISS does; a **base** is built on the
+ *   ground beside the landed ship.
+ *
+ * Craft on a world's ground ride round with it; craft in orbit keep their
+ * orbit while the world turns under them.
+ */
+
+export type CraftKind = 'probe' | 'orbiter' | 'lander' | 'rover' | 'station' | 'base';
+export const KINDS: { k: CraftKind; name: string; about: string }[] = [
+  { k: 'probe', name: 'Probe', about: 'Falls through the atmosphere reading it, to the ground or until it is crushed' },
+  { k: 'orbiter', name: 'Orbiter', about: 'Maps the world from a polar orbit: what it is made of, inside and out' },
+  { k: 'lander', name: 'Lander', about: 'Sets down and analyses the air and soil; runs the life experiments' },
+  { k: 'rover', name: 'Rover', about: 'Drives the ground and samples it; you can drive it' },
+  { k: 'station', name: 'Station', about: 'An ISS-sized outpost in orbit' },
+  { k: 'base', name: 'Base', about: 'Habitats, solar field and pad, built beside the landed ship' },
+];
+
+export interface Reading { t: number; msg: string }
+export interface Craft {
+  id: number; kind: CraftKind; name: string; b: Body;
+  state: 'cruise' | 'orbit' | 'descent' | 'surface' | 'lost';
+  /** seconds in this state, and in all */
+  t: number; age: number;
+  /** cruise: where it set off from (m, from the world's centre, the sandbox's axes) and how long the trip takes */
+  from: THREE.Vector3; cruiseT: number;
+  /** orbit: radius (m), the orbit's plane (a rotation from the equator) and where along it, angular speed (rad/s) */
+  orbit: { r: number; plane: THREE.Quaternion; ph: number; w: number } | null;
+  /** on or over the ground: unit direction (body frame), heading (rad from north), height above the ground (m), falling speed */
+  n: V3; head: number; alt: number; vz: number;
+  /** what it has found */
+  log: Reading[];
+  /** a probe's readings on the way down: height (km), pressure (bar), temperature (K) */
+  profile: { z: number; bar: number; T: number; note?: string }[];
+  /** a rover's distance driven (m), an orbiter's map coverage (0–1), a base's construction (0–1) */
+  odo: number; cover: number; build: number;
+  status: string;
+  mesh: THREE.Object3D;
+  /** the craft it came from (a rover off a lander) */
+  parent?: number;
+  /** the controls, while you drive it: forward and turn (−1–1) */
+  drive: { f: number; s: number };
+}
+
+let nextId = 1;
+const NAMES: Record<CraftKind, string> = { probe: 'Probe', orbiter: 'Orbiter', lander: 'Lander', rover: 'Rover', station: 'Station', base: 'Base' };
+/** how much pressure a probe stands, bar, and heat, K */
+const PROBE_BAR = 120, PROBE_K = 900;
+
+const isGiant = (b: Body) => b.cls === 'gas' || ['gas', 'icegiant', 'hotjupiter', 'browndwarf'].includes(b.look.style);
+
+export class Fleet {
+  readonly root = new THREE.Group();
+  readonly crafts: Craft[] = [];
+  private specs = new Map<Body, GroundSpec>();
+  private atmos = new Map<Body, Atmosphere>();
+  private smp: GroundSample = { h: 0, r: 0, g: 0, b: 0, sea: false, rock: 0 };
+  /** news from the craft, for a toast */
+  onNews: (msg: string) => void = () => {};
+
+  constructor(scene: THREE.Scene, private stars: () => Body[]) {
+    this.root.name = 'fleet';
+    scene.add(this.root);
+  }
+
+  spec(b: Body) {
+    let s = this.specs.get(b);
+    if (!s) { s = groundSpec(b.look, b.r * AU_M, gravity(b), this.air(b).bar); this.specs.set(b, s); }
+    return s;
+  }
+  air(b: Body) {
+    let a = this.atmos.get(b);
+    if (!a) { a = atmosphere(b, this.stars()); this.atmos.set(b, a); }
+    return a;
+  }
+  /** ground height (m over the datum, sea level for a sea) */
+  heightAt(b: Body, n: V3, fine = 1) {
+    if (isGiant(b)) return 0;
+    const h = groundAt(this.spec(b), n, fine, this.smp);
+    return this.smp.sea ? 0 : h;
+  }
+
+  /**
+   * why a craft cannot be sent to a world from where the ship is, or ''.
+   * `shipAlt` is the ship's height over that world (m), `landed` whether it is standing on it.
+   */
+  why(kind: CraftKind, b: Body | null, shipAlt: number, landed: boolean): string {
+    if (!b || !b.alive) return 'No target: select a world, or fly near one';
+    if (['star', 'wd', 'ns', 'bh'].includes(b.cls) || b.look.wormhole || b.look.white) return `${b.name}: nothing could survive there`;
+    if (b.look.craft) return `${b.name} is a spacecraft`;
+    const R = b.r * AU_M;
+    // the ship has to be close: within a few dozen radii (or a million km of a small world)
+    if (shipAlt > Math.max(R * 40, 2e9)) return `Too far from ${b.name}: get within ${(Math.max(R * 40, 2e9) / 1e9).toFixed(1)} million km`;
+    const giant = isGiant(b), a = this.air(b);
+    if (kind === 'lander' || kind === 'rover' || kind === 'base') {
+      if (giant) return `${b.name} has no surface: send a probe into it`;
+      if (R < 2000) return `${b.name} is too small to land on`;
+      const T = a.T;
+      if (T > 900) return `Too hot for it: ${Math.round(T)} K`;
+      if (kind === 'base' && !landed && shipAlt > 3000) return 'Land the ship first: the base is built beside it';
+    }
+    if (kind === 'probe' && a.bar <= 0 && !giant) return '';
+    return '';
+  }
+
+  /** send a craft to a world: from the ship at `shipAt` (m from the world's centre, sandbox axes). `site` picks a place on the ground (body frame) */
+  launch(kind: CraftKind, b: Body, shipAt: THREE.Vector3, site: V3 | null = null, parent?: Craft): Craft {
+    const R = b.r * AU_M, a = this.air(b);
+    const n = this.crafts.filter(c => c.kind === kind).length + 1;
+    const qb = bodyQuat(b);
+    // where on the ground: the given site, or under the ship, or (from far off) the point facing the ship
+    const below = shipAt.clone().applyQuaternion(qb.clone().invert()).normalize();
+    const where: V3 = site ?? [below.x, below.y, below.z];
+    const c: Craft = {
+      id: nextId++, kind, name: `${NAMES[kind]} ${n}`, b, state: 'cruise', t: 0, age: 0,
+      from: shipAt.clone(), cruiseT: 0, orbit: null, n: where, head: rng(nextId, 2)() * 6.28, alt: 0, vz: 0,
+      log: [], profile: [], odo: 0, cover: 0, build: 0, status: 'on its way', mesh: this.model(kind), drive: { f: 0, s: 0 },
+      parent: parent?.id,
+    };
+    const dist = shipAt.length() - R;
+    // a short hop from close by, longer from far off: a few seconds to half a minute
+    c.cruiseT = Math.max(2.5, Math.min(30, 3 + 4 * Math.log10(Math.max(1, dist / 1e5))));
+    if (kind === 'orbiter' || kind === 'station') {
+      const alt = kind === 'station' ? Math.max(400e3, R * 0.06) : Math.max(150e3, R * 0.12);
+      const inc = kind === 'station' ? 51.6 * Math.PI / 180 : 88 * Math.PI / 180;
+      const r = R + (isGiant(b) ? Math.max(alt, R * 0.25) : alt);
+      // the plane: tilted from the equator, its node toward the ship
+      const plane = qb.clone().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.atan2(below.y, below.x))).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), inc));
+      const GM = 6.674e-11 * b.m * MSUN_KG;
+      c.orbit = { r, plane, ph: 0, w: Math.sqrt(GM / r ** 3) };
+    }
+    if (kind === 'rover' && parent && parent.state === 'surface') {
+      // straight off the lander's ramp
+      c.state = 'surface';
+      c.n = this.offset(parent.n, 6, parent.head, R);
+      c.head = parent.head;
+      c.status = 'driving';
+      this.note(c, `Rolled off ${parent.name}`);
+    } else if (kind === 'base') {
+      c.state = 'surface';
+      c.n = this.offset(where, 180, c.head, R);
+      c.status = 'under construction';
+      this.note(c, 'Construction started');
+    }
+    // descent starts high in the air, or a little way up on an airless world
+    c.alt = kind === 'probe' || kind === 'lander' || kind === 'rover' ? Math.max(isGiant(b) ? 300e3 : 0, a.bar > 0 ? Math.min(a.H * 1000 * 12, 400e3) : 30e3) : 0;
+    this.crafts.push(c);
+    this.root.add(c.mesh);
+    if (c.state === 'cruise') this.note(c, `Released toward ${b.name}`);
+    return c;
+  }
+
+  /** a point `d` m along the ground from n, heading `head` */
+  offset(n: V3, d: number, head: number, R: number): V3 {
+    const [e, nn] = tangent(n), th = d / R, sh = Math.sin(head), ch = Math.cos(head);
+    const t: V3 = [ch * nn[0] - sh * e[0], ch * nn[1] - sh * e[1], ch * nn[2] - sh * e[2]];
+    const m: V3 = [Math.cos(th) * n[0] + Math.sin(th) * t[0], Math.cos(th) * n[1] + Math.sin(th) * t[1], Math.cos(th) * n[2] + Math.sin(th) * t[2]];
+    const l = Math.hypot(...m);
+    return [m[0] / l, m[1] / l, m[2] / l];
+  }
+
+  private model(k: CraftKind): THREE.Object3D {
+    const g = new THREE.Group();
+    g.add(k === 'probe' ? probeMesh(true) : k === 'orbiter' ? orbiterMesh() : k === 'lander' ? landerMesh() : k === 'rover' ? roverMesh() : k === 'station' ? stationMesh() : baseMesh(nextId));
+    g.traverse(o => { o.frustumCulled = false; });
+    return g;
+  }
+
+  private note(c: Craft, msg: string, news = false) {
+    c.log.push({ t: c.age, msg });
+    if (news) this.onNews(`${c.name}: ${msg}`);
+  }
+
+  // ---------------------------------------------------------------- where
+  /** where a craft is, m from its world's centre, sandbox axes */
+  local(c: Craft, out = new THREE.Vector3()): THREE.Vector3 {
+    const b = c.b, R = b.r * AU_M;
+    if (c.state === 'cruise') {
+      const end = this.arrival(c);
+      const k = smooth(Math.min(1, c.t / c.cruiseT));
+      return out.copy(c.from).lerp(end, k);
+    }
+    if (c.state === 'orbit' && c.orbit) return out.set(Math.cos(c.orbit.ph) * c.orbit.r, Math.sin(c.orbit.ph) * c.orbit.r, 0).applyQuaternion(c.orbit.plane);
+    const h = this.heightAt(b, c.n, 0.5) + (c.state === 'surface' ? 0 : c.alt);
+    const r = R + h;
+    return out.set(c.n[0] * r, c.n[1] * r, c.n[2] * r).applyQuaternion(bodyQuat(b));
+  }
+
+  /** where the cruise ends: the orbit's start, or the top of the descent */
+  private arrival(c: Craft) {
+    if (c.orbit) return new THREE.Vector3(c.orbit.r, 0, 0).applyQuaternion(c.orbit.plane);
+    const R = c.b.r * AU_M, r = R + c.alt;
+    return new THREE.Vector3(c.n[0] * r, c.n[1] * r, c.n[2] * r).applyQuaternion(bodyQuat(c.b));
+  }
+
+  /** where a craft is in the sandbox, AU */
+  pos(c: Craft): V3 {
+    const p = this.local(c);
+    return [c.b.x + p.x / AU_M, c.b.y + p.y / AU_M, c.b.z + p.z / AU_M];
+  }
+
+  /** the local up at a craft (world) */
+  up(c: Craft) { return this.local(c).normalize(); }
+
+  // ---------------------------------------------------------------- each frame
+  frame(dt: number, P: V3, camFov: number) {
+    for (const c of this.crafts) {
+      if (!c.b.alive && c.state !== 'lost') { c.state = 'lost'; c.status = `${c.b.name} is gone`; this.note(c, `Lost: ${c.b.name} no longer exists`, true); }
+      c.t += dt; c.age += dt;
+      if (c.state === 'cruise' && c.t >= c.cruiseT) this.arrive(c);
+      else if (c.state === 'orbit') this.orbitStep(c, dt);
+      else if (c.state === 'descent') this.descend(c, dt);
+      else if (c.state === 'surface') this.surface(c, dt);
+      // drawn where it is, from the viewer
+      const m = c.mesh;
+      if (c.state === 'lost' && c.kind !== 'base') { m.visible = false; continue; }
+      const p = this.local(c);
+      const rel = new THREE.Vector3(c.b.x - P[0], c.b.y - P[1], c.b.z - P[2]).multiplyScalar(AU_M).add(p);
+      const d = rel.length();
+      // far off, it is a dot on the labels; near, a model
+      m.visible = d < 2e5 * (c.kind === 'station' ? 20 : 1) || d / Math.tan(camFov * Math.PI / 360) < 4e6;
+      m.position.copy(rel);
+      const up = p.clone().normalize();
+      if (c.state === 'orbit' || c.state === 'cruise') {
+        // flying along its orbit (or its path), its top to the world
+        const fwd = c.orbit && c.state === 'orbit' ? new THREE.Vector3(-Math.sin(c.orbit.ph), Math.cos(c.orbit.ph), 0).applyQuaternion(c.orbit.plane) : this.arrival(c).sub(c.from).normalize();
+        m.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), fwd, up.clone().negate()));
+      } else {
+        const qb = bodyQuat(c.b);
+        const n = new THREE.Vector3(...c.n);
+        m.quaternion.copy(qb).multiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), n)).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -c.head));
+      }
+      const chute = m.getObjectByName('chute');
+      if (chute) chute.visible = c.state === 'descent' && this.air(c.b).bar > 0.005 && c.vz < 200;
+      if (c.kind === 'base') m.scale.setScalar(0.05 + 0.95 * c.build);
+    }
+  }
+
+  private arrive(c: Craft) {
+    c.t = 0;
+    if (c.orbit) {
+      c.state = 'orbit';
+      c.status = c.kind === 'station' ? 'in orbit, crewed' : 'mapping';
+      const alt = (c.orbit.r - c.b.r * AU_M) / 1000;
+      this.note(c, `In orbit round ${c.b.name}, ${alt.toFixed(0)} km up, ${(2 * Math.PI / c.orbit.w / 60).toFixed(0)} minutes an orbit`, true);
+    } else {
+      c.state = 'descent';
+      c.status = 'descending';
+      const a = this.air(c.b);
+      this.note(c, a.bar > 0 ? `Entry interface: ${(c.alt / 1000).toFixed(0)} km up, heat shield first` : `Descent burn: ${(c.alt / 1000).toFixed(0)} km up`, true);
+      c.vz = a.bar > 0 ? 6000 : 1500;
+    }
+  }
+
+  private orbitStep(c: Craft, dt: number) {
+    const o = c.orbit!;
+    // the real angular speed, sped up so a map fills in a minute or so
+    o.ph = (o.ph + o.w * dt * (c.kind === 'orbiter' ? Math.max(1, 40 / (2 * Math.PI / o.w / 60)) : 1)) % (2 * Math.PI);
+    if (c.kind !== 'orbiter' || c.cover >= 1) return;
+    const was = c.cover;
+    c.cover = Math.min(1, c.cover + dt / 60);
+    const b = c.b, a = this.air(b);
+    if (was < 0.25 && c.cover >= 0.25) this.note(c, a.bar > 0 ? `Atmosphere sounded: ${a.gases.slice(0, 3).map(g => `${g.f} ${pct(g.x)}`).join(', ')}` : 'No atmosphere detected, to the limit of the instruments', true);
+    if (was < 0.6 && c.cover >= 0.6) {
+      const it = interior(b);
+      this.note(c, `Gravity field mapped: ${it.layers.map(l => l.name.toLowerCase()).join(', ')}`, true);
+    }
+    if (was < 1 && c.cover >= 1) {
+      const cp = composition(b);
+      this.note(c, cp.rows.length ? `Surface mapped: ${cp.rows.slice(0, 3).map(([k, v]) => `${k} ${v}%`).join(', ')}` : 'Cloud tops mapped: no solid surface', true);
+    }
+  }
+
+  private descend(c: Craft, dt: number) {
+    const b = c.b, a = this.air(b), g = gravity(b), giant = isGiant(b);
+    // falling: an entry that sheds most of the speed, then a parachute (in air) or rockets
+    const thick = a.bar > 0 ? airAt(a, g, Math.max(0, c.alt) / 1000).bar : 0;
+    let terminal = thick > 0 ? Math.max(25, 120 / Math.sqrt(Math.max(thick, 1e-4))) : Math.max(2, c.alt * 0.05);
+    // the last few kilometres on rockets (or airbags), down to a few m/s at touchdown
+    if (!giant && c.alt < 3000) terminal = Math.min(terminal, Math.max(c.kind === 'probe' && a.bar <= 0 ? 1500 : 2.5, c.alt * 0.4));
+    if (c.vz > terminal) c.vz = Math.max(terminal, c.vz - (thick > 0 ? 400 : 60) * dt);
+    else c.vz = Math.min(terminal, c.vz + g * dt);
+    // shown faster than real, so a descent takes a minute or two
+    const speedUp = giant ? (c.alt > 0 ? 25 : 10) : c.alt > 20e3 ? 25 : c.alt > 2e3 ? 8 : 1;
+    c.alt -= c.vz * dt * speedUp;
+    // a probe reads the air every few kilometres
+    const zKm = c.alt / 1000;
+    const last = c.profile[c.profile.length - 1];
+    if (c.kind === 'probe' && (!last || last.z - zKm > Math.max(2, Math.abs(zKm) * 0.08))) {
+      const air = giant && zKm < 0 ? { bar: giantPressure(a, -zKm), T: giantTemp(a, -zKm) } : a.bar > 0 ? airAt(a, g, Math.max(0, zKm)) : { bar: 0, T: a.T };
+      const deck = giant ? cloudDecks(b, a).find(d => last && last.z > -d.depth && zKm <= -d.depth) : undefined;
+      c.profile.push({ z: zKm, bar: air.bar, T: air.T, note: deck ? `${deck.what} clouds` : undefined });
+      if (deck) this.note(c, `Through the ${deck.what} cloud deck at ${air.bar.toPrecision(2)} bar`);
+      if (air.bar > PROBE_BAR || air.T > PROBE_K) {
+        c.state = 'lost';
+        c.status = `crushed at ${air.bar.toPrecision(3)} bar, ${Math.round(air.T)} K`;
+        this.note(c, `Signal lost ${Math.abs(zKm).toFixed(0)} km ${zKm < 0 ? 'below the cloud tops' : 'up'}: ${c.status}`, true);
+        return;
+      }
+    }
+    if (giant) return;
+    const h = c.alt;
+    if (h <= 0) {
+      c.alt = 0;
+      c.state = 'surface';
+      c.t = 0;
+      const hard = a.bar <= 0 && c.kind === 'probe';
+      c.status = hard ? 'impacted' : c.kind === 'rover' ? 'driving' : 'on the ground';
+      if (hard) { this.note(c, `Impact at ${c.vz.toFixed(0)} m/s: it made a fresh crater`, true); c.state = 'lost'; return; }
+      const [la, lo] = latLonOf(c.n);
+      this.note(c, `Touchdown at ${fmtLL(la, lo)}`, true);
+      this.surfaceReport(c);
+    }
+  }
+
+  /** what a craft on the ground finds as it lands */
+  private surfaceReport(c: Craft) {
+    const b = c.b, a = this.air(b), g = gravity(b);
+    const z = this.heightAt(b, c.n, 1) / 1000;
+    const air = airAt(a, g, Math.max(0, z));
+    this.note(c, a.bar > 0 ? `Air at the surface: ${air.bar.toPrecision(3)} bar, ${Math.round(air.T)} K (${Math.round(air.T - 273.15)} °C); ${a.gases.slice(0, 4).map(x => `${x.f} ${pct(x.x)}`).join(', ')}` : `Vacuum, ${Math.round(a.T)} K`);
+    if (c.kind === 'probe') return;
+    const cp = composition(b), r = rng(Math.floor(c.n[0] * 1e6), 4);
+    if (cp.rows.length) this.note(c, `Soil: ${cp.rows.slice(0, 5).map(([k, v]) => `${k} ${(v * (0.85 + 0.3 * r())).toFixed(1)}%`).join(', ')}`);
+    const L = life(b, this.stars());
+    const res = L.tier === 'earth' ? 'Life experiments: positive. Microbes in every gram of soil; the air is full of pollen and spores'
+      : b.look.real === 'Mars' ? 'Life experiments: labelled release shows gas given off, but no organics to go with it — inconclusive, as with Viking'
+      : L.tier === 'microbial' || L.tier === 'plants' || L.tier === 'animals' || L.tier === 'intelligent' ? `Life experiments: positive. ${L.forms.find(f => f.kind === 'microbe')?.name ?? 'Microbes'} in the soil`
+      : L.tier === 'candidate' ? 'Life experiments: inconclusive'
+      : 'Life experiments: negative';
+    this.note(c, res, true);
+    if (c.kind === 'lander' && (b.look.real === 'Mars' || b.look.real === 'Moon')) this.note(c, b.look.real === 'Mars' ? 'Seismometer: a marsquake every few days (InSight heard 1,319)' : 'Seismometer: deep moonquakes, ringing for an hour each');
+  }
+
+  private surface(c: Craft, dt: number) {
+    const b = c.b, R = b.r * AU_M;
+    if (c.kind === 'base') {
+      if (c.build < 1) { c.build = Math.min(1, c.build + dt / 20); if (c.build >= 1) { c.status = 'crewed'; this.note(c, 'Built and crewed', true); } }
+      return;
+    }
+    if (c.kind !== 'rover') return;
+    // the rover drives: under your hand, or on its own between waypoints
+    const auto = c.drive.f === 0 && c.drive.s === 0;
+    let f = c.drive.f, turn = c.drive.s;
+    if (auto) { f = 0.6; turn = Math.sin(c.age * 0.13 + c.id) * 0.25; }
+    c.head += turn * dt * 0.8;
+    const next = this.offset(c.n, f * 3 * dt, c.head, R);
+    this.heightAt(b, next, 0.5);
+    if (this.smp.sea) { c.head += Math.PI * 0.5; return; }
+    c.n = next;
+    const before = Math.floor(c.odo / 60);
+    c.odo += Math.abs(f) * 3 * dt;
+    if (Math.floor(c.odo / 60) > before) this.sampleStop(c);
+  }
+
+  /** a rover's stop: a sample of the rock here, and anything interesting */
+  private sampleStop(c: Craft) {
+    const b = c.b, r = rng(Math.floor(c.odo) + c.id * 1000, 8);
+    const cp = composition(b);
+    const real = b.look.real;
+    const finds: Record<string, string[]> = {
+      Mars: ['a mudstone with clay minerals: this was a lake bed', 'haematite “blueberries”: they formed in water', 'a vein of gypsum, laid down by groundwater', 'organic molecules in a drilled sample', 'a nickel-iron meteorite', 'wind-sculpted ventifacts'],
+      Moon: ['anorthosite: the Moon’s original crust', 'orange volcanic glass beads', 'a breccia of shattered and welded rock', 'regolith a few metres deep, fine as flour', 'ice in the shadow of a crater rim'],
+      Venus: ['basalt, its surface weathered by sulphur', 'a tessera ridge of folded rock'],
+      Titan: ['water-ice cobbles, rounded by flowing methane', 'organic sand of the dunes', 'a damp patch: methane evaporating from the soil'],
+      Earth: ['granite', 'limestone full of fossils', 'basalt', 'sandstone', 'a quartz vein'],
+    };
+    const list = (real && finds[real]) || ['basaltic rock', 'fine dust', 'a fractured boulder', 'impact glass', cp.rows[0] ? `rock rich in ${cp.rows[0][0]}` : 'bare rock'];
+    const L = life(b, this.stars());
+    let msg = `Stop at ${(c.odo / 1000).toFixed(2)} km: ${list[Math.floor(r() * list.length)]}`;
+    if ((L.tier === 'animals' || L.tier === 'plants' || L.tier === 'intelligent' || L.tier === 'earth') && r() < 0.5) {
+      const f = L.tier === 'earth' ? null : L.forms[Math.floor(r() * L.forms.length)];
+      msg += f ? `; nearby, ${f.name}, a ${f.about}` : '; lichens and insects on the rock';
+    }
+    this.note(c, msg, r() < 0.3);
+  }
+
+  remove(c: Craft) {
+    const k = this.crafts.indexOf(c);
+    if (k >= 0) this.crafts.splice(k, 1);
+    this.root.remove(c.mesh);
+  }
+
+  byId(id: number) { return this.crafts.find(c => c.id === id) ?? null; }
+  on(b: Body) { return this.crafts.filter(c => c.b === b); }
+
+  /** a landing site for a world: a real one by name, else a seeded spot on dry land */
+  siteFor(b: Body, name?: string): V3 | null {
+    const s = sitesOn(b.look.real).find(x => x.name === name);
+    if (s) return dirOf(s.lat, s.lon);
+    return null;
+  }
+
+  /** the labels for craft near enough to see: their world position from the viewer */
+  labels(P: V3): { key: string; text: string; at: THREE.Vector3 }[] {
+    const out: { key: string; text: string; at: THREE.Vector3 }[] = [];
+    for (const c of this.crafts) {
+      if (c.state === 'lost' && c.kind !== 'base') continue;
+      const p = this.local(c);
+      const at = new THREE.Vector3(c.b.x - P[0], c.b.y - P[1], c.b.z - P[2]).multiplyScalar(AU_M).add(p);
+      if (at.length() > Math.max(5e7, c.b.r * AU_M * 20)) continue;
+      out.push({ key: `craft:${c.id}`, text: `${c.name} · ${c.status}`, at });
+    }
+    return out;
+  }
+
+  /** for a rover the ground it is near: arc distance to another craft, m */
+  dist(a: Craft, b: Craft) { return a.b === b.b ? arc(a.n, b.n) * a.b.r * AU_M : Infinity; }
+}
+
+const smooth = (t: number) => t * t * (3 - 2 * t);
+export const pct = (x: number) => x >= 0.001 ? `${(x * 100).toPrecision(x >= 0.1 ? 4 : 3)}%` : `${(x * 1e6).toPrecision(3)} ppm`;
+export const fmtLL = (la: number, lo: number) => `${Math.abs(la).toFixed(2)}°${la >= 0 ? 'N' : 'S'} ${Math.abs(lo).toFixed(2)}°${lo >= 0 ? 'E' : 'W'}`;

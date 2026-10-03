@@ -5,6 +5,10 @@ import type { View3D } from './view3d';
 import { POWER, type Power } from './ship';
 import { survey, LANDER } from './survey';
 import { fmtTime } from './radar';
+import { atmosphere, interior, composition, habitability, life, gravity, airAt, type Atmosphere, type Layer } from './science';
+import { KINDS, pct, fmtLL, type CraftKind } from './fleet';
+import { latLonOf } from './ground';
+import { speciesIn } from './sites';
 
 /**
  * The ship's consoles, as panels over the view: the comms log and the sensor
@@ -14,10 +18,11 @@ import { fmtTime } from './radar';
  * closes them.
  */
 
-export type PanelKind = 'comms' | 'sensors' | 'log' | 'survey' | 'power' | 'bay';
+export type PanelKind = 'comms' | 'sensors' | 'log' | 'survey' | 'power' | 'bay' | 'mission' | 'craft' | 'scan';
 
 const TITLE: Record<PanelKind, string> = {
   comms: 'Comms log', sensors: 'Sensor sweep', log: "Captain's log", survey: 'Science survey', power: 'Power routing', bay: 'Hangar · landing survey',
+  mission: 'Mission control', craft: 'Craft telemetry', scan: 'Field scan',
 };
 
 const esc = (s: string | undefined) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
@@ -34,6 +39,9 @@ export class Panels {
   private html = '';
   /** with a controller: which button the d-pad has picked */
   private focus = -1;
+  /** the craft whose telemetry is open, and the site picked for the next lander */
+  private craftId = 0;
+  private site = 0;
 
   constructor(private v: View3D) {
     this.el = document.createElement('div');
@@ -70,7 +78,8 @@ export class Panels {
     btns[this.focus]?.scrollIntoView({ block: 'nearest' });
   }
 
-  show(kind: PanelKind) {
+  show(kind: PanelKind, craft?: number) {
+    if (craft !== undefined) this.craftId = craft;
     this.kind = kind;
     this.head.textContent = TITLE[kind];
     this.el.hidden = false;
@@ -118,6 +127,15 @@ export class Panels {
     else if (a === 'go' && b) { v.goTo(b); this.close(); }
     else if (a === 'jump' && b) { v.jumpTo(b); this.close(); }
     else if (a === 'power') { v.ship.power = id as Power; v.app.onToast(`Power routed: ${POWER[id as Power].name}`); }
+    else if (a === 'launch') v.launch(id as CraftKind, this.siteName());
+    else if (a === 'site') this.site++;
+    else if (a === 'cview') { this.close(); v.viewCraft(Number(id)); return; }
+    else if (a === 'clog') { this.show('craft', Number(id)); return; }
+    else if (a === 'crover') v.roverFrom(Number(id));
+    else if (a === 'cdrop') { const c = v.fleet.byId(Number(id)); if (c) { v.fleet.remove(c); v.app.onToast(`${c.name} decommissioned`); } }
+    else if (a === 'mission') { this.show('mission'); return; }
+    else if (a === 'site') { /* handled above */ }
+    else if (a === 'gosite') { const t = v.missionTarget(); if (t) { v.goToSite(t, id); this.close(); return; } }
     this.t = 0;
     this.refresh();
   }
@@ -186,7 +204,12 @@ export class Panels {
       + stat('Spacewalks', String(L.walks))
       + stat('Nights slept', String(L.sleeps))
       + stat('Coffees', String(L.coffees))
+      + stat('Landings', String(L.landings))
+      + stat('Worlds walked on', String(L.walkedOn.length))
+      + stat('Craft launched', String(v.fleet.crafts.length))
+      + stat('Discoveries', String(L.finds.length))
       + '</div>';
+    if (L.finds.length) h += '<div class="psub">Discoveries</div>' + L.finds.slice().reverse().slice(0, 40).map(f => `<div class="prow"><div><div class="pnm">${esc(f.what)}</div><div class="pdim">${esc(f.where)} · ${esc(f.note)}</div></div></div>`).join('');
     h += '<div class="psub">Visited</div>';
     h += L.firsts.length ? L.firsts.slice().reverse().map(f => `<div class="prow"><div><div class="pnm">${esc(f.name)}</div><div class="pdim">${esc(f.note)}</div></div></div>`).join('')
       : '<p class="pdim">Nowhere yet. Fly within a few radii of a world and it goes in the log, on the shelf, and into the sample locker.</p>';
@@ -198,9 +221,98 @@ export class Panels {
     if (!b) return '<p class="pdim">Nothing to survey. Select something, or fly near it.</p>';
     const s = survey(b, v.stars(), v.app.hostOf(b));
     const picked = b === v.app.selected;
+    const stars = v.stars();
     return `<div class="phero"><div><div class="pbig">${esc(s.name)}</div><div class="pdim">${esc(s.kind)}${picked ? ' · selected' : ' · nearest'}</div></div>${this.btns(b, true)}</div>`
       + `<table class="ptab">${s.rows.map(([k, x]) => `<tr><td>${k}</td><td>${esc(x)}</td></tr>`).join('')}</table>`
-      + `<div class="pland ${s.land.ok ? 'ok' : 'no'}">${s.land.ok ? '✓' : '✗'} ${esc(s.land.why)}</div>`;
+      + `<div class="pland ${s.land.ok ? 'ok' : 'no'}">${s.land.ok ? '✓' : '✗'} ${esc(s.land.why)}</div>`
+      + this.science(b, stars);
+  }
+
+  /** the atmosphere reader, the interior, the ground, habitability and life, for a body */
+  private science(b: Body, stars: Body[]) {
+    const a = atmosphere(b, stars), it = interior(b), cp = composition(b), hab = habitability(b, stars), L = life(b, stars);
+    let h = `<div class="psub">Atmosphere reader</div>` + atmoTable(a);
+    h += `<div class="psub">Inside</div><div class="pcut">${cutaway(it.layers)}<div>${it.layers.slice().reverse().map(l => `<div class="prow tight"><div><span class="pdot" style="background:#${l.color.toString(16).padStart(6, '0')}"></span><b>${esc(l.name)}</b> <span class="pdim">${esc(l.what)} · to ${(l.r1 * 100).toFixed(0)}% of the radius</span></div></div>`).join('')}<p class="pdim">${esc(it.note)}</p></div></div>`;
+    if (cp.rows.length) h += `<div class="psub">Ground</div>${bars(cp.rows)}<p class="pdim">${esc(cp.note)}</p>`;
+    if (!['star', 'wd', 'ns', 'bh'].includes(b.cls)) {
+      h += `<div class="psub">Habitability</div><div class="pgrid"><div class="pstat"><span>Score</span><b>${(hab.score * 100).toFixed(0)}%</b></div><div class="pstat"><span>Habitable zone</span><b>${hab.zone[1] ? `${hab.zone[0].toPrecision(2)}–${hab.zone[1].toPrecision(2)} AU` : '—'}</b></div><div class="pstat"><span>${hab.inZone ? 'Inside it' : 'Outside it'}</span><b>${isFinite(hab.dist) ? `${hab.dist.toPrecision(3)} AU` : '—'}</b></div><div class="pstat"><span>Water</span><b>${esc(hab.water)}</b></div></div>`
+        + `<p class="pdim">${hab.reasons.map(esc).join(' · ')}</p>`;
+      h += `<div class="psub">Life</div><div class="pland ${L.tier === 'none' ? 'no' : L.tier === 'candidate' ? 'maybe' : 'ok'}">${esc(L.verdict)}</div>`
+        + (L.signs.length ? `<ul class="plist">${L.signs.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '')
+        + (L.forms.length ? L.forms.map(f => `<div class="prow tight"><div><span class="pdot" style="background:#${f.color.toString(16).padStart(6, '0')}"></span><b>${esc(f.name)}</b> <span class="pdim">${f.kind} · ${esc(f.about)}${f.size ? ` · ${f.size.toPrecision(2)} m` : ''}</span></div></div>`).join('') : '');
+    }
+    return h;
+  }
+
+  // ---------------------------------------------------------------- mission control
+  /** the landing sites on offer for the target: under the ship, then the real ones */
+  private sites(b: Body | null) { return b ? ['below the ship', ...this.v.ground.siteListFor(b).map(x => x.name)] : ['below the ship']; }
+  private siteName() { const l = this.sites(this.v.missionTarget()); const n = l[this.site % l.length]; return n === 'below the ship' ? undefined : n; }
+
+  private mission() {
+    const v = this.v, b = v.missionTarget(), f = v.fleet;
+    let h = '';
+    if (b) {
+      const d = Math.max(0, (Math.hypot(b.x - v.shipPos()[0], b.y - v.shipPos()[1], b.z - v.shipPos()[2]) - b.r) * AU_M);
+      const site = this.sites(b)[this.site % this.sites(b).length];
+      h += `<div class="phero"><div><div class="pbig">${esc(b.name)}</div><div class="pdim">target · ${fmtLength(d / AU_M)} from the ship${b === v.app.selected ? ' · selected' : ' · nearest'}</div></div></div>`;
+      h += `<div class="plaunch">${KINDS.map(k => { const why = v.launchBlock(k.k); return `<button data-act="launch" data-id="${k.k}"${why ? ` disabled title="${esc(why)}"` : ''}><b>${k.name}</b><span>${why ? esc(why) : esc(k.about)}</span></button>`; }).join('')}</div>`;
+      h += `<div class="prow"><div class="pdim">Landers and rovers set down at</div><button data-act="site">${esc(site)} ▸</button></div>`;
+      const real = v.ground.siteListFor(b);
+      if (real.length) h += `<div class="psub">Where people have landed</div>` + real.map(x => `<div class="prow tight"><div><div class="pnm">${esc(x.name)}${x.year ? ` <span class="pdim">· ${x.year}</span>` : ''}</div><div class="pdim">${esc(x.about)}</div></div><span class="pbtns"><button data-act="gosite" data-id="${esc(x.name)}"${v.goBlock() ? ` disabled title="${esc(v.goBlock())}"` : ''}>Fly there</button></span></div>`).join('');
+    } else h += '<p class="pdim">No target. Select a world, or fly near one.</p>';
+    h += `<div class="psub">The fleet</div>`;
+    if (!f.crafts.length) h += '<p class="pdim">Nothing launched yet.</p>';
+    for (const c of f.crafts.slice().reverse()) {
+      const last = c.log[c.log.length - 1]?.msg ?? '';
+      const lander = c.kind === 'lander' && c.state === 'surface' && !f.crafts.some(x => x.parent === c.id);
+      h += `<div class="prow"><div><div class="pnm">${esc(c.name)} <span class="pdim">· ${esc(c.b.name)} · ${esc(c.status)}</span></div><div class="pdim">${esc(last)}</div></div><span class="pbtns">`
+        + `${c.state !== 'lost' ? `<button data-act="cview" data-id="${c.id}">${c.kind === 'rover' && c.state === 'surface' ? 'Drive' : 'View'}</button>` : ''}`
+        + `<button data-act="clog" data-id="${c.id}">Data</button>${lander ? `<button data-act="crover" data-id="${c.id}">Rover</button>` : ''}</span></div>`;
+    }
+    return h;
+  }
+
+  private craft() {
+    const v = this.v, c = v.fleet.byId(this.craftId);
+    if (!c) return '<p class="pdim">That craft is gone.</p>';
+    const [la, lo] = latLonOf(c.n);
+    let h = `<div class="phero"><div><div class="pbig">${esc(c.name)}</div><div class="pdim">${esc(c.b.name)} · ${esc(c.status)}${c.state === 'surface' || c.state === 'descent' ? ` · ${fmtLL(la, lo)}` : ''}</div></div><span class="pbtns">${c.state !== 'lost' ? `<button data-act="cview" data-id="${c.id}">${c.kind === 'rover' ? 'Drive' : 'View'}</button>` : ''}<button data-act="mission">Back</button><button data-act="cdrop" data-id="${c.id}">Retire</button></span></div>`;
+    const stat = (k: string, x: string) => `<div class="pstat"><span>${k}</span><b>${x}</b></div>`;
+    h += '<div class="pgrid">' + stat('Mission time', fmtTime(c.age))
+      + (c.kind === 'rover' ? stat('Driven', `${(c.odo / 1000).toFixed(2)} km`) : '')
+      + (c.kind === 'orbiter' ? stat('Mapped', `${(c.cover * 100).toFixed(0)}%`) : '')
+      + (c.orbit ? stat('Orbit', `${((c.orbit.r - c.b.r * AU_M) / 1000).toFixed(0)} km up`) : '')
+      + (c.kind === 'base' ? stat('Built', `${(c.build * 100).toFixed(0)}%`) : '')
+      + (c.state === 'descent' ? stat('Altitude', `${(c.alt / 1000).toFixed(1)} km`) : '') + '</div>';
+    if (c.profile.length > 1) h += `<div class="psub">Descent profile</div>${profileSvg(c.profile)}<table class="ptab small"><tr><td>Height</td><td>Pressure · temperature</td></tr>${c.profile.filter((_, k) => k % Math.max(1, Math.floor(c.profile.length / 14)) === 0 || k === c.profile.length - 1).map(p => `<tr><td>${p.z.toFixed(1)} km</td><td>${p.bar > 1e-4 ? `${p.bar.toPrecision(3)} bar` : p.bar > 0 ? `${p.bar.toExponential(1)} bar` : 'vacuum'} · ${Math.round(p.T)} K${p.note ? ` · ${esc(p.note)}` : ''}</td></tr>`).join('')}</table>`;
+    if (c.kind === 'orbiter' && c.cover >= 0.6) h += this.science(c.b, v.stars());
+    h += `<div class="psub">Log</div>${c.log.slice().reverse().map(r => `<div class="prow tight"><div><span class="pdim">T+${fmtTime(r.t)}</span> ${esc(r.msg)}</div></div>`).join('')}`;
+    return h;
+  }
+
+  /** standing on a world: what the suit's instruments read here */
+  private scan() {
+    const v = this.v, G = v.ground, b = G.body, S = v.surf;
+    if (!b || !G.atmo || v.mode !== 'surface') return '<p class="pdim">Step out onto a world to scan it.</p>';
+    const [la, lo] = latLonOf(S.n), z = G.heightAt(S.n, 1), smp = G.last_sample;
+    const g = gravity(b), air = airAt(G.atmo, g, Math.max(0, z) / 1000);
+    const stat = (k: string, x: string) => `<div class="pstat"><span>${k}</span><b>${x}</b></div>`;
+    let h = `<div class="phero"><div><div class="pbig">${esc(b.name)}</div><div class="pdim">${fmtLL(la, lo)} · ${z.toFixed(0)} m ${z >= 0 ? 'above' : 'below'} the datum</div></div></div>`;
+    h += '<div class="pgrid">' + stat('Gravity', `${(g / 9.81).toFixed(3)} g`) + stat('Air pressure', air.bar > 1e-4 ? `${air.bar.toPrecision(3)} bar` : 'vacuum')
+      + stat('Temperature', `${Math.round(air.T)} K · ${Math.round(air.T - 273.15)} °C`) + stat('Daylight', G.daylight > 0.6 ? 'day' : G.daylight > 0.05 ? 'twilight' : 'night') + '</div>';
+    h += `<div class="psub">Air here</div>${G.atmo.kind === 'thin' || G.atmo.kind === 'thick' ? atmoTable({ ...G.atmo, bar: air.bar, T: air.T }) : atmoTable(G.atmo)}`;
+    const cp = composition(b);
+    if (cp.rows.length) h += `<div class="psub">Under your feet</div><div class="prow tight"><div><span class="pdot" style="background:rgb(${Math.round(smp.r * 255)},${Math.round(smp.g * 255)},${Math.round(smp.b * 255)})"></span> ${smp.rock > 0.5 ? 'rocky, boulder-strewn' : 'fine soil and pebbles'}</div></div>${bars(cp.rows)}`;
+    const L = G.lifeInfo!;
+    h += `<div class="psub">Life nearby</div>`;
+    if (b.look.real === 'Earth' && G.biome) {
+      const sp = speciesIn(G.biome);
+      h += `<p class="pdim">Biome: <b>${G.biome}</b>. Living here:</p>` + sp.map(x => `<div class="prow tight"><div><span class="pdot" style="background:#${x.color.toString(16).padStart(6, '0')}"></span><b>${esc(x.name)}</b> <i class="pdim">${esc(x.latin)}</i> <span class="pdim">· ${x.kind}${x.size ? ` · ${x.size} m` : ''}</span></div></div>`).join('');
+    } else h += `<div class="pland ${L.tier === 'none' ? 'no' : L.tier === 'candidate' ? 'maybe' : 'ok'}">${esc(L.verdict)}</div>` + L.forms.map(f => `<div class="prow tight"><div><b>${esc(f.name)}</b> <span class="pdim">${f.kind} · ${esc(f.about)}</span></div></div>`).join('');
+    const finds = v.logbook.finds.filter(x => x.where === b.name);
+    if (finds.length) h += `<div class="psub">Found here so far</div>${finds.map(x => `<div class="prow tight"><div><b>${esc(x.what)}</b> <span class="pdim">${esc(x.note)}</span></div></div>`).join('')}`;
+    return h;
   }
 
   private power() {
@@ -223,11 +335,47 @@ export class Panels {
       const s = survey(b, stars, null);
       return `<div class="prow"><div><div class="pnm"><span class="${s.land.ok ? 'pok' : 'pno'}">${s.land.ok ? '✓' : '✗'}</span> ${esc(b.name)}</div><div class="pdim">${fmtLength(Math.max(0, d - b.r))} · ${sig(s.g, 2)} g · ${esc(s.land.why)}</div></div>${this.btns(b)}</div>`;
     }).join('');
-    return `<div class="pland no">Lander 1 is not flight-ready: the descent software, the bay doors and the landing legs are still being fitted.</div>`
-      + `<p class="pdim">Rated for up to ${LANDER.maxG} g, ${LANDER.maxK} K and ${LANDER.maxBar} bar, on anything wider than ${LANDER.minKm} km. Nearby worlds:</p>${rows}`;
+    return `<div class="phero"><div class="pdim">Probes, orbiters, landers, rovers, stations and bases launch from here.</div><button data-act="mission">Mission control</button></div>`
+      + `<p class="pdim">The landers are rated for up to ${LANDER.maxG} g, ${LANDER.maxK} K and ${LANDER.maxBar} bar, on anything wider than ${LANDER.minKm} km. Nearby worlds:</p>${rows}`;
   }
 }
 
 /** a year in seconds, for the sleep */
 export const SLEEP_HOURS = 8;
 export const sleepWarp = (seconds: number) => (SLEEP_HOURS * 3600) / seconds / YEAR_S;
+
+/** an atmosphere as the reader shows it: the pressure and temperature, and every gas to the last part per million */
+function atmoTable(a: Atmosphere) {
+  if (a.kind === 'none' || !a.gases.length) return `<div class="pland no">No atmosphere. ${esc(a.note)}</div>`;
+  const head = a.kind === 'exosphere' ? `An exosphere only${a.bar > 0 ? `, about ${a.bar.toExponential(0)} bar` : ''}: a few atoms, no weather.` : a.kind === 'giant' ? `At the 1-bar level: ${Math.round(a.T)} K. Scale height ${a.H.toFixed(1)} km.` : `${a.bar.toPrecision(3)} bar at the surface, ${Math.round(a.T)} K. Scale height ${a.H.toFixed(1)} km.`;
+  return `<p class="pdim">${head} Clouds: ${esc(a.clouds)}.</p>` + bars(a.gases.map(x => [`${x.f} · ${x.name}`, x.x * 100]), true) + `<p class="pdim">${esc(a.note)}</p>`;
+}
+
+/** shares as bars, largest first */
+function bars(rows: [string, number][], gas = false) {
+  const max = Math.max(...rows.map(r => r[1]), 1e-9);
+  return `<div class="pbars">${rows.map(([k, x]) => `<div class="pbar"><span>${esc(k)}</span><i style="width:${Math.max(0.5, (Math.log10(1 + x * 9 / max * 10) / Math.log10(91)) * 100).toFixed(1)}%"></i><b>${gas ? pct(x / 100) : `${x.toFixed(1)}%`}</b></div>`).join('')}</div>`;
+}
+
+/** a world cut open: its layers as rings, a quarter taken out */
+function cutaway(layers: Layer[]) {
+  const R = 70, c = 76;
+  let s = `<svg viewBox="0 0 152 152" class="pcutsvg"><circle cx="${c}" cy="${c}" r="${R}" fill="#${(layers[layers.length - 1]?.color ?? 0x888888).toString(16).padStart(6, '0')}" opacity="0.35"/>`;
+  for (const l of layers.slice().reverse()) {
+    const r = l.r1 * R, col = `#${l.color.toString(16).padStart(6, '0')}`;
+    s += `<path d="M${c},${c} L${c},${c - r} A${r},${r} 0 1,1 ${c - r},${c} Z" fill="${col}"/>`;
+  }
+  return s + '</svg>';
+}
+
+/** a probe's descent: temperature (orange) and pressure (blue, log) against height */
+function profileSvg(p: { z: number; bar: number; T: number }[]) {
+  const W = 300, H = 140, zs = p.map(x => x.z), z0 = Math.min(...zs), z1 = Math.max(...zs);
+  const Ts = p.map(x => x.T), t0 = Math.min(...Ts) * 0.95, t1 = Math.max(...Ts) * 1.05;
+  const lp = p.map(x => Math.log10(Math.max(x.bar, 1e-6))), p0 = Math.min(...lp), p1 = Math.max(...lp) + 0.01;
+  const y = (z: number) => H - 8 - ((z - z0) / Math.max(1e-6, z1 - z0)) * (H - 16);
+  const xT = (t: number) => 8 + ((t - t0) / Math.max(1e-6, t1 - t0)) * (W - 16);
+  const xP = (l: number) => 8 + ((l - p0) / Math.max(1e-6, p1 - p0)) * (W - 16);
+  const line = (pts: string, col: string) => `<polyline points="${pts}" fill="none" stroke="${col}" stroke-width="2"/>`;
+  return `<svg viewBox="0 0 ${W} ${H}" class="pprof">${line(p.map(x => `${xT(x.T).toFixed(1)},${y(x.z).toFixed(1)}`).join(' '), '#ffa060')}${line(p.map((x, k) => `${xP(lp[k]).toFixed(1)},${y(x.z).toFixed(1)}`).join(' '), '#70c0ff')}<text x="8" y="12" class="t">${z1.toFixed(0)} km</text><text x="8" y="${H - 2}" class="t">${z0.toFixed(0)} km</text><text x="${W - 8}" y="12" text-anchor="end" class="t"><tspan fill="#ffa060">temperature</tspan> · <tspan fill="#70c0ff">pressure (log)</tspan></text></svg>`;
+}

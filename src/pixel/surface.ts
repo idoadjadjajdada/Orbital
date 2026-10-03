@@ -46,10 +46,8 @@ export function mapJob(look: Look, w: number): MapJob {
     height: new Float32Array(W * H), cloud: clouds ? new Float32Array(W * H) : null, gas,
   };
   const d = detailFor(W);
-  const c1 = hex(look.c1), c2 = hex(look.c2);
-  const sd = (look.seed % 1000) * 0.137;
   const o: Tx = { r: 0, g: 0, b: 0, h: 0.5, e: 0, s: 0, c: 0 };
-  const bandSet = gas ? gasBands(look, c1, c2) : null;
+  const at = pointPainter(look);
   let row = 0;
   const job: MapJob = {
     map, done: false,
@@ -63,8 +61,7 @@ export function mapJob(look: Look, w: number): MapJob {
           const lon = ((i + 0.5) / W) * 2 * Math.PI;
           const n: V3 = [cl * Math.cos(lon), cl * Math.sin(lon), sl];
           o.r = o.g = o.b = 0.5; o.h = 0.5; o.e = 0; o.s = 0; o.c = 0;
-          if (paint) paint(o, lat, lon, n, d);
-          else procedural(o, look, n, lat, d, c1, c2, sd, bandSet);
+          at(o, lat, lon, n, d);
           const k = j * W + i;
           map.rgb[k * 3] = Math.max(0, Math.min(1, o.r)); map.rgb[k * 3 + 1] = Math.max(0, Math.min(1, o.g)); map.rgb[k * 3 + 2] = Math.max(0, Math.min(1, o.b));
           map.height[k] = o.h; map.emit[k] = o.e; map.spec[k] = o.s;
@@ -77,6 +74,19 @@ export function mapJob(look: Look, w: number): MapJob {
     },
   };
   return job;
+}
+
+/**
+ * the painter for a look, one point at a time: whatever paints its map, so
+ * the ground seen close up (terrain.ts) is the same ground the map shows
+ */
+export function pointPainter(look: Look): (o: Tx, lat: number, lon: number, n: V3, d: Detail) => void {
+  const paint = look.real ? REAL[look.real] : undefined;
+  if (paint) return paint;
+  const c1 = hex(look.c1), c2 = hex(look.c2);
+  const sd = (look.seed % 1000) * 0.137;
+  const bandSet = isGas(look.style) ? gasBands(look, c1, c2) : null;
+  return (o, lat, _lon, n, d) => procedural(o, look, n, lat, d, c1, c2, sd, bandSet);
 }
 
 /** a whole map at once (small ones are quick) */

@@ -277,6 +277,58 @@ try {
   await page.waitForTimeout(300);
   ok('V goes back to the map', await page.evaluate(() => !window.orbital.mode3d && document.getElementById('c3').hidden));
 
+  // landing: fly to a real site, set down, step out, walk, scan, send a rover, back aboard, lift off
+  await page.evaluate(() => { const a = window.orbital; a.loadPreset('earth'); a.select(a.world.sources.find(b => b.name === 'Moon')); });
+  await page.keyboard.press('KeyV');
+  await page.waitForFunction(() => window.orbital.v3?.active, null, { timeout: 30000 });
+  await page.evaluate(() => window.orbital.v3.goToSite(window.orbital.selected, 'Apollo 11 · Tranquility Base'));
+  ok('the ship flies to Apollo 11 and the ground comes up', await page.waitForFunction(() => { const v = window.orbital.v3; return !v.travel && v.ground.ready && v.landBlock() === ''; }, null, { timeout: 90000 }).then(() => true, () => false));
+  await page.keyboard.press('KeyL');
+  ok('L lands', await page.waitForFunction(() => window.orbital.v3.landing?.phase === 'landed', null, { timeout: 60000 }).then(() => true, () => false));
+  ok('each leg telescopes to the ground under it', await page.evaluate(() => window.orbital.v3.landing.reach.length === 6 && window.orbital.v3.landing.reach.every(r => r > 0.3 && r < 20)));
+  await page.evaluate(() => { const v = window.orbital.v3; v.leaveHelm(); v.use('airlock'); });
+  ok('the airlock lets you down the ladder onto the Moon', await page.evaluate(() => window.orbital.v3.mode === 'surface' && /On Moon/.test(window.orbital.v3.readout().where) && /0\.17 g · vacuum/.test(window.orbital.v3.readout().near)));
+  ok('Apollo 11 is found and logged', await until(page, () => window.orbital.v3.logbook.finds.some(f => /Apollo 11/.test(f.what))));
+  const s0 = await page.evaluate(() => [...window.orbital.v3.surf.n]);
+  await page.keyboard.down('KeyW'); await page.waitForTimeout(1500); await page.keyboard.up('KeyW');
+  ok('W walks on the ground', await page.evaluate(n => { const m = window.orbital.v3.surf.n; return Math.hypot(m[0] - n[0], m[1] - n[1], m[2] - n[2]) * 1737e3 > 1; }, s0));
+  await page.keyboard.press('Space');
+  await page.waitForTimeout(400);
+  ok('Space jumps, and in a sixth of a g you stay up', await page.evaluate(() => window.orbital.v3.surf.y > 0.6));
+  await page.keyboard.press('KeyR');
+  await page.waitForTimeout(300);
+  ok('R scans: the air, the ground under your feet', await page.evaluate(() => { const t = document.querySelector('.panel3').textContent; return /Field scan/i.test(t) && /exosphere/.test(t) && /SiO₂/.test(t); }));
+  await page.keyboard.press('Escape');
+  ok('Mission control can send a rover', await page.evaluate(() => window.orbital.v3.launchBlock('rover') === ''));
+  await page.evaluate(() => window.orbital.v3.launch('rover'));
+  ok('the rover lands and reports', await page.waitForFunction(() => window.orbital.v3.fleet.crafts.some(c => c.kind === 'rover' && c.state === 'surface' && c.log.some(r => /Soil/.test(r.msg))), null, { timeout: 90000 }).then(() => true, () => false));
+  await page.evaluate(() => window.orbital.v3.viewCraft(window.orbital.v3.fleet.crafts.find(c => c.kind === 'rover').id));
+  await page.keyboard.down('KeyW'); await page.waitForTimeout(1200); await page.keyboard.up('KeyW');
+  ok('you can drive it', await page.evaluate(() => window.orbital.v3.mode === 'craft' && window.orbital.v3.fleet.crafts.find(c => c.kind === 'rover').odo > 1));
+  await page.keyboard.press('KeyF');
+  ok('F comes back from the rover', await page.evaluate(() => window.orbital.v3.mode === 'surface'));
+  await page.evaluate(() => { const v = window.orbital.v3; v.surf.n = v.ladderFoot(); });
+  ok('at the ladder you can board', await until(page, () => window.orbital.v3.prompt?.label === 'Climb the ladder and board'));
+  await page.keyboard.press('KeyF');
+  ok('F climbs aboard', await page.evaluate(() => window.orbital.v3.mode === 'walk'));
+  await page.evaluate(() => window.orbital.v3.use('helm'));
+  await page.keyboard.press('KeyL');
+  ok('L again lifts off', await page.waitForFunction(() => !window.orbital.v3.landing, null, { timeout: 60000 }).then(() => true, () => false));
+  // into a giant, and a probe after you
+  await page.evaluate(() => { const a = window.orbital; a.loadPreset('jupiter'); a.select(a.world.sources.find(b => b.name === 'Jupiter')); });
+  await page.keyboard.press('KeyV'); await page.keyboard.press('KeyV');
+  await page.waitForFunction(() => window.orbital.v3?.active, null, { timeout: 30000 });
+  await page.evaluate(() => {
+    const v = window.orbital.v3, b = window.orbital.selected, T = window.__THREE, sun = window.orbital.world.sources.find(x => x.name === 'Sun');
+    const p = new T.Vector3(sun.x - b.x, sun.y - b.y, sun.z - b.z).normalize().multiplyScalar(b.r * 1.495978707e11 - 30000);
+    v.ship.nav.anchor = b; v.ship.nav.off = [p.x / 1.495978707e11, p.y / 1.495978707e11, p.z / 1.495978707e11]; v.ship.nav.vel = [0, 0, 0];
+  });
+  ok('the ship can go down into Jupiter, and reads it', await until(page, () => /Inside Jupiter · 30 km below the cloud tops · \d+(\.\d)? bar/.test(window.orbital.v3.readout().near) && window.orbital.v3.giant.inside > 0.5));
+  ok('Jupiter has no ground to land on', await page.evaluate(() => /no surface/.test(window.orbital.v3.landBlock())));
+  await page.evaluate(() => window.orbital.v3.launch('probe'));
+  ok('a probe falls into it, reading the air, until it is crushed', await page.waitForFunction(() => { const c = window.orbital.v3.fleet.crafts.find(x => x.kind === 'probe'); return c && c.state === 'lost' && c.profile.length > 5 && /crushed/.test(c.status); }, null, { timeout: 150000 }).then(() => true, () => false));
+  await page.keyboard.press('KeyV');
+
   ok('still no errors', errs.length === 0, errs.join(' | '));
   await page.close();
 

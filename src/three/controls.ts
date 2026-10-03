@@ -27,6 +27,8 @@ const BINDS: Record<Mode, Bind[]> = {
     { k: ['T'], p: ['A', 'A'], t: 'Fly to target', bar: true },
     { k: ['O'], p: ['X'], t: 'Overdrive', bar: true },
     { k: ['J'], p: ['Y'], t: 'Wormhole', bar: true },
+    { k: ['L'], p: ['X'], t: 'Land · lift off (near the ground)', bar: true },
+    { k: ['K'], p: [], t: 'Mission control: launch and watch craft', bar: true },
     { k: ['M'], p: ['View'], t: 'Nav map', bar: true },
     { k: ['Z'], p: ['R3'], t: 'Camera' },
     { k: ['F'], p: ['B'], t: 'Leave the helm', bar: true },
@@ -39,6 +41,7 @@ const BINDS: Record<Mode, Bind[]> = {
     { k: ['Shift'], p: ['L3'], t: 'Run' },
     { k: ['Space'], p: ['X'], t: 'Jump' },
     { k: ['F', 'Click'], p: ['A'], t: 'Use', bar: true },
+    { k: ['K'], p: [], t: 'Mission control' },
     { k: ['M'], p: ['View'], t: 'Nav map', bar: true },
     { k: ['V'], p: ['Menu'], t: 'Back to the 2D map' },
   ],
@@ -56,6 +59,26 @@ const BINDS: Record<Mode, Bind[]> = {
     { k: [], p: ['◀', '▶'], t: 'Next target' },
     { k: ['V'], p: ['Menu'], t: 'Back to the 2D map' },
   ],
+  surface: [
+    { k: ['W', 'A', 'S', 'D'], p: ['LS'], t: 'Walk' },
+    { k: ['Mouse'], p: ['RS'], t: 'Look' },
+    { k: ['Shift'], p: ['L3'], t: 'Run' },
+    { k: ['Space'], p: ['X'], t: 'Jump (in this world’s gravity)' },
+    { k: ['F', 'Click'], p: ['A'], t: 'Board (at the ladder) · scan', bar: true },
+    { k: ['R'], p: ['Y'], t: 'Scan here', bar: true },
+    { k: ['G'], p: ['B'], t: 'Call the ship down', bar: true },
+    { k: ['K'], p: [], t: 'Mission control' },
+    { k: ['M'], p: ['View'], t: 'Nav map', bar: true },
+    { k: ['V'], p: ['Menu'], t: 'Back to the 2D map' },
+  ],
+  craft: [
+    { k: ['W', 'A', 'S', 'D'], p: ['LS'], t: 'Drive (a rover)' },
+    { k: ['Mouse'], p: ['RS'], t: 'Look round it' },
+    { k: ['Wheel', '+', '−'], p: ['▲', '▼'], t: 'Closer · further', bar: true },
+    { k: ['[', ']'], p: ['◀', '▶'], t: 'Other craft', bar: true },
+    { k: ['K'], p: ['Y'], t: 'Mission control', bar: true },
+    { k: ['F', 'Esc'], p: ['B'], t: 'Back', bar: true },
+  ],
   scope: [
     { k: ['Mouse'], p: ['RS'], t: 'Aim' },
     { k: ['Wheel', '+', '−'], p: ['RT', 'LT'], t: 'Zoom', bar: true },
@@ -65,19 +88,23 @@ const BINDS: Record<Mode, Bind[]> = {
   ],
 };
 
-const TITLE: Record<Mode, string> = { pilot: 'At the helm', walk: 'On foot', eva: 'Spacewalk', scope: 'Telescope' };
+const TITLE: Record<Mode, string> = { pilot: 'At the helm', walk: 'On foot', eva: 'Spacewalk', scope: 'Telescope', surface: 'On the ground', craft: 'Watching a craft' };
 
 /** touch: the buttons under the right thumb, held down */
 const THUMB: Record<Mode, [string, string][]> = {
   pilot: [['up', '▲'], ['down', '▼'], ['boost', 'Boost']],
   walk: [['jump', 'Jump']],
+  surface: [['jump', 'Jump'], ['boost', 'Run']],
+  craft: [['zin', '＋'], ['zout', '−']],
   eva: [['up', '▲'], ['down', '▼'], ['boost', 'Boost']],
   scope: [['zin', '＋'], ['zout', '−']],
 };
 /** touch: the rail of commands, tapped: key, icon, name */
 const RAIL: Record<Mode, [string, string, string][]> = {
-  pilot: [['go', '◎', 'Go to'], ['od', '⏩', 'Overdrive'], ['worm', '🌀', 'Wormhole'], ['map', '🗺', 'Map'], ['view', '🎥', 'Camera'], ['leave', '🚶', 'Leave helm'], ['help', '?', 'Help']],
-  walk: [['map', '🗺', 'Map'], ['help', '?', 'Help']],
+  pilot: [['go', '◎', 'Go to'], ['od', '⏩', 'Overdrive'], ['worm', '🌀', 'Wormhole'], ['land', '🛬', 'Land'], ['mission', '🛰', 'Craft'], ['map', '🗺', 'Map'], ['view', '🎥', 'Camera'], ['leave', '🚶', 'Leave helm'], ['help', '?', 'Help']],
+  walk: [['mission', '🛰', 'Craft'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
+  surface: [['scan', '🔬', 'Scan'], ['mission', '🛰', 'Craft'], ['call', '📡', 'Call ship'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
+  craft: [['prev', '◀', 'Prev'], ['next', '▶', 'Next'], ['mission', '🛰', 'Mission'], ['leave', '↩', 'Back'], ['help', '?', 'Help']],
   eva: [['call', '📡', 'Call ship'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
   scope: [['track', '◎', 'Track'], ['leave', '↩', 'Step back'], ['help', '?', 'Help']],
 };
@@ -93,6 +120,8 @@ export class Controls3D {
   private hold = { up: false, down: false, boost: false, jump: false };
   /** boost latched on by clicking the left stick, until the stick is let go */
   private padBoost = false;
+  /** a jump pressed and let go between two frames still jumps */
+  private jumpTap = false;
   /** what was used last, for the glyphs */
   private dev: Dev = matchMedia('(pointer: coarse)').matches ? 'touch' : 'kb';
   readonly root: HTMLElement;
@@ -249,7 +278,7 @@ export class Controls3D {
   /** a tap on the view: on foot it uses what is in front of you, otherwise it selects what is under the finger */
   private tap(x: number, y: number) {
     if (this.v.panels.open || this.v.asleep) return;
-    if (this.v.mode === 'walk') this.v.prompt?.act();
+    if (this.v.mode === 'walk' || this.v.mode === 'surface' && this.v.prompt?.label.startsWith('Climb')) this.v.prompt?.act();
     else this.app().select(this.v.pick(x, y));
   }
 
@@ -272,12 +301,13 @@ export class Controls3D {
   /** the click, tap or A button: select at the helm and outside, use on foot */
   private primary() {
     const v = this.v;
-    if (v.mode === 'walk') { v.prompt?.act(); return; }
+    if (v.mode === 'walk' || v.mode === 'surface' && v.prompt?.label.startsWith('Climb')) { v.prompt?.act(); return; }
     this.app().select(v.pick());
   }
 
   private zoom(k: number) {
     if (this.v.mode === 'scope') this.v.scope.fov = clamp(this.v.scope.fov / k, 0.02, 40);
+    else if (this.v.mode === 'craft' && this.v.craftView) this.v.craftView.dist = clamp(this.v.craftView.dist / k, 3, 5e5);
     else this.throttle = clamp(this.throttle * k, 1e-3, 1e3);
   }
 
@@ -305,7 +335,7 @@ export class Controls3D {
     if (!on) return;
     if (document.pointerLockElement) document.exitPointerLock();
     const pad = this.dev === 'pad';
-    const order: Mode[] = [this.v.mode, ...(['pilot', 'walk', 'eva', 'scope'] as Mode[]).filter(m => m !== this.v.mode)];
+    const order: Mode[] = [this.v.mode, ...(['pilot', 'walk', 'surface', 'eva', 'scope', 'craft'] as Mode[]).filter(m => m !== this.v.mode)];
     this.sheetEl.innerHTML = `<div class="fhead">Controls <button class="icon close">✕</button></div><div class="cols">`
       + order.map(m => `<div class="col${m === this.v.mode ? ' now' : ''}"><div class="bsub">${TITLE[m]}</div><table>`
         + BINDS[m].map(b => `<tr><td>${b.t}</td><td>${glyphs(b.k, 'kb')}</td><td>${glyphs(b.p, 'pad')}</td></tr>`).join('')
@@ -324,9 +354,14 @@ export class Controls3D {
     if (k === 'help') this.sheet();
     if (k === 'map') v.openMap();
     if (k === 'view') v.ship.view = v.ship.view === 'chase' ? 'cockpit' : 'chase';
-    if (k === 'leave') { if (v.mode === 'scope') v.leaveScope(); else v.leaveHelm(); }
+    if (k === 'leave') { if (v.mode === 'scope') v.leaveScope(); else if (v.mode === 'craft') v.leaveCraft(); else v.leaveHelm(); }
+    if (k === 'mission') v.panels.show('mission');
+    if (k === 'prev') v.cycleCraft(-1);
+    if (k === 'next') v.cycleCraft(1);
     if (k === 'use') v.prompt?.act();
     if (k === 'call') v.callShip();
+    if (k === 'land') v.landOrLift();
+    if (k === 'scan') v.panels.show('scan');
     if (k === 'zin') this.zoom(2);
     if (k === 'zout') this.zoom(0.5);
     if (k === 'track') v.scope.track = !v.scope.track;
@@ -346,10 +381,13 @@ export class Controls3D {
     if (e.code === 'Escape') {
       if (!this.sheetEl.hidden) this.sheet(false);
       else if (v.mode === 'scope') v.leaveScope();
+      else if (v.mode === 'craft') v.leaveCraft();
       return;
     }
-    if (['Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyC', 'KeyF', 'KeyG'].includes(e.code)) e.preventDefault();
+    if (e.code === 'KeyK' && !e.repeat && v.mode !== 'eva' && v.mode !== 'scope') { v.panels.show('mission'); return; }
+    if (['Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyC', 'KeyF', 'KeyG', 'KeyL', 'KeyR'].includes(e.code)) e.preventDefault();
     this.keys.add(e.code);
+    if (e.code === 'Space' && !e.repeat && (v.mode === 'walk' || v.mode === 'surface')) this.jumpTap = true;
     if (e.code === 'Equal' || e.code === 'NumpadAdd') this.zoom(2);
     if (e.code === 'Minus' || e.code === 'NumpadSubtract') this.zoom(0.5);
     if (e.repeat) return;
@@ -361,6 +399,17 @@ export class Controls3D {
         if (e.code === 'KeyJ') this.jumpSelected();
         if (e.code === 'KeyZ') v.ship.view = v.ship.view === 'chase' ? 'cockpit' : 'chase';
         if (e.code === 'KeyF') v.leaveHelm();
+        if (e.code === 'KeyL') v.landOrLift();
+        break;
+      case 'surface':
+        if (e.code === 'KeyF' || e.code === 'KeyE') v.prompt?.act();
+        if (e.code === 'KeyR') v.panels.show('scan');
+        if (e.code === 'KeyG') v.callShip();
+        break;
+      case 'craft':
+        if (e.code === 'KeyF') v.leaveCraft();
+        if (e.code === 'BracketRight') v.cycleCraft(1);
+        if (e.code === 'BracketLeft') v.cycleCraft(-1);
         break;
       case 'walk':
         if (e.code === 'KeyF' || e.code === 'KeyE') v.prompt?.act();
@@ -413,7 +462,8 @@ export class Controls3D {
           else this.goSelected();
         }
         if (p.hit(BTN.B)) v.leaveHelm();
-        if (p.hit(BTN.X)) this.toggleOd();
+        // near the ground X lands (or lifts off); out in space it is overdrive
+        if (p.hit(BTN.X)) { if (v.landing || !v.landBlock()) v.landOrLift(); else this.toggleOd(); }
         if (p.hit(BTN.Y)) this.jumpSelected();
         if (p.hit(BTN.RS)) v.ship.view = v.ship.view === 'chase' ? 'cockpit' : 'chase';
         if (p.hit(BTN.UP)) this.zoom(2);
@@ -424,6 +474,19 @@ export class Controls3D {
       }
       case 'walk':
         if (p.hit(BTN.A)) v.prompt?.act();
+        break;
+      case 'surface':
+        if (p.hit(BTN.A)) v.prompt?.act();
+        if (p.hit(BTN.Y)) v.panels.show('scan');
+        if (p.hit(BTN.B)) v.callShip();
+        break;
+      case 'craft':
+        if (p.hit(BTN.B)) v.leaveCraft();
+        if (p.hit(BTN.Y)) v.panels.show('mission');
+        if (p.hit(BTN.RIGHT)) v.cycleCraft(1);
+        if (p.hit(BTN.LEFT)) v.cycleCraft(-1);
+        if (p.hit(BTN.UP)) this.zoom(2);
+        if (p.hit(BTN.DOWN)) this.zoom(0.5);
         break;
       case 'eva':
         if (p.hit(BTN.A)) { if (v.prompt) v.prompt.act(); else this.primary(); }
@@ -460,12 +523,14 @@ export class Controls3D {
   /** on foot: forward and sideways (−1–1), running, jumping */
   walkInput() {
     const k = this.keys, p = this.app().pad;
-    if (this.v.nav.open || this.v.panels.open || this.v.asleep) return { f: 0, s: 0, run: false, jump: false };
+    if (this.v.nav.open || this.v.panels.open || this.v.asleep) { this.jumpTap = false; return { f: 0, s: 0, run: false, jump: false }; }
     let f = (k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0) - this.stick.y - p.ls[1];
     let s = (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0) + this.stick.x + p.ls[0];
     const l = Math.hypot(f, s);
     if (l > 1) { f /= l; s /= l; }
-    return { f, s, run: k.has('ShiftLeft') || k.has('ShiftRight') || this.padBoost, jump: k.has('Space') || this.hold.jump || p.on(BTN.X) };
+    const tap = this.jumpTap;
+    this.jumpTap = false;
+    return { f, s, run: k.has('ShiftLeft') || k.has('ShiftRight') || this.padBoost, jump: tap || k.has('Space') || this.hold.jump || p.on(BTN.X) };
   }
 
   hud(r: ReturnType<View3D['readout']>) {
@@ -480,7 +545,7 @@ export class Controls3D {
 
     // what you can use, under the crosshair
     const dev = this.dev;
-    const useKey = mode === 'eva' ? (dev === 'pad' ? 'A' : 'F') : dev === 'pad' ? 'A' : 'F';
+    const useKey = mode === 'pilot' ? (dev === 'pad' ? 'X' : 'L') : dev === 'pad' ? 'A' : 'F';
     const use = r.prompt ? `${dev === 'touch' ? '<b>👆</b>' : glyphs([useKey], dev === 'pad' ? 'pad' : 'kb')} ${r.prompt}` : '';
     if (this.useEl.innerHTML !== use) { this.useEl.innerHTML = use; this.useEl.hidden = !use; }
 
