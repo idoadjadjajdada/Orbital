@@ -9,6 +9,7 @@ import { atmosphere, interior, composition, habitability, life, gravity, airAt, 
 import { KINDS, pct, fmtLL, type CraftKind } from './fleet';
 import { latLonOf } from './ground';
 import { speciesIn } from './sites';
+import { MAX_SKY_LAMPS } from './lights';
 
 /**
  * The ship's consoles, as panels over the view: the comms log and the sensor
@@ -136,6 +137,20 @@ export class Panels {
     else if (a === 'mission') { this.show('mission'); return; }
     else if (a === 'site') { /* handled above */ }
     else if (a === 'gosite') { const t = v.missionTarget(); if (t) { v.goToSite(t, id); this.close(); return; } }
+    else if (a === 'lhang') v.hangLamp();
+    else if (a.startsWith('l') && a.length > 1) {
+      // a lamp in the sky: id, then what to do with it
+      const [lid, arg] = id.split(':');
+      const L = v.lights.byId(Number(lid));
+      if (L) {
+        if (a === 'lmv') v.lights.nudge(L, arg as 'n' | 's' | 'e' | 'w');
+        else if (a === 'lhere') { const [la, lo] = v.pointUnder(L.b); v.lights.send(L, la, lo); v.app.onToast(`Lamp ${L.id} on its way over you`); }
+        else if (a === 'lpow') L.power = Math.max(0.25, Math.min(4, L.power * (arg === '+' ? 1.5 : 1 / 1.5)));
+        else if (a === 'lspr') L.spread = Math.max(L.alt * 0.05, Math.min(L.alt * 3, L.spread * (arg === '+' ? 1.5 : 1 / 1.5)));
+        else if (a === 'lon') L.on = !L.on;
+        else if (a === 'ldrop') { v.lights.remove(L); v.app.onToast(`Lamp ${L.id} taken down`); }
+      }
+    }
     this.t = 0;
     this.refresh();
   }
@@ -261,6 +276,7 @@ export class Panels {
       const real = v.ground.siteListFor(b);
       if (real.length) h += `<div class="psub">Where people have landed</div>` + real.map(x => `<div class="prow tight"><div><div class="pnm">${esc(x.name)}${x.year ? ` <span class="pdim">· ${x.year}</span>` : ''}</div><div class="pdim">${esc(x.about)}</div></div><span class="pbtns"><button data-act="gosite" data-id="${esc(x.name)}"${v.goBlock() ? ` disabled title="${esc(v.goBlock())}"` : ''}>Fly there</button></span></div>`).join('');
     } else h += '<p class="pdim">No target. Select a world, or fly near one.</p>';
+    h += this.lampsHtml(b);
     h += `<div class="psub">The fleet</div>`;
     if (!f.crafts.length) h += '<p class="pdim">Nothing launched yet.</p>';
     for (const c of f.crafts.slice().reverse()) {
@@ -269,6 +285,25 @@ export class Panels {
       h += `<div class="prow"><div><div class="pnm">${esc(c.name)} <span class="pdim">· ${esc(c.b.name)} · ${esc(c.status)}</span></div><div class="pdim">${esc(last)}</div></div><span class="pbtns">`
         + `${c.state !== 'lost' ? `<button data-act="cview" data-id="${c.id}">${c.kind === 'rover' && c.state === 'surface' ? 'Drive' : 'View'}</button>` : ''}`
         + `<button data-act="clog" data-id="${c.id}">Data</button>${lander ? `<button data-act="crover" data-id="${c.id}">Rover</button>` : ''}</span></div>`;
+    }
+    return h;
+  }
+
+  /** the lamps hung in the sky, and how to move them */
+  private lampsHtml(b: Body | null) {
+    const v = this.v, lamps = v.lights.lamps.filter(l => l.b.alive);
+    const full = lamps.length >= MAX_SKY_LAMPS;
+    let h = `<div class="psub">Lamps in the sky</div>`;
+    h += `<div class="prow"><div class="pdim">A lamp hangs over one place on a world and keeps to it as the world turns, lighting the ground round it by night. Send it anywhere, any time.</div>`
+      + `<span class="pbtns"><button data-act="lhang"${!b || full ? ` disabled title="${!b ? 'No world to hang it over' : 'All the lamps are up'}"` : ''}>Hang a lamp${b ? ` over ${esc(b.name)}` : ''}</button></span></div>`;
+    for (const L of lamps) {
+      const moving = Math.abs(L.lat - L.toLat) + Math.abs(L.lon - L.toLon) > 0.01;
+      const k = `${L.id}`;
+      h += `<div class="prow"><div><div class="pnm">Lamp ${L.id} <span class="pdim">· ${esc(L.b.name)} · ${fmtLL(L.lat, L.lon)}${moving ? ' · moving' : ''}${L.on ? '' : ' · off'}</span></div>`
+        + `<div class="pdim">${fmtLength(L.alt / AU_M)} up · lights ${fmtLength(L.spread / AU_M)} round · ×${L.power.toFixed(2)}</div></div>`
+        + `<span class="pbtns lampbtns"><button data-act="lmv" data-id="${k}:w" title="West">◀</button><button data-act="lmv" data-id="${k}:n" title="North">▲</button><button data-act="lmv" data-id="${k}:s" title="South">▼</button><button data-act="lmv" data-id="${k}:e" title="East">▶</button>`
+        + `<button data-act="lhere" data-id="${k}">Over me</button><button data-act="lpow" data-id="${k}:+">Brighter</button><button data-act="lpow" data-id="${k}:-">Dimmer</button>`
+        + `<button data-act="lspr" data-id="${k}:+">Wider</button><button data-act="lspr" data-id="${k}:-">Narrower</button><button data-act="lon" data-id="${k}">${L.on ? 'Off' : 'On'}</button><button data-act="ldrop" data-id="${k}">Take down</button></span></div>`;
     }
     return h;
   }

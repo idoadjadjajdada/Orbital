@@ -99,7 +99,7 @@ export function mouthMesh(glowTex: THREE.Texture, tint = new THREE.Vector3(0.6, 
     uniforms: { time: { value: 0 }, open: { value: 1 }, tint: { value: tint } },
   });
   g.add(new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24), mat));
-  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xa080ff, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xa080ff, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }));
   glow.scale.setScalar(4.2);
   glow.name = 'glow';
   g.add(glow);

@@ -95,6 +95,8 @@ export class App {
   onUndo: (label: string | null) => void = () => {};
   /** touch look in 3D: how fast (a multiplier), and whether dragging moves the world rather than the view */
   lookSpeed = 1;
+  /** the night-side light from the settings, 0–1: lifts the dark on every world in 3D */
+  nightLight = 0;
   lookInvert = false;
   /** the view from inside: loaded the first time it is asked for */
   mode3d = false;

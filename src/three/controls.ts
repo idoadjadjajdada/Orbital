@@ -28,7 +28,8 @@ const BINDS: Record<Mode, Bind[]> = {
     { k: ['O'], p: ['X'], t: 'Overdrive', bar: true },
     { k: ['J'], p: ['Y'], t: 'Wormhole', bar: true },
     { k: ['L'], p: ['X'], t: 'Land · lift off (near the ground)', bar: true },
-    { k: ['K'], p: [], t: 'Mission control: launch and watch craft', bar: true },
+    { k: ['K'], p: [], t: 'Mission control: launch and watch craft, hang lamps', bar: true },
+    { k: ['N'], p: [], t: 'Floodlight' },
     { k: ['M'], p: ['View'], t: 'Nav map', bar: true },
     { k: ['Z'], p: ['R3'], t: 'Camera' },
     { k: ['F'], p: ['B'], t: 'Leave the helm', bar: true },
@@ -55,6 +56,7 @@ const BINDS: Record<Mode, Bind[]> = {
     { k: ['Click'], p: ['A'], t: 'Select' },
     { k: ['F'], p: ['A'], t: 'Board (at the airlock)', bar: true },
     { k: ['G'], p: ['X'], t: 'Call the ship', bar: true },
+    { k: ['N'], p: [], t: 'Helmet lamp' },
     { k: ['M'], p: ['View'], t: 'Nav map', bar: true },
     { k: [], p: ['◀', '▶'], t: 'Next target' },
     { k: ['V'], p: ['Menu'], t: 'Back to the 2D map' },
@@ -67,6 +69,7 @@ const BINDS: Record<Mode, Bind[]> = {
     { k: ['F', 'Click'], p: ['A'], t: 'Board (at the ladder) · scan', bar: true },
     { k: ['R'], p: ['Y'], t: 'Scan here', bar: true },
     { k: ['G'], p: ['B'], t: 'Call the ship down', bar: true },
+    { k: ['N'], p: [], t: 'Helmet lamp', bar: true },
     { k: ['K'], p: [], t: 'Mission control' },
     { k: ['M'], p: ['View'], t: 'Nav map', bar: true },
     { k: ['V'], p: ['Menu'], t: 'Back to the 2D map' },
@@ -111,12 +114,12 @@ const THUMB: Record<Mode, [string, string][]> = {
 };
 /** touch: the rail of commands, tapped: key, icon, name */
 const RAIL: Record<Mode, [string, string, string][]> = {
-  pilot: [['go', '◎', 'Go to'], ['od', '⏩', 'Overdrive'], ['worm', '🌀', 'Wormhole'], ['land', '🛬', 'Land'], ['mission', '🛰', 'Craft'], ['map', '🗺', 'Map'], ['view', '🎥', 'Camera'], ['leave', '🚶', 'Leave helm'], ['help', '?', 'Help']],
+  pilot: [['go', '◎', 'Go to'], ['od', '⏩', 'Overdrive'], ['worm', '🌀', 'Wormhole'], ['land', '🛬', 'Land'], ['mission', '🛰', 'Craft'], ['light', '🔦', 'Light'], ['map', '🗺', 'Map'], ['view', '🎥', 'Camera'], ['leave', '🚶', 'Leave helm'], ['help', '?', 'Help']],
   walk: [['mission', '🛰', 'Craft'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
-  surface: [['scan', '🔬', 'Scan'], ['mission', '🛰', 'Craft'], ['call', '📡', 'Call ship'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
+  surface: [['scan', '🔬', 'Scan'], ['mission', '🛰', 'Craft'], ['light', '🔦', 'Lamp'], ['call', '📡', 'Call ship'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
   shuttle: [['sland', '🛬', 'Land'], ['use', '👆', 'Use'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
   craft: [['prev', '◀', 'Prev'], ['next', '▶', 'Next'], ['mission', '🛰', 'Mission'], ['leave', '↩', 'Back'], ['help', '?', 'Help']],
-  eva: [['call', '📡', 'Call ship'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
+  eva: [['call', '📡', 'Call ship'], ['light', '🔦', 'Lamp'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
   scope: [['track', '◎', 'Track'], ['leave', '↩', 'Step back'], ['help', '?', 'Help']],
 };
 const HELD = new Set(['up', 'down', 'boost', 'jump']);
@@ -367,6 +370,7 @@ export class Controls3D {
     if (k === 'view') v.ship.view = v.ship.view === 'chase' ? 'cockpit' : 'chase';
     if (k === 'leave') { if (v.mode === 'scope') v.leaveScope(); else if (v.mode === 'craft') v.leaveCraft(); else v.leaveHelm(); }
     if (k === 'mission') v.panels.show('mission');
+    if (k === 'light') v.toggleLights();
     if (k === 'prev') v.cycleCraft(-1);
     if (k === 'next') v.cycleCraft(1);
     if (k === 'use') v.prompt?.act();
@@ -398,6 +402,7 @@ export class Controls3D {
       return;
     }
     if (e.code === 'KeyK' && !e.repeat && v.mode !== 'eva' && v.mode !== 'scope') { v.panels.show('mission'); return; }
+    if (e.code === 'KeyN' && !e.repeat) { v.toggleLights(); return; }
     if (['Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyC', 'KeyF', 'KeyG', 'KeyL', 'KeyR'].includes(e.code)) e.preventDefault();
     this.keys.add(e.code);
     if (e.code === 'Space' && !e.repeat && (v.mode === 'walk' || v.mode === 'surface')) this.jumpTap = true;

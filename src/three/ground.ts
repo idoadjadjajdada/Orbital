@@ -6,6 +6,7 @@ import { bodyAxis } from '../pixel/renderer';
 import { hash } from '../pixel/noise';
 import { groundSpec, groundAt, buildPatch, patchSize, tangent, groundPainter, type GroundSpec, type Patch, type PatchJob, type GroundSample } from './terrain';
 import { detailFor } from '../pixel/surface';
+import { LIGHT_GLSL } from './lightglsl';
 import { atmosphere, life, gravity, rng, type Atmosphere, type Life } from './science';
 import { sitesOn, earthBiome, speciesIn, type Site, type Biome } from './sites';
 import { apolloMesh, flagMesh, lrvMesh, landerMesh, roverMesh, veneraMesh, huygensMesh, probeMesh, alienMesh } from './craftmesh';
@@ -66,6 +67,7 @@ uniform vec3 fogCol;
 uniform float fogK;
 uniform float time;
 uniform vec3 seaUp;
+${LIGHT_GLSL}
 varying vec3 vN;
 varying vec3 vP;
 varying vec3 vCol;
@@ -89,12 +91,13 @@ void main() {
     vec3 Ns = normalize(N + 0.25 * (1.0 - smoothstep(50.0, 3000.0, d)) * (w.x * cross(N, vec3(0.0, 0.0, 1.0)) + w.y * vec3(0.0, 0.0, 1.0)));
     float dl = max(dot(Ns, sunDir), 0.0);
     float fres = pow(1.0 - max(dot(Ns, V), 0.0), 4.0);
-    c = vCol * (ambient + dl * sunCol * 0.6);
+    vec3 lamp = lampLight(vP, Ns);
+    c = vCol * (ambient + ambientX + dl * sunCol * 0.6 + lamp * 0.8);
     c = mix(c, fogCol, fres * 0.7);
     c += sunCol * pow(max(dot(reflect(-sunDir, Ns), V), 0.0), 220.0) * 2.0;
   } else {
     float dl = max(dot(N, sunDir), 0.0);
-    c = col * (ambient + dl * sunCol);
+    c = col * (ambient + ambientX + dl * sunCol + lampLight(vP, N));
   }
   // the air between: haze toward the sky's colour
   float f = 1.0 - exp(-d * fogK);
@@ -165,6 +168,9 @@ export class Ground {
   readonly skyCol = new THREE.Color(0, 0, 0);
   /** the patch is in and the sphere can sink under it */
   ready = false;
+  /** the haze where you are: how fast it thickens with distance (per m) and its colour, for everything else on the ground too */
+  fogK = 0;
+  readonly fogCol = new THREE.Color();
   /** called when you come across a living thing or a site for the first time */
   onFind: (what: string, note: string) => void = () => {};
   /** biome under you, on the Earth */
@@ -194,7 +200,7 @@ export class Ground {
   private q = new THREE.Quaternion();
   private t = 0;
 
-  constructor(scene: THREE.Scene) {
+  constructor(scene: THREE.Scene, lightUniforms: Record<string, THREE.IUniform> = {}) {
     this.root.name = 'ground';
     scene.add(this.root);
     this.mat = new THREE.ShaderMaterial({
@@ -202,6 +208,7 @@ export class Ground {
       uniforms: {
         sunDir: { value: new THREE.Vector3(0, 0, 1) }, sunCol: { value: new THREE.Vector3(1, 1, 1) }, ambient: { value: new THREE.Vector3(0.03, 0.03, 0.03) },
         fogCol: { value: new THREE.Vector3() }, fogK: { value: 0 }, time: { value: 0 }, offset: { value: new THREE.Vector3() }, seaUp: { value: new THREE.Vector3() },
+        ...lightUniforms,
       },
     });
     this.sky = new THREE.Mesh(new THREE.SphereGeometry(1000, 32, 16), new THREE.ShaderMaterial({
@@ -360,7 +367,7 @@ export class Ground {
     } else this.setBody(null, stars);
     this.skyFrame(rel, sun, sunRGB, giant);
     const body = this.body, spec = this.spec;
-    if (!body || !spec) { this.root.visible = false; return; }
+    if (!body || !spec) { this.root.visible = false; this.fogK = 0; return; }
     this.root.visible = true;
     bodyQuat(body, this.q);
     this.root.position.copy(rel);
@@ -389,9 +396,13 @@ export class Ground {
     const a = this.atmo!, amb = 0.015 + 0.25 * this.daylight * Math.min(1, a.bar);
     (u.ambient.value as THREE.Vector3).set(amb * (0.6 + 0.4 * this.skyCol.r), amb * (0.6 + 0.4 * this.skyCol.g), amb * (0.6 + 0.4 * this.skyCol.b));
     // the haze: how far you can see, from the density of the air here and what is in it
+    // (the Earth's air at sea level fades things to a third every 20 km or so, so a mountain 60 km off is a
+    // pale shape and one past 100 km is gone; Mars' dust about the same; Venus and Titan close in to a few km)
     const dens = a.bar > 1e-4 ? a.bar * Math.exp(-Math.max(0, alt) / Math.max(1, a.H * 1000)) : 0;
-    u.fogK.value = dens > 0 ? (dens * (0.3 + 4 * a.haze) + a.haze * 6 * Math.min(1, dens / 0.003)) / 90e3 : 0;
+    this.fogK = dens > 0 ? Math.min(1 / 1500, dens * (0.3 + 4 * a.haze) / 18e3 + a.haze * 6 * Math.min(1, dens / 0.003) / 45e3) : 0;
+    u.fogK.value = this.fogK;
     const fog = this.skyCol.clone().lerp(new THREE.Color(1, 1, 1), 0.25).multiplyScalar(0.2 + 0.8 * this.daylight);
+    this.fogCol.copy(fog);
     (u.fogCol.value as THREE.Vector3).set(fog.r, fog.g, fog.b);
     this.rockMat.color.setScalar(1);
     // things on the ground, near enough to matter
@@ -669,12 +680,19 @@ export class Ground {
     const vb = this.root.position.clone().negate().applyQuaternion(this.q.clone().invert());
     const n: V3 = vb.clone().normalize().toArray() as V3;
     const list = [...this.sites.filter(s => s.kind !== 'city').map(s => ({ name: s.name, lat: s.lat, lon: s.lon })), ...this.towns.map(t => ({ name: t.name, lat: t.lat, lon: t.lon }))];
+    // what the air lets you see: past where the haze has taken nineteen parts in twenty, nothing
+    const seeing = this.fogK > 0 ? 3 / this.fogK : Infinity;
+    const rv = vb.length();
     for (const s of list) {
       const sn = dirOf(s.lat, s.lon);
       const d = arc(n, sn) * R;
       if (d > 1500e3) continue;
       const h = this.heightAt(sn, 200);
-      const p = new THREE.Vector3(sn[0] * (R + Math.max(0, h) + 30), sn[1] * (R + Math.max(0, h) + 30), sn[2] * (R + Math.max(0, h) + 30)).applyQuaternion(this.q).add(this.root.position);
+      const rs = R + Math.max(0, h) + 30;
+      // and nothing over the horizon: the line of sight must clear the world's curve
+      const gap = Math.hypot(sn[0] * rs - vb.x, sn[1] * rs - vb.y, sn[2] * rs - vb.z);
+      if (gap > seeing || gap > Math.sqrt(Math.max(0, rv * rv - R * R)) + Math.sqrt(Math.max(0, rs * rs - R * R)) + 200) continue;
+      const p = new THREE.Vector3(sn[0] * rs, sn[1] * rs, sn[2] * rs).applyQuaternion(this.q).add(this.root.position);
       out.push({ key: `site:${s.name}`, text: `${s.name} · ${d < 1000 ? `${d.toFixed(0)} m` : `${(d / 1000).toFixed(d < 1e4 ? 1 : 0)} km`}`, at: p });
     }
     return out;

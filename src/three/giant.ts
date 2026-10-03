@@ -158,7 +158,7 @@ export class Giant {
     this.geo.setAttribute('u', new THREE.BufferAttribute(new Float32Array(u), 1));
     this.geo.setAttribute('phi', new THREE.BufferAttribute(new Float32Array(phi), 1));
     this.geo.setIndex(idx);
-    this.bolt = new THREE.Sprite(new THREE.SpriteMaterial({ map: glow, color: 0xd8e0ff, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+    this.bolt = new THREE.Sprite(new THREE.SpriteMaterial({ map: glow, color: 0xd8e0ff, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }));
     this.bolt.visible = false;
     this.bolt.frustumCulled = false;
     this.root.add(this.bolt);

@@ -21,6 +21,7 @@ import { Fleet, type CraftKind } from './fleet';
 import { Shuttle } from './shuttle';
 import { Giant, HULL_BAR } from './giant';
 import { starMaterial, tickStar, dropStar } from './star';
+import { Lights, LIGHT_GLSL } from './lights';
 
 /**
  * The sandbox seen from inside it, at true scale. The scene is laid out in
@@ -114,6 +115,7 @@ uniform float detail;
 uniform float time;
 uniform float gas;
 uniform vec4 vortex;
+${LIGHT_GLSL}
 varying vec3 vObj;
 varying vec3 vWorldN;
 varying vec3 vWorldP;
@@ -175,12 +177,12 @@ void main() {
     float dl = dot(N, lightDir), dl0 = dot(N0, lightDir);
     // a soft terminator, and no relief lit past it
     float term = clamp((dl0 + 0.03) / 0.1, 0.0, 1.0);
-    vec3 c = col * (0.025 + max(dl, 0.0) * term * lightCol);
+    vec3 c = col * (0.025 + ambientX + max(dl, 0.0) * term * lightCol + lampLight(vWorldP, N));
     // a glint off the sea
     vec3 H = normalize(lightDir + V);
     c += ax.b * pow(max(dot(N0, H), 0.0), 90.0) * 0.55 * term * lightCol;
     col = c;
-  } else col *= 0.45;
+  } else col *= 0.45 + ambientX + lampLight(vWorldP, normalize(vWorldN));
   // lightning in a giant's belts, seen on its night side
   if (gas > 0.0 && lit > 0.5) {
     vec3 cell = floor(n * vec3(30.0, 30.0, 60.0));
@@ -206,6 +208,7 @@ uniform sampler2D aux;
 uniform vec3 lightDir;
 uniform vec3 lightCol;
 uniform float drift;
+${LIGHT_GLSL}
 varying vec3 vObj;
 varying vec3 vWorldN;
 varying vec3 vWorldP;
@@ -219,7 +222,7 @@ void main() {
   vec3 N = normalize(vWorldN);
   float dl = dot(N, lightDir);
   float lit = clamp((dl + 0.05) / 0.15, 0.0, 1.0) * max(dl, 0.0) * 0.9 + 0.03;
-  gl_FragColor = vec4(lightCol * lit, c * 0.95);
+  gl_FragColor = vec4(lightCol * lit + ambientX + lampLight(vWorldP, N) * 0.9, c * 0.95);
 }`;
 
 /**
@@ -299,6 +302,10 @@ export class View3D {
   private parts: THREE.Points;
   private sky: THREE.Points;
   private glowTex: THREE.Texture;
+  /** the floodlight, the helmet lamp, the night-side light and the lamps hung in the sky */
+  readonly lights: Lights;
+  /** the air's haze, for the meshes on the ground (the ground's own shader has its own) */
+  private haze = new THREE.FogExp2(0x000000, 0);
   private sphere = new THREE.SphereGeometry(1, 48, 24);
   private labels: HTMLElement;
   private labelEls = new Map<Body | string, HTMLElement>();
@@ -383,15 +390,16 @@ export class View3D {
     this.sky = starField();
     this.sky.renderOrder = -2;
     this.scene.add(this.sky);
-    this.ground = new Ground(this.scene);
+    this.lights = new Lights(this.scene, this.glowTex);
+    this.ground = new Ground(this.scene, this.lights.uniforms);
     this.ground.onFind = (what, note) => this.found(what, note);
     this.fleet = new Fleet(this.scene, () => this.stars());
     this.giant = new Giant(this.scene, this.glowTex);
     this.fleet.onNews = m => this.app.onToast(m);
-    this.markers = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ size: 3, sizeAttenuation: false, vertexColors: true, depthWrite: false }));
+    this.markers = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ size: 3, sizeAttenuation: false, vertexColors: true, depthWrite: false, fog: false }));
     this.markers.frustumCulled = false;
     this.scene.add(this.markers);
-    this.parts = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ size: 2, sizeAttenuation: false, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+    this.parts = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ size: 2, sizeAttenuation: false, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
     this.parts.frustumCulled = false;
     this.scene.add(this.parts);
     this.labels = document.createElement('div');
@@ -872,6 +880,31 @@ export class View3D {
     this.app.onToast(`${c.name} ${kind === 'base' ? 'is being built beside the ship' : `launched toward ${b.name}${site ? `, for ${site}` : ''}`}`);
   }
 
+  /** the floodlight (and the helmet lamp on foot or outside): on or off */
+  toggleLights() {
+    this.lights.flood = !this.lights.flood;
+    const out = this.mode === 'surface' || this.mode === 'eva';
+    this.app.onToast(this.lights.flood ? (out ? 'Helmet lamp and the ship’s floodlight on' : 'Floodlight on: it reaches the ground from orbit') : 'Lights off');
+  }
+
+  /** the point under you on a world, degrees in its own frame: under your feet on the ground, under the ship otherwise */
+  pointUnder(b: Body): [number, number] {
+    if (this.mode === 'surface' && this.surf.b === b) return latLonOf(this.surf.n);
+    const P = this.shipPos();
+    const v = new THREE.Vector3(P[0] - b.x, P[1] - b.y, P[2] - b.z).applyQuaternion(bodyQuat(b).invert()).normalize();
+    return latLonOf([v.x, v.y, v.z]);
+  }
+
+  /** hang a lamp in the sky over the point under you on the mission's world */
+  hangLamp() {
+    const b = this.missionTarget();
+    if (!b) { this.app.onToast('Pick a world to hang a lamp over'); return; }
+    const [la, lo] = this.pointUnder(b);
+    const L = this.lights.hang(b, la, lo);
+    if (typeof L === 'string') { this.app.onToast(L); return; }
+    this.app.onToast(`Lamp ${L.id} hung ${fmtLength(L.alt / AU_M)} over ${b.name}, lighting ${fmtLength(L.spread / AU_M)} round the point under you`);
+  }
+
   /** fly to a few kilometres over a named site on a world, ready to land */
   goToSite(b: Body, name: string) {
     const why = this.goBlock();
@@ -1189,6 +1222,16 @@ export class View3D {
     this.groundFrame(dtReal, P, stars, tunnel);
     this.fleet.frame(dtReal, P, cam.fov);
     this.shuttle.draw(P);
+    // the lights you bring: the floodlight from the ship's nose, the helmet lamp where you look, the lamps in the sky
+    {
+      const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(sh.quat);
+      const nose = sh.hull.group.position.clone().addScaledVector(fwd, 30);
+      const inside = this.mode === 'walk' || (this.mode === 'pilot' && sh.view === 'cockpit');
+      const out = this.mode === 'eva' || this.mode === 'surface' || this.mode === 'shuttle' || this.mode === 'craft';
+      const eye = out ? { pos: cam.getWorldPosition(new THREE.Vector3()), fwd: cam.getWorldDirection(new THREE.Vector3()) } : null;
+      this.lights.ambient = app.nightLight;
+      this.lights.frame(dtReal, P, { pos: nose, fwd, inside }, eye);
+    }
     this.bayT = Math.max(0, this.bayT - dtReal);
     sh.hull.setBay(Math.min(1, this.bayT, 4 - this.bayT));
     const seen = new Set<Body>();
@@ -1283,6 +1326,14 @@ export class View3D {
       }
     }
     this.ground.frame(dt, b, rel, stars, sun, rgb, this.giantFog());
+    // the same haze over everything else down there (buildings, craft, the lander), so nothing stands out
+    // crisp against a horizon the air has already taken
+    const k = this.ground.fogK;
+    if (k > 0) {
+      if (!this.scene.fog) this.scene.fog = this.haze;
+      this.haze.density = k * 0.8;
+      this.haze.color.setRGB(this.ground.fogCol.r, this.ground.fogCol.g, this.ground.fogCol.b, THREE.SRGBColorSpace);
+    } else if (this.scene.fog) this.scene.fog = null;
   }
 
   /** inside a giant's clouds: how deep into the fog (0–1) and its colour; null outside */
@@ -1768,7 +1819,7 @@ export class View3D {
       group.add(body, panel);
     } else if (b.look.white) {
       o.kind = 'white';
-      group.add(new THREE.Mesh(this.sphere, new THREE.MeshBasicMaterial({ color: 0xffffff })));
+      group.add(new THREE.Mesh(this.sphere, new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false })));
       group.add(this.glow(0xdde8ff, 6));
     } else if (b.look.wormhole) {
       o.kind = 'worm';
@@ -1777,7 +1828,7 @@ export class View3D {
       group.add(m);
     } else if (b.cls === 'bh') {
       o.kind = 'hole';
-      group.add(new THREE.Mesh(this.sphere, new THREE.MeshBasicMaterial({ color: 0x000000 })));
+      group.add(new THREE.Mesh(this.sphere, new THREE.MeshBasicMaterial({ color: 0x000000, fog: false })));
       const ring = new THREE.Mesh(new THREE.TorusGeometry(1, 0.03, 6, 96), new THREE.MeshBasicMaterial({ color: 0xffb070 }));
       group.add(ring);
     } else if (b.cls === 'star' || b.cls === 'wd' || b.cls === 'ns') {
@@ -1785,7 +1836,7 @@ export class View3D {
       // a true star's surface boils (star.ts); a white dwarf's or a neutron star's is a plain glare
       const live = b.cls === 'star' ? starMaterial(b.name === 'Sun' || b.look.real === 'Sun', b.star?.teff ?? 5772, ((b.look.seed % 997) + 0.5) / 997) : null;
       if (live) o.mat = live;
-      group.add(new THREE.Mesh(this.sphere, live ?? new THREE.MeshBasicMaterial({ color: 0xffffff })));
+      group.add(new THREE.Mesh(this.sphere, live ?? new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false })));
       group.add(this.glow(0xffffff, 5));
     } else {
       o.map = o.base = maps.want(b.look, 128);
@@ -1799,13 +1850,14 @@ export class View3D {
           lightDir: { value: new THREE.Vector3(1, 0, 0) }, lightCol: { value: new THREE.Vector3(1, 1, 1) }, lit: { value: 0 }, heat: { value: 0 },
           atmo: { value: new THREE.Vector3() }, hasAtmo: { value: 0 }, bump: { value: o.map.gas ? 0.01 : 0.05 }, detail: { value: o.map.gas ? 0 : 1 },
           time: { value: 0 }, gas: { value: o.map.gas ? 1 : 0 }, vortex: { value: new THREE.Vector4(...(VORTEX[b.look.real ?? ''] ?? [0, 0, 0, 0])) },
+          ...this.lights.uniforms,
         },
       });
       group.add(new THREE.Mesh(this.sphere, o.mat));
       if (o.map.cloud) {
         const cm = new THREE.ShaderMaterial({
           vertexShader: VERT, fragmentShader: CLOUD_FRAG, transparent: true, depthWrite: false, side: THREE.DoubleSide,
-          uniforms: { aux: { value: o.aux }, lightDir: o.mat.uniforms.lightDir, lightCol: o.mat.uniforms.lightCol, drift: { value: 0 } },
+          uniforms: { aux: { value: o.aux }, lightDir: o.mat.uniforms.lightDir, lightCol: o.mat.uniforms.lightCol, drift: { value: 0 }, ...this.lights.uniforms },
         });
         o.clouds = new THREE.Mesh(this.sphere, cm);
         o.clouds.scale.setScalar(1.008);
@@ -1838,7 +1890,7 @@ export class View3D {
   }
 
   private glow(color: number, k: number) {
-    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.glowTex, color, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.glowTex, color, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }));
     s.scale.setScalar(k * 2);
     s.name = 'glow';
     return s;
@@ -2086,7 +2138,7 @@ function starField() {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  const p = new THREE.Points(g, new THREE.PointsMaterial({ size: 1.5, sizeAttenuation: false, vertexColors: true, depthWrite: false }));
+  const p = new THREE.Points(g, new THREE.PointsMaterial({ size: 1.5, sizeAttenuation: false, vertexColors: true, depthWrite: false, fog: false }));
   p.frustumCulled = false;
   return p;
 }

@@ -330,6 +330,16 @@ export class Hud {
     sp.oninput = apply;
     inv.onchange = apply;
     apply();
+    // the night-side light, kept too
+    const nl = $<HTMLInputElement>('nightLight');
+    try { const v = Number(localStorage.getItem('orbital.night') ?? '0'); if (isFinite(v)) nl.value = String(v); } catch { /* defaults */ }
+    const night = () => {
+      app.nightLight = Number(nl.value);
+      $('nightV').textContent = app.nightLight ? `${Math.round(app.nightLight * 100)}%` : 'off';
+      try { localStorage.setItem('orbital.night', nl.value); } catch { /* fine */ }
+    };
+    nl.oninput = night;
+    night();
   }
 
   /** a small screen, where panels fold away */

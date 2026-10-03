@@ -236,6 +236,9 @@ kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-
 .panel3 .prow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 2px; border-bottom: 1px solid var(--line); }
 .panel3 .pnm { font-weight: 600; }
 .panel3 .pbtns { display: flex; gap: 5px; flex: none; }
+/* a lamp's row: its many buttons wrap under its name */
+.panel3 .prow:has(.lampbtns) { flex-wrap: wrap; }
+.panel3 .pbtns.lampbtns { flex-wrap: wrap; flex: 1 1 100%; }
 .panel3 button:not(.x) { background: rgba(10, 24, 36, 0.85); border: 1px solid rgba(90, 200, 220, 0.35); color: var(--text); border-radius: 8px; padding: 5px 10px; font: inherit; font-size: 12px; cursor: pointer; }
 .panel3 button:not(.x):hover:not(:disabled) { background: rgba(40, 90, 120, 0.85); }
 .panel3 button:disabled { opacity: 0.35; cursor: default; }

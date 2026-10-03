@@ -51,9 +51,12 @@ try {
   await page.evaluate(place, [name, +radii, az.startsWith('@') ? az : +az, +el]);
   await page.waitForTimeout(+wait);
   await page.evaluate(place, [name, +radii, az.startsWith('@') ? az : +az, +el]);
+  // EVAL: code to run in the page first (v is the 3D view, a the app, b the body)
+  if (process.env.EVAL) console.log('eval:', await page.evaluate(([code, n]) => { const a = window.orbital; return String(new Function('v', 'a', 'b', code)(a.v3, a, a.world.sources.find(x => x.name === n))); }, [process.env.EVAL, name]));
   // full resolution, whatever the software renderer's frame time
   await page.evaluate(() => { const v = window.orbital.v3; v.res.scale = 1; v.res.t = -1e9; v.renderer.setPixelRatio(1); v.resize(); });
   await page.waitForTimeout(2500);
+  if (process.env.PROBE) console.log('probe:', await page.evaluate(([code, n]) => { const a = window.orbital; return String(new Function('v', 'a', 'b', code)(a.v3, a, a.world.sources.find(x => x.name === n))); }, [process.env.PROBE, name]));
   console.log(await page.evaluate(n => { const a = window.orbital, v = a.v3; const b = a.world.sources.find(x => x.name === n); const o = v.objs.get(b); return JSON.stringify({ map: o?.base?.w, style: o?.style, pr: v.renderer.getPixelRatio() }); }, name));
   await page.evaluate(() => document.querySelectorAll('.hud, #inspector, .hint, .chips, #hud3, .bar3').forEach(e => { e.style.visibility = 'hidden'; }));
   await page.screenshot({ path: out });
