@@ -37,6 +37,7 @@ void main() {
 const DISC_FRAG = /* glsl */ `
 #include <common>
 #include <logdepthbuf_pars_fragment>
+float sq(float x) { return x * x; }
 uniform vec3 camL;
 uniform mat4 invProj;
 uniform mat3 viewToLocal;
@@ -170,7 +171,7 @@ void main() {
     alpha += (1.0 - alpha) * a;
   }
   // the photon ring: light that wound round the hole on its way
-  float ring = exp(-pow((rMin - 1.52) / 0.05, 2.0)) * (0.25 + 1.2 * glow);
+  float ring = exp(-sq((rMin - 1.52) / 0.05)) * (0.25 + 1.2 * glow);
   col += (1.0 - alpha) * vec3(1.0, 0.85, 0.65) * ring;
   alpha = max(alpha, min(1.0, ring));
   if (fell) alpha = 1.0;
@@ -181,7 +182,7 @@ void main() {
     float ang = acos(clamp(dot(d0, -camL / D), -1.0, 1.0));
     float sig = max(atan(40.0 / D), 0.012);
     float edge = D > RB ? asin(RB / D) : 3.2;
-    float gl = glare * (exp(-pow(ang / sig, 2.0)) * 1.4 + 0.35 * exp(-ang / (2.5 * sig))) * (1.0 - smoothstep(0.6 * edge, edge, ang));
+    float gl = glare * (exp(-sq(ang / sig)) * 1.4 + 0.35 * exp(-ang / (2.5 * sig))) * (1.0 - smoothstep(0.6 * edge, edge, ang));
     col += vec3(1.0, 0.93, 0.85) * gl;
   }
   // tone: bright, but never clipped flat
@@ -191,7 +192,7 @@ void main() {
   gl_FragColor = vec4(col, alpha);
 }`;
 
-const JET_VERT = /* glsl */ `
+export const JET_VERT = /* glsl */ `
 #include <common>
 #include <logdepthbuf_pars_vertex>
 varying vec3 vP;
@@ -207,15 +208,19 @@ void main() {
  * passes to the jet's axis, and how far out along it; bright where it passes close, the glow
  * widening with distance as a jet does, fading toward the tip, with knots streaming out
  */
-const JET_FRAG = /* glsl */ `
+export const JET_FRAG = /* glsl */ `
 #include <common>
 #include <logdepthbuf_pars_fragment>
+float sq(float x) { return x * x; }
 uniform float power;
 uniform float time;
 uniform vec3 col;
 uniform vec3 base;
 uniform vec3 axis;
 uniform float len;
+/** how wide (1 a jet's) and how knotted (0 smooth, 1 a jet's knots) */
+uniform float wid;
+uniform float knotK;
 uniform vec3 eye;
 uniform mat4 invProj;
 uniform mat3 viewToWorld;
@@ -232,15 +237,17 @@ void main() {
   float s = (b * w0d - w0a) / den;
   if (tr < 0.0) { s = -w0a; tr = 0.0; }
   float t = s / len;
-  if (t < 0.0 || t > 1.0) discard;
+  if (t > 1.0) discard;
+  // behind the root, the glow is rounded off round it rather than cut flat
+  if (t < 0.0) { t = 0.0; s = 0.0; tr = max(dot(base, r), 0.0); }
   float d = length(r * tr - (base + axis * s)) / len;
   // its width: narrow at the root, opening out
-  float wdt = 0.003 + 0.028 * t;
-  float core = exp(-pow(d / wdt, 2.0) * 2.5);
-  float sheath = exp(-pow(d / (wdt * 2.2), 2.0)) * 0.07;
-  float along = exp(-t * 2.4) * smoothstep(0.0, 0.006, t);
+  float wdt = (0.003 + 0.028 * t) * wid;
+  float core = exp(-sq(d / wdt) * 2.5);
+  float sheath = exp(-sq(d / (wdt * 2.2))) * 0.07;
+  float along = exp(-t * 2.4) * (1.0 - smoothstep(0.6, 1.0, t));
   float k = fract(t * 7.0 - time * 0.25);
-  float knots = 0.6 + 0.9 * exp(-pow((k - 0.5) / 0.09, 2.0));
+  float knots = mix(1.0, 0.6 + 0.9 * exp(-sq((k - 0.5) / 0.09)), knotK);
   float I = (core * knots + sheath) * along * power;
   vec3 c = mix(col, vec3(1.0), core * 0.55) * I * 1.8;
   gl_FragColor = vec4(1.0 - exp(-c), 1.0);
@@ -279,7 +286,7 @@ export class HoleLook {
         vertexShader: JET_VERT, fragmentShader: JET_FRAG, transparent: true, depthWrite: false, side: THREE.BackSide, blending: THREE.AdditiveBlending,
         uniforms: {
           power: { value: 0 }, time: { value: 0 }, col: { value: new THREE.Color(0.55, 0.7, 1.0) },
-          base: { value: new THREE.Vector3() }, axis: { value: new THREE.Vector3(0, 0, s) }, len: { value: 1 }, eye: { value: new THREE.Vector3() },
+          base: { value: new THREE.Vector3() }, axis: { value: new THREE.Vector3(0, 0, s) }, len: { value: 1 }, eye: { value: new THREE.Vector3() }, wid: { value: 1 }, knotK: { value: 1 },
           invProj: { value: new THREE.Matrix4() }, viewToWorld: { value: new THREE.Matrix3() }, res: { value: new THREE.Vector2(1, 1) },
         },
       });
@@ -302,6 +309,9 @@ export class HoleLook {
    * how strong the jets are (0–1), the eye in the hole's own units, and the clock
    */
   /** the disc's outer edge, in horizon radii (the bright inner disc, or out to the torus round a quasar) */
+  /** the disc's outer edge, horizon radii */
+  get outer() { return this.mat.uniforms.rOut.value as number; }
+
   setOuter(rOut: number) {
     const u = this.mat.uniforms;
     if (Math.abs(u.rOut.value - rOut) < rOut * 0.05) return;

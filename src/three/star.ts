@@ -124,7 +124,10 @@ function lutFor(sun: boolean, teff: number) {
     t = lutTexture(sun ? gold : l => {
       // hotter stars are brighter all over, their coolest patches still glowing
       const hot = Math.max(0, Math.min(1, (teff - 4500) / 6000));
-      const y = (0.12 + 0.3 * hot) + (1.1 + 0.2 * hot) * Math.pow(l, 1.2), w = Math.min(1, Math.max(0, (l - 0.62 + 0.15 * hot) / 0.38) ** 2) * 0.8;
+      const y = (0.12 + 0.3 * hot) + (1.1 + 0.2 * hot) * Math.pow(l, 1.2);
+      // and the hottest (white dwarfs, neutron stars) white-hot all over, only their limbs showing colour
+      const blaze = Math.max(0, Math.min(1, (teff - 12000) / 40000));
+      const w = Math.max(Math.min(1, Math.max(0, (l - 0.62 + 0.15 * hot) / 0.38) ** 2) * 0.8, blaze * (0.55 + 0.3 * l));
       return [c[0] * y * (1 - w) + w, c[1] * y * (1 - w) + w, c[2] * y * (1 - w) + w];
     });
     luts.set(key, t);

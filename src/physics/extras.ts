@@ -57,7 +57,8 @@ export function placeExtras(w: World, b: Body, x: Extra, span: number): Body[] {
       break;
     }
     case 'shell': {
-      // thrown off earlier: a thin shell coasting outward, thinning as it goes
+      // thrown off earlier: a thin shell coasting outward, thinning as it goes (kept until it is five times as far)
+      w.reach = Math.max(w.reach, Math.hypot(b.x, b.y, b.z) + 5 * x.r);
       spawnFragments(w, { mass: x.m, n: 700, cls: 'gasp', x: b.x, y: b.y, z: b.z, vx: b.vx, vy: b.vy, vz: b.vz,
         rIn: 0.85 * x.r, rOut: x.r, vMin: 0.8 * x.v * KMS, vMax: 1.1 * x.v * KMS, heat: 0.5, color: x.color });
       break;

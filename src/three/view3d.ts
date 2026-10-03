@@ -23,6 +23,7 @@ import { Giant, HULL_BAR } from './giant';
 import { starMaterial, tickStar, dropStar } from './star';
 import { Lights, LIGHT_GLSL } from './lights';
 import { HoleLook } from './hole';
+import { NebulaLook, PulsarBeams, DustDisc } from './exotic';
 
 /**
  * The sandbox seen from inside it, at true scale. The scene is laid out in
@@ -47,6 +48,8 @@ interface Obj {
   seen: Set<object>; mat?: THREE.ShaderMaterial; clouds?: THREE.Mesh; jet?: THREE.Group; style?: string;
   /** a black hole's traced look, and when its disc's extent was last measured */
   hole?: HoleLook; holeT?: number;
+  /** a nebula's shell round its star, a pulsar's beams, a young star's dusty disc; the shell's radius (AU) and when it was measured */
+  neb?: NebulaLook; beams?: PulsarBeams; dust?: DustDisc; shellR?: number; shellT?: number;
 }
 
 const VERT = /* glsl */ `
@@ -1298,8 +1301,16 @@ export class View3D {
 
     // particles: gas and debris
     const pp: number[] = [], pc: number[] = [];
+    // gas a traced look already draws (a hole's disc, a nebula's shell) is not drawn again as dots over it
+    const drawn: { b: Body; r: number }[] = [];
+    for (const [b, o] of this.objs) {
+      if (!o.group.visible) continue;
+      if (o.hole && o.hole.outer > 20) drawn.push({ b, r: o.hole.outer * schwarzschild(b.m) * 1.15 });
+      if (o.neb && o.neb.mesh.visible && o.shellR) drawn.push({ b, r: o.shellR * 2 });
+    }
     if (!blind) for (const p of app.world.bodies) {
       if (!p.alive || p.source || !p.isParticle) continue;
+      if (p.cls === 'gasp' && drawn.some(q => Math.hypot(p.x - q.b.x, p.y - q.b.y, p.z - q.b.z) < q.r)) continue;
       pp.push((p.x - P[0]) * AU_M, (p.y - P[1]) * AU_M, (p.z - P[2]) * AU_M);
       const c = p.look.c1, h = p.heat;
       const r = ((c >> 16) & 255) / 255, g = ((c >> 8) & 255) / 255, bl = (c & 255) / 255;
@@ -1849,8 +1860,10 @@ export class View3D {
       group.add(body, panel);
     } else if (b.look.white) {
       o.kind = 'white';
-      group.add(new THREE.Mesh(this.sphere, new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false })));
-      group.add(this.glow(0xdde8ff, 6));
+      // a white hole pours out light and matter: a blinding surface, blue-white, in a wide glare
+      o.mat = starMaterial(false, 60000, ((b.look.seed % 997) + 0.5) / 997);
+      group.add(new THREE.Mesh(this.sphere, o.mat));
+      group.add(this.glow(0xdde8ff, 14));
     } else if (b.look.wormhole) {
       o.kind = 'worm';
       const m = mouthMesh(this.glowTex);
@@ -1863,7 +1876,7 @@ export class View3D {
     } else if (b.cls === 'star' || b.cls === 'wd' || b.cls === 'ns') {
       o.kind = 'star';
       // a true star's surface boils (star.ts); a white dwarf's or a neutron star's is a plain glare
-      const live = b.cls === 'star' ? starMaterial(b.name === 'Sun' || b.look.real === 'Sun', b.star?.teff ?? 5772, ((b.look.seed % 997) + 0.5) / 997) : null;
+      const live = starMaterial(b.name === 'Sun' || b.look.real === 'Sun', this.teffOf(b), ((b.look.seed % 997) + 0.5) / 997);
       if (live) o.mat = live;
       group.add(new THREE.Mesh(this.sphere, live ?? new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false })));
       group.add(this.glow(0xffffff, 5));
@@ -1934,14 +1947,16 @@ export class View3D {
     if (o.kind === 'star') {
       const c = b.cls === 'ns' ? [0.6, 0.75, 1] : starRGB(b.star?.teff ?? 5772);
       const mesh = g.children[0] as THREE.Mesh;
-      if (o.mat) tickStar(o.mat, b.name === 'Sun' || b.look.real === 'Sun', b.star?.teff ?? 5772, performance.now() / 1000);
+      if (o.mat) tickStar(o.mat, b.name === 'Sun' || b.look.real === 'Sun', this.teffOf(b), performance.now() / 1000);
       else (mesh.material as THREE.MeshBasicMaterial).color.setRGB(c[0], c[1], c[2]);
       const glow = g.children[1] as THREE.Sprite;
       if (b.name === 'Sun' || b.look.real === 'Sun') glow.material.color.setRGB(1, 0.78, 0.42);
       else glow.material.color.setRGB(c[0], c[1], c[2]);
       g.scale.setScalar(Rm);
+      this.surrounds(b, o, Rm);
       return;
     }
+    if (o.kind === 'white' && o.mat) tickStar(o.mat, false, 60000, performance.now() / 1000);
     if (o.kind === 'worm') tickMouth(g.getObjectByName('mouth') as THREE.Group, performance.now() / 1000, 1);
     if (o.kind !== 'world') {
       g.scale.setScalar(Rm);
@@ -2004,6 +2019,41 @@ export class View3D {
       (u.atmo.value as THREE.Vector3).set(((a >> 16) & 255) / 255, ((a >> 8) & 255) / 255, (a & 255) / 255);
       u.hasAtmo.value = 1;
     } else u.hasAtmo.value = 0;
+  }
+
+  /** a star's temperature for its look: a neutron star's surface is a million degrees, an X-ray glare */
+  private teffOf(b: Body) { return b.cls === 'ns' ? 6e5 : b.star?.teff ?? (b.cls === 'wd' ? 25000 : 5772); }
+
+  /** what is round a star: a nebula's shell, a pulsar's beams, a young star's dusty disc (`Rm`: its radius, m, the group's scale) */
+  private surrounds(b: Body, o: Obj, Rm: number) {
+    const now = performance.now() / 1000;
+    const res = this.renderer.getDrawingBufferSize(new THREE.Vector2());
+    if (b.look.pulsar) {
+      if (!o.beams) { o.beams = new PulsarBeams(!!b.look.magnetar); o.group.add(o.beams.group); }
+      const axis = new THREE.Vector3(...bodyAxis(b));
+      // turned at the speed it spins, slowed to something the eye can follow (a pulsar's thirty turns a second would strobe)
+      const period = Math.max(b.look.magnetar ? 5 : 1.6, 2 * Math.PI / Math.max(1e-9, Math.abs(b.spin)));
+      o.beams.update(axis, (now / period) * 2 * Math.PI, 4000, this.camera, res, now);
+    }
+    if (b.kind === 'pne' || b.kind === 'snr') {
+      if (!o.shellT || now - o.shellT > 4) {
+        o.shellT = now;
+        const ds: number[] = [];
+        for (const p of this.app.world.bodies) if (p.alive && p.isParticle) ds.push(Math.hypot(p.x - b.x, p.y - b.y, p.z - b.z));
+        ds.sort((u, v) => u - v);
+        o.shellR = ds.length > 30 ? ds[Math.floor(ds.length * 0.6)] : 0;
+      }
+      if (o.shellR) {
+        if (!o.neb) { o.neb = new NebulaLook(b.kind); o.group.add(o.neb.mesh); }
+        o.neb.mesh.visible = true;
+        o.neb.update((o.shellR * AU_M) / Rm, this.camera, res, now);
+      } else if (o.neb) o.neb.mesh.visible = false;
+    }
+    if (b.kind === 'ppdisc') {
+      if (!o.dust) { o.dust = new DustDisc((0.3 * AU_M) / Rm, (30 * AU_M) / Rm); o.group.add(o.dust.mesh); }
+      const c = starRGB(this.teffOf(b));
+      o.dust.update(new THREE.Vector3(0, 0, 1), [0.75 + 0.25 * c[0], 0.75 + 0.25 * c[1], 0.75 + 0.25 * c[2]], now);
+    }
   }
 
   /**
@@ -2201,6 +2251,7 @@ function dispose(o: Obj) {
   o.tex?.dispose();
   o.aux?.dispose();
   o.hole?.dispose();
+  o.neb?.dispose(); o.beams?.dispose(); o.dust?.dispose();
 }
 
 

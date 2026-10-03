@@ -52,6 +52,7 @@ void main() {
 const DECK_FRAG = /* glsl */ `
 #include <common>
 #include <logdepthbuf_pars_fragment>
+float sq(float x) { return x * x; }
 uniform sampler2D map;
 uniform float R;
 uniform float time;
@@ -83,7 +84,7 @@ void main() {
   vec3 n = normalize(vN);
   float lat = asin(clamp(n.z, -1.0, 1.0));
   // the zonal winds carry the clouds east or west by latitude
-  float wind = icy > 0.5 ? peak * (1.5 * sin(lat) * sin(lat) - 0.5) * 1.2 : peak * (0.5 * cos(lat * 12.0) + 0.6 * exp(-pow(lat * 57.3 / 12.0, 2.0)));
+  float wind = icy > 0.5 ? peak * (1.5 * sin(lat) * sin(lat) - 0.5) * 1.2 : peak * (0.5 * cos(lat * 12.0) + 0.6 * exp(-sq(lat * 57.3 / 12.0)));
   float sh = time * wind / R;
   vec3 q = vec3(n.x * cos(sh) - n.y * sin(sh), n.x * sin(sh) + n.y * cos(sh), n.z);
   // and the great storm winds them round itself

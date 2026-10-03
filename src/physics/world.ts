@@ -20,6 +20,8 @@ export class World {
   time = 0;
   integ = new Hermite();
   maxParticles = 25000;
+  /** how far from the origin particles are kept (AU), at least: a nebula's shell is placed thousands of AU out */
+  reach = 0;
   /** events since the renderer last looked */
   events: SimEvent[] = [];
   /** called when bodies are removed, so views can drop what they hold for them */
@@ -57,6 +59,7 @@ export class World {
     this.events = [];
     this.disks.vapour = [];
     this.time = 0;
+    this.reach = 0;
     this.dirtyStructure = this.dirtyForces = true;
   }
 
@@ -239,7 +242,7 @@ export class World {
     // a supermassive hole's gas reaches hundreds of Schwarzschild radii out
     for (const s of this.sources) far = Math.max(far, Math.hypot(s.x, s.y, s.z) + (s.cls === 'bh' ? 1000 : 1) * s.r);
     // a planetary nebula is thousands of AU across before it fades into the background
-    const cull2 = Math.max(2000, 20 * far) ** 2;
+    const cull2 = Math.max(2000, 20 * far, this.reach) ** 2;
     for (const b of this.bodies) {
       if (b.source || !b.alive) continue;
       b.age += dt;
