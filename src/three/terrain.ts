@@ -46,6 +46,12 @@ const RELIEF: Record<string, number> = {
   Triton: 1500, Pluto: 6000, Charon: 6000, Ceres: 15000, Vesta: 40000, Phobos: 3000, Deimos: 1500, Miranda: 20000,
   Ariel: 6000, Titania: 5000, Oberon: 6000, Umbriel: 6000, Hyperion: 10000, Eris: 3000, Haumea: 4000, Makemake: 3000,
 };
+/** the spread (standard deviation) of elevation, m, where it is measured: LOLA, MOLA, Magellan, MESSENGER altimetry */
+const SIGMA: Record<string, number> = { Moon: 2400, Mars: 3000, Mercury: 1500, Venus: 1000, Io: 1500, Vesta: 6000, Ceres: 2500 };
+
+/** metres per unit of painted height, set by hand where the painter's features need it: the Moon's maria sit 2–3 km below its highlands */
+const SCALE: Record<string, number> = { Moon: 22000, Venus: 35000 };
+
 /** worlds with enough air to burn up small impactors and wear craters down */
 const AIRY = new Set(['Earth', 'Venus', 'Titan', 'Mars']);
 
@@ -91,11 +97,16 @@ function calibrate(s: GroundSpec) {
   if (s.seas && isFinite(seaH)) {
     // sea level at the sea's painted height; the land rises from it
     s.datum = seaH;
-    s.scale = (0.85 * s.relief) / Math.max(1e-3, hi - seaH);
+    s.scale = (0.6 * s.relief) / Math.max(1e-3, hi - seaH);
   } else {
     s.datum = hs[Math.floor(hs.length / 2)] ?? 0.5;
-    // a flat painter (a cloud-top map) gets its relief from the fractal instead
-    s.scale = hi - lo > 0.01 ? (0.75 * s.relief) / (hi - lo) : 0;
+    // scaled so the spread of heights is the measured one (or a sixth of the full range): the
+    // extremes — Olympus, Hellas, Maxwell — then fall where the painter's features put them.
+    // A flat painter (a cloud-top map) gets its relief from the fractal instead
+    const mean = hs.reduce((a, x) => a + x, 0) / Math.max(1, hs.length);
+    const sd = Math.sqrt(hs.reduce((a, x) => a + (x - mean) ** 2, 0) / Math.max(1, hs.length));
+    const want = SIGMA[s.look.real ?? ''] ?? s.relief / 6;
+    s.scale = SCALE[s.look.real ?? ''] ?? (sd > 0.003 && hi - lo > 0.01 ? Math.min(want / sd, (0.9 * s.relief) / (hi - lo)) : 0);
   }
 }
 
@@ -129,12 +140,12 @@ function venusGround(o: Tx, _lat: number, _lon: number, n: V3, d: { oct: number 
   const ishtar = lump(n, 70, 10, 16), maxwell = lump(n, 65.2, 3.3, 4, 0.1);
   const aph = Math.max(lump(n, -5, 75, 18), lump(n, -8, 110, 20), lump(n, -12, 140, 16));
   const beta = lump(n, 25, -77, 9), atla = lump(n, 4, -160, 9);
-  h += 0.18 * ishtar + 0.5 * maxwell + 0.12 * aph + 0.12 * beta + 0.12 * atla;
+  h += 0.1 * ishtar + 0.18 * maxwell + 0.06 * aph + 0.06 * beta + 0.06 * atla;
   // tesserae: ridged, crumpled highland
   const tes = ridged(n[0] * 20, n[1] * 20, n[2] * 20, d.oct);
   h += (aph + ishtar) * 0.06 * tes;
   // a few great shield volcanoes
-  for (const [la, lo, r] of [[25.5, -80, 3], [21, -34, 3.5], [-6, -165, 3], [3, 26, 2.5], [9, -20, 2.5]] as const) h += 0.2 * lump(n, la, lo, r, 0.05);
+  for (const [la, lo, r] of [[25.5, -80, 3], [21, -34, 3.5], [-6, -165, 3], [3, 26, 2.5], [9, -20, 2.5]] as const) h += 0.1 * lump(n, la, lo, r, 0.05);
   mix(o, 0.48, 0.42, 0.34, Math.min(1, (ishtar + aph) * 0.6 + tes * 0.15));
   o.h = h;
 }
@@ -187,7 +198,7 @@ export function groundAt(s: GroundSpec, n: V3, fine: number, out: GroundSample, 
   const R = s.R, px = n[0] * R, py = n[1] * R, pz = n[2] * R;
   const seed = (s.look.seed % 997) * 13.7;
   // fractal hills: from a tenth of the relief at 30 km (less on a small world) down to the finest asked
-  const top = Math.min(30000, R * 0.08), A0 = s.relief * (s.scale ? 0.05 : 0.12);
+  const top = Math.min(30000, R * 0.08), A0 = s.relief * (s.scale ? 0.035 : 0.1);
   let rough = 0;
   for (let lam = top, a = A0, k = 0; lam > fine && k < 18; lam *= 0.5, a *= 0.55, k++) {
     const q = 1 / lam;
@@ -307,8 +318,9 @@ export function buildPatch(job: PatchJob): Patch {
       col[k * 3] = out.r; col[k * 3 + 1] = out.g; col[k * 3 + 2] = out.b;
       sea[k] = out.sea ? 1 : 0;
       // boulders on rocky ground, near the middle
-      if (!out.sea && dist > 2 && dist < 400 && out.rock > 0.3 && hash(i * 31 + 7, j * 17 + 3, Math.floor(s.look.seed)) < out.rock * 0.18) {
-        rocks.push(P[k * 3], P[k * 3 + 1], P[k * 3 + 2], Math.min(step, 4) * (0.15 + 0.6 * hash(i, j, 5)) * out.rock);
+      // (most small, a few big: a power law, as the boulder counts round lunar craters go)
+      if (!out.sea && dist > 2 && dist < 400 && out.rock > 0.3 && hash(i * 31 + 7, j * 17 + 3, Math.floor(s.look.seed)) < out.rock * 0.06) {
+        rocks.push(P[k * 3], P[k * 3 + 1], P[k * 3 + 2], Math.min(step, 3) * (0.08 + 0.5 * Math.pow(hash(i, j, 5), 3)) * out.rock);
       }
     }
   }

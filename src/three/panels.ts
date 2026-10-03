@@ -297,7 +297,7 @@ export class Panels {
     let h = `<div class="phero"><div><div class="pbig">${esc(b.name)}</div><div class="pdim">${fmtLL(la, lo)} · ${z.toFixed(0)} m ${z >= 0 ? 'above' : 'below'} the datum</div></div></div>`;
     h += '<div class="pgrid">' + stat('Gravity', `${(g / 9.81).toFixed(3)} g`) + stat('Air pressure', air.bar > 1e-4 ? `${air.bar.toPrecision(3)} bar` : 'vacuum')
       + stat('Temperature', `${Math.round(air.T)} K · ${Math.round(air.T - 273.15)} °C`) + stat('Daylight', G.daylight > 0.6 ? 'day' : G.daylight > 0.05 ? 'twilight' : 'night') + '</div>';
-    h += `<div class="psub">Air here</div>${G.atmo.bar > 0 ? atmoTable({ ...G.atmo, bar: air.bar, T: air.T }) : atmoTable(G.atmo)}`;
+    h += `<div class="psub">Air here</div>${G.atmo.kind === 'thin' || G.atmo.kind === 'thick' ? atmoTable({ ...G.atmo, bar: air.bar, T: air.T }) : atmoTable(G.atmo)}`;
     const cp = composition(b);
     if (cp.rows.length) h += `<div class="psub">Under your feet</div><div class="prow tight"><div><span class="pdot" style="background:rgb(${Math.round(smp.r * 255)},${Math.round(smp.g * 255)},${Math.round(smp.b * 255)})"></span> ${smp.rock > 0.5 ? 'rocky, boulder-strewn' : 'fine soil and pebbles'}</div></div>${bars(cp.rows)}`;
     const L = G.lifeInfo!;
@@ -343,7 +343,7 @@ export const sleepWarp = (seconds: number) => (SLEEP_HOURS * 3600) / seconds / Y
 /** an atmosphere as the reader shows it: the pressure and temperature, and every gas to the last part per million */
 function atmoTable(a: Atmosphere) {
   if (a.kind === 'none' || !a.gases.length) return `<div class="pland no">No atmosphere. ${esc(a.note)}</div>`;
-  const head = a.kind === 'exosphere' ? `An exosphere only: about ${a.bar > 0 ? `${a.bar.toExponential(0)} bar` : 'nothing'} — a few atoms, no weather.` : a.kind === 'giant' ? `At the 1-bar level: ${Math.round(a.T)} K. Scale height ${a.H.toFixed(1)} km.` : `${a.bar.toPrecision(3)} bar at the surface, ${Math.round(a.T)} K. Scale height ${a.H.toFixed(1)} km.`;
+  const head = a.kind === 'exosphere' ? `An exosphere only${a.bar > 0 ? `, about ${a.bar.toExponential(0)} bar` : ''}: a few atoms, no weather.` : a.kind === 'giant' ? `At the 1-bar level: ${Math.round(a.T)} K. Scale height ${a.H.toFixed(1)} km.` : `${a.bar.toPrecision(3)} bar at the surface, ${Math.round(a.T)} K. Scale height ${a.H.toFixed(1)} km.`;
   return `<p class="pdim">${head} Clouds: ${esc(a.clouds)}.</p>` + bars(a.gases.map(x => [`${x.f} · ${x.name}`, x.x * 100]), true) + `<p class="pdim">${esc(a.note)}</p>`;
 }
 

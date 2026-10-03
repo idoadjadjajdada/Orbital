@@ -390,7 +390,7 @@ export class Ground {
     (u.ambient.value as THREE.Vector3).set(amb * (0.6 + 0.4 * this.skyCol.r), amb * (0.6 + 0.4 * this.skyCol.g), amb * (0.6 + 0.4 * this.skyCol.b));
     // the haze: how far you can see, from the density of the air here and what is in it
     const dens = a.bar > 1e-4 ? a.bar * Math.exp(-Math.max(0, alt) / Math.max(1, a.H * 1000)) : 0;
-    (u.fogK.value as number) = dens > 0 ? dens * (0.3 + 4 * a.haze) / 90e3 : 0;
+    u.fogK.value = dens > 0 ? (dens * (0.3 + 4 * a.haze) + a.haze * 6 * Math.min(1, dens / 0.003)) / 90e3 : 0;
     const fog = this.skyCol.clone().lerp(new THREE.Color(1, 1, 1), 0.25).multiplyScalar(0.2 + 0.8 * this.daylight);
     (u.fogCol.value as THREE.Vector3).set(fog.r, fog.g, fog.b);
     this.rockMat.color.setScalar(1);
@@ -411,7 +411,7 @@ export class Ground {
     if (giant) (su.fogCol.value as THREE.Vector3).set(giant.fog.r, giant.fog.g, giant.fog.b);
     if (!b || !a || a.bar < 1e-4) {
       this.daylight = sun ? smooth(-0.05, 0.05, sun.dot(up)) : 0;
-      this.sunCol.setRGB(sunRGB[0], sunRGB[1], sunRGB[2]).multiplyScalar(sun ? 1.15 : 0);
+      this.sunCol.copy(light(sunRGB)).multiplyScalar(sun ? 1.15 : 0);
       this.skyCol.setRGB(0, 0, 0);
       su.thick.value = 0;
       this.sky.visible = !!giant && giant.inside > 0;
@@ -420,7 +420,8 @@ export class Ground {
     const alt = rel.length() - b.r * AU_M;
     // the air above you: how much of the column is left
     const col = a.bar * Math.exp(-Math.max(0, alt) / (a.H * 1000));
-    const thick = 1 - Math.exp(-col * 6);
+    // the sky's brightness: scattering by the gas, and by dust or haze, which can light a thin sky (Mars's) all by itself
+    const thick = 1 - Math.exp(-(col * 4 + a.haze * 3 * Math.min(1, col / 0.003)));
     const s = sun ? sun.dot(up) : -1;
     this.daylight = smooth(-0.12, 0.12, s) * (sun ? 1 : 0);
     const sky = new THREE.Color(a.sky), dusk = new THREE.Color(a.dusk);
@@ -432,7 +433,7 @@ export class Ground {
     this.skyCol.copy(sky).multiplyScalar(this.daylight * thick);
     // sunlight through the air: reddened toward the horizon, dimmed under thick cloud
     const path = Math.min(40, 1 / Math.max(0.03, s + 0.05)) * Math.min(1, col);
-    const red = new THREE.Color(sunRGB[0], sunRGB[1], sunRGB[2]);
+    const red = light(sunRGB);
     red.r *= Math.exp(-path * 0.02); red.g *= Math.exp(-path * 0.06); red.b *= Math.exp(-path * 0.12);
     const veil = Math.exp(-a.haze * Math.min(col, 100) * (a.bar > 10 ? 0.05 : 0.6));
     this.sunCol.copy(red).multiplyScalar(1.15 * Math.max(0.05, veil) * smooth(-0.08, 0.04, s));
@@ -456,7 +457,7 @@ export class Ground {
         this.root.add(obj);
         this.placed.set(s.name, { obj, key: s.name });
       }
-      if (d < 500 && !this.found.has(s.name)) { this.found.add(s.name); this.onFind(s.name, s.about); }
+      if (d < 500 && alt < 1500 && !this.found.has(s.name)) { this.found.add(s.name); this.onFind(s.name, s.about); }
     }
     for (const t of this.towns) {
       const tn = dirOf(t.lat, t.lon);
@@ -631,7 +632,7 @@ export class Ground {
         const sz = kind.size * (0.5 + 0.7 * r());
         q.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(...dir));
         p.set(dir[0] * (R + h) - base.x, dir[1] * (R + h) - base.y, dir[2] * (R + h) - base.z);
-        s.set(sz * 0.5, sz * 0.6, sz * 0.5);
+        s.set(Math.max(0.6, sz * 0.12), sz * 0.6, Math.max(0.6, sz * 0.12));
         m.compose(p, q, s);
         trunk.setMatrixAt(a++, m);
         const top = p.clone().add(new THREE.Vector3(...dir).multiplyScalar(sz * (kind.cone ? 0.25 : 0.45)));
@@ -698,6 +699,11 @@ export function latLonOf(n: V3): [number, number] {
 }
 export const arc = (a: V3, b: V3) => Math.acos(Math.max(-1, Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2])));
 const mod = (x: number, m: number) => ((x % m) + m) % m;
+/** a star's light as it falls on the ground: its colour, but far less saturated than the map's glyph for it */
+function light(rgb: V3) {
+  const m = Math.max(rgb[0], rgb[1], rgb[2], 1e-3);
+  return new THREE.Color(0.8 + 0.2 * rgb[0] / m, 0.8 + 0.2 * rgb[1] / m, 0.8 + 0.2 * rgb[2] / m);
+}
 const smooth = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
 function nearestVertex(p: Patch, at: THREE.Vector3) {

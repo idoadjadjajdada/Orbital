@@ -347,6 +347,8 @@ export class View3D {
     this.controls.root.appendChild(this.panels.fadeEl);
     window.addEventListener('resize', () => this.resize());
     this.resize();
+    // for the browser tests: three and the bodies' turning frames
+    Object.assign(window, { __THREE: THREE, __bodyQuat: bodyQuat });
   }
 
   private resize() {
