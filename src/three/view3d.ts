@@ -161,8 +161,9 @@ void main() {
   } else tex = texture2D(map, uv);
   vec4 ax = texture2D(aux, uv);
   // relief: the slope of the height map tilts the surface
-  float h = ax.r;
-  float hE = texture2D(aux, uv + vec2(texel.x, 0.0)).r, hN = texture2D(aux, uv + vec2(0.0, texel.y)).r;
+  float h = ax.r + ax.a / 255.0;
+  vec4 aE = texture2D(aux, uv + vec2(texel.x, 0.0)), aN = texture2D(aux, uv + vec2(0.0, texel.y));
+  float hE = aE.r + aE.a / 255.0, hN = aN.r + aN.a / 255.0;
   float cl = max(0.05, sqrt(1.0 - n.z * n.z));
   vec2 g = vec2((hE - h) / (texel.x * 6.2831853) / cl, (hN - h) / (texel.y * 3.14159265));
   // and close up, finer grain than the map holds
@@ -1921,7 +1922,8 @@ export class View3D {
     }
     // a world: the best map for how big it looks (they arrive from the painter as they are ready), its turning frame, its light, its craters
     const px = (Rm / Math.max(1, g.position.length())) / (Math.tan((this.camera.fov * Math.PI) / 360) / (window.innerHeight / 2));
-    const want = MapService.widthFor(px * 2, 1024);
+    // up to 2048 across when a world fills the view
+    const want = MapService.widthFor(px * 2, 2048);
     if (o.style !== lookKey(b.look) || o.base!.w < want) {
       const m = maps.want(b.look, want);
       if (o.style !== lookKey(b.look) || m !== o.base) {
@@ -2086,7 +2088,9 @@ function writeMaps(t: THREE.DataTexture, aux: THREE.DataTexture, m: SurfaceMap) 
   for (let k = 0; k < m.w * m.h; k++) {
     d[k * 4] = m.rgb[k * 3] * 255; d[k * 4 + 1] = m.rgb[k * 3 + 1] * 255; d[k * 4 + 2] = m.rgb[k * 3 + 2] * 255;
     d[k * 4 + 3] = Math.min(1, m.emit[k]) * 255;
-    x[k * 4] = Math.max(0, Math.min(1, m.height[k])) * 255; x[k * 4 + 1] = m.cloud ? m.cloud[k] * 255 : 0; x[k * 4 + 2] = m.spec[k] * 255; x[k * 4 + 3] = 255;
+    // the height in two bytes (red the high, alpha the low), so the relief shades smoothly close up rather than in terraces
+    const h = Math.round(Math.max(0, Math.min(1, m.height[k])) * 65535);
+    x[k * 4] = h >> 8; x[k * 4 + 1] = m.cloud ? m.cloud[k] * 255 : 0; x[k * 4 + 2] = m.spec[k] * 255; x[k * 4 + 3] = h & 255;
   }
   t.needsUpdate = true;
   aux.needsUpdate = true;

@@ -18,10 +18,10 @@ class MapService {
   private used = new Map<string, number>();
   private asked = new Set<string>();
   private queue: { key: string; look: Look; w: number }[] = [];
-  private worker: Worker | null = null;
-  private busy = false;
-  /** the job the worker has, to paint here instead if the worker fails */
-  private job: { key: string; look: Look; w: number } | null = null;
+  /** painters off the main thread: two, so one big map never holds up the rest */
+  private pool: { w: Worker; job: { key: string; look: Look; w: number } | null }[] = [];
+  /** painting here instead (no workers: tests, old browsers) */
+  private local = false;
   private tick = 0;
   /** called when a map finishes, so whoever drew the stand-in can redraw */
   onReady: (key: string) => void = () => {};
@@ -29,21 +29,24 @@ class MapService {
   constructor() {
     try {
       if (typeof Worker !== 'undefined' && typeof window !== 'undefined') {
-        this.worker = new Worker(new URL('./mapworker.ts', import.meta.url), { type: 'module' });
-        this.worker.onmessage = (e: MessageEvent<{ key: string; map: SurfaceMap }>) => {
-          this.busy = false;
-          this.job = null;
-          this.store(e.data.key, e.data.map);
-          this.next();
-        };
-        this.worker.onerror = () => {
-          this.worker = null;
-          this.busy = false;
-          if (this.job) this.queue.push(this.job);
-          this.next();
-        };
+        const n = Math.max(1, Math.min(2, (navigator.hardwareConcurrency || 2) - 1));
+        for (let i = 0; i < n; i++) {
+          const slot = { w: new Worker(new URL('./mapworker.ts', import.meta.url), { type: 'module' }), job: null as { key: string; look: Look; w: number } | null };
+          slot.w.onmessage = (e: MessageEvent<{ key: string; map: SurfaceMap }>) => {
+            slot.job = null;
+            this.store(e.data.key, e.data.map);
+            this.next();
+          };
+          slot.w.onerror = () => {
+            // this one is broken: its job goes back in the queue for the others (or this thread)
+            this.pool.splice(this.pool.indexOf(slot), 1);
+            if (slot.job) this.queue.push(slot.job);
+            this.next();
+          };
+          this.pool.push(slot);
+        }
       }
-    } catch { this.worker = null; }
+    } catch { this.pool = []; }
     // maps of Mars painted before its measured maps came in are dropped (its key changes, so it is painted again)
     marsReady.then(ok => { if (ok) this.forget('Mars|'); });
   }
@@ -99,18 +102,20 @@ class MapService {
   }
 
   private next() {
-    if (this.busy || !this.queue.length) return;
+    if (!this.queue.length) return;
     // the biggest discs first are not more urgent than many small ones: smallest width first
     this.queue.sort((a, b) => a.w - b.w);
-    const job = this.queue.shift()!;
-    if (this.worker) {
-      this.busy = true;
-      this.job = job;
-      this.worker.postMessage(job);
-    } else {
+    if (this.pool.length) {
+      for (const slot of this.pool) {
+        if (slot.job || !this.queue.length) continue;
+        slot.job = this.queue.shift()!;
+        slot.w.postMessage(slot.job);
+      }
+    } else if (!this.local) {
       // no worker (tests, old browsers): paint it in a moment, on this thread
-      this.busy = true;
-      setTimeout(() => { this.busy = false; this.store(job.key, buildMap(job.look, job.w)); this.next(); }, 0);
+      this.local = true;
+      const job = this.queue.shift()!;
+      setTimeout(() => { this.local = false; this.store(job.key, buildMap(job.look, job.w)); this.next(); }, 0);
     }
   }
 }
