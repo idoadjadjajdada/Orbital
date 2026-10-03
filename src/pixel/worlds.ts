@@ -1,5 +1,6 @@
 import { fbm, ridged, vnoise, hash } from './noise';
 import { EARTH_RLE, EARTH_W, EARTH_H } from './data/earth';
+import { MARS, type MarsData } from './marsdata';
 
 /**
  * The real worlds, painted from what is known of them. Each painter is asked
@@ -313,13 +314,85 @@ export function paintMoon(o: Tx, lat: number, lon: number, n: V3, d: Detail) {
 }
 
 // ------------------------------------------------------------------ Mars
+/**
+ * Mars from MOLA and the colour mosaic (marsdata.ts): heights as painted
+ * height 0.5 + km / 40, so the ground's scale is 40 km a unit (terrain.ts).
+ * Below the maps' 20 km texels, small craters and the grain of the dust.
+ */
 export function paintMars(o: Tx, lat: number, lon: number, n: V3, d: Detail) {
+  const M = MARS;
+  if (!M) { marsFeatures(o, lat, lon, n, d); return; }
+  // texel coordinates: 180° W at the left edge, north at the top
+  let u = lon / (2 * Math.PI) + 0.5;
+  u -= Math.floor(u);
+  const x = u * M.w - 0.5, y = (0.5 - lat / Math.PI) * M.h - 0.5;
+  o.h = 0.5 + marsHeight(M, x, y) / 40;
+  if (M.rgb) {
+    const x0 = Math.floor(x), y0 = Math.max(0, Math.min(M.h - 2, Math.floor(y)));
+    const fx = x - x0, fy = Math.max(0, Math.min(1, y - y0));
+    const i00 = (y0 * M.w + ((x0 + M.w) % M.w)) * 3, i10 = (y0 * M.w + ((x0 + 1) % M.w)) * 3;
+    const i01 = i00 + M.w * 3, i11 = i10 + M.w * 3;
+    const c = M.rgb;
+    const at = (k: number) => {
+      const L = GRADE[k];
+      return (L[c[i00 + k]] * (1 - fx) + L[c[i10 + k]] * fx) * (1 - fy) + (L[c[i01 + k]] * (1 - fx) + L[c[i11 + k]] * fx) * fy;
+    };
+    o.r = at(0); o.g = at(1); o.b = at(2);
+  } else {
+    marsFeatures(o, lat, lon, n, d);
+    o.h = 0.5 + marsHeight(M, x, y) / 40;
+  }
+  // the residual caps, which the mosaic's edges smear
+  const v = fbm(n[0] * 7, n[1] * 7, n[2] * 7, 4);
+  const cap = Math.max(ss(1.1, 0.8, angTo(n, 90, 0) / (8 + 3 * (v - 0.5))), ss(1.1, 0.8, angTo(n, -87, -45) / (4.5 + 2 * (v - 0.5))));
+  if (cap > 0) mixTo(o, [0.95, 0.94, 0.92], cap * 0.85);
+  if (d.res >= 512) {
+    // what the maps are too coarse to hold: craters under 20 km, and mottling in the dust
+    const cr = craterField(n, Math.max(1, d.craters - 1), 70, 0.5, 2);
+    o.h += cr.dh * 0.12;
+    const m = fbm(n[0] * 60, n[1] * 60, n[2] * 60, Math.min(4, d.oct - 3));
+    const k = 0.93 + 0.14 * m + cr.db * 0.5;
+    o.r *= k; o.g *= k; o.b *= k;
+  }
+}
+
+/**
+ * the mosaic is dim, flat and a little yellow: each channel stretched about its mean to Mars' butterscotch as
+ * the spacecraft see it, the dark markings darker, and the brightest (Hellas' frost, the caps) eased in rather than clipped
+ */
+const GRADE = [[0.345, 0.64], [0.247, 0.4], [0.157, 0.245]].map(([m, t]) => Float32Array.from({ length: 256 }, (_, i) => {
+  const x = t * Math.pow(i / 255 / m, 1.3);
+  return x < 0.75 ? x : 0.75 + 0.25 * (1 - Math.exp(-(x - 0.75) / 0.25));
+}));
+
+/** elevation, km, at texel coordinates: Catmull-Rom across the texels, so slopes run smooth */
+function marsHeight(M: MarsData, x: number, y: number) {
+  const x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0;
+  const wx = cr4(fx, WX), wy = cr4(fy, WY);
+  let s = 0;
+  for (let j = 0; j < 4; j++) {
+    const row = Math.max(0, Math.min(M.h - 1, y0 - 1 + j)) * M.w;
+    let r = 0;
+    for (let i = 0; i < 4; i++) r += M.height[row + ((x0 - 1 + i + M.w) % M.w)] * wx[i];
+    s += r * wy[j];
+  }
+  return s * 0.12 - 8.5;
+}
+const WX = [0, 0, 0, 0], WY = [0, 0, 0, 0];
+function cr4(t: number, w: number[]) {
+  const t2 = t * t, t3 = t2 * t;
+  w[0] = -0.5 * t3 + t2 - 0.5 * t; w[1] = 1.5 * t3 - 2.5 * t2 + 1; w[2] = -1.5 * t3 + 2 * t2 + 0.5 * t; w[3] = 0.5 * t3 - 0.5 * t2;
+  return w;
+}
+
+/** Mars from its features alone, before (or without) the measured maps */
+function marsFeatures(o: Tx, lat: number, lon: number, n: V3, d: Detail) {
   const latD = lat / D, lonD = lon / D;
   const v = fbm(n[0] * 7, n[1] * 7, n[2] * 7, d.oct);
   // bright dusty ochre, with the darker southern highlands and dark albedo markings
   set(o, [0.74, 0.44, 0.26]);
   shade(o, 0.88 + 0.24 * v);
-  o.h = 0.5 + 0.08 * v + (latD < 0 ? 0.08 : 0) * ss(-10, 10, -latD + 20 * (v - 0.5));
+  o.h = 0.42 + 0.08 * v + (latD < 0 ? 0.1 : 0) * ss(-10, 10, -latD + 20 * (v - 0.5));
   const dark = [
     { lat: 10, lon: 69.5, a: 9, b: 16, rough: 0.5 }, { lat: -3, lon: 5, a: 14, b: 4, rough: 0.6 }, { lat: -8, lon: 30, a: 22, b: 5, rough: 0.6 },
     { lat: -24, lon: -38, a: 22, b: 9, rough: 0.6 }, { lat: 46.7, lon: -22, a: 14, b: 9, rough: 0.6 }, { lat: -22, lon: 145, a: 22, b: 7, rough: 0.6 },
@@ -335,12 +408,12 @@ export function paintMars(o: Tx, lat: number, lon: number, n: V3, d: Detail) {
   // Hellas and Argyre: deep, pale-floored basins
   for (const [la, lo, r] of [[-42.4, 70.5, 18], [-49.7, -43, 11]] as const) {
     const q = angTo(n, la, lo) / r;
-    if (q < 1.15) { o.h -= 0.22 * (1 - Math.min(1, q) ** 2); mixTo(o, [0.82, 0.62, 0.45], ss(1.1, 0.6, q) * 0.6); }
+    if (q < 1.15) { o.h -= 0.26 * (1 - Math.min(1, q) ** 2); mixTo(o, [0.82, 0.62, 0.45], ss(1.1, 0.6, q) * 0.6); }
   }
   // Tharsis: the bulge, the three Montes, Olympus, Alba; Elysium
   const th = angTo(n, 2, -110) / 32;
   if (th < 1) o.h += 0.15 * (1 - th * th);
-  for (const [la, lo, r, hh] of [[18.65, -133.8, 5.2, 0.5], [-8.3, -120.1, 3.7, 0.35], [1.5, -113, 3.2, 0.32], [11.8, -104.5, 3.4, 0.35], [40.5, -109.6, 8, 0.12], [25, 147, 2.4, 0.25]] as const) {
+  for (const [la, lo, r, hh] of [[18.65, -133.8, 5.2, 0.56], [-8.3, -120.1, 3.7, 0.35], [1.5, -113, 3.2, 0.32], [11.8, -104.5, 3.4, 0.35], [40.5, -109.6, 8, 0.12], [25, 147, 2.4, 0.25]] as const) {
     const q = angTo(n, la, lo) / r;
     if (q < 1.3) {
       o.h += hh * Math.max(0, 1 - q) ** 1.5;

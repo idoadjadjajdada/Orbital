@@ -49,8 +49,13 @@ const RELIEF: Record<string, number> = {
 /** the spread (standard deviation) of elevation, m, where it is measured: LOLA, MOLA, Magellan, MESSENGER altimetry */
 const SIGMA: Record<string, number> = { Moon: 2400, Mars: 3000, Mercury: 1500, Venus: 1000, Io: 1500, Vesta: 6000, Ceres: 2500 };
 
-/** metres per unit of painted height, set by hand where the painter's features need it: the Moon's maria sit 2–3 km below its highlands */
-const SCALE: Record<string, number> = { Moon: 22000, Venus: 35000 };
+/**
+ * metres per unit of painted height, set by hand where the painter's features need it (the Moon's maria
+ * sit 2–3 km below its highlands), or where the painter gives real elevations (Mars: MOLA, 40 km a unit)
+ */
+const SCALE: Record<string, number> = { Moon: 22000, Venus: 35000, Mars: 40000 };
+/** painted height of the datum, where the painter's heights are measured from one (Mars: the areoid) */
+const DATUM: Record<string, number> = { Mars: 0.5 };
 
 /** worlds with enough air to burn up small impactors and wear craters down */
 const AIRY = new Set(['Earth', 'Venus', 'Titan', 'Mars']);
@@ -99,7 +104,7 @@ function calibrate(s: GroundSpec) {
     s.datum = seaH;
     s.scale = (0.6 * s.relief) / Math.max(1e-3, hi - seaH);
   } else {
-    s.datum = hs[Math.floor(hs.length / 2)] ?? 0.5;
+    s.datum = DATUM[s.look.real ?? ''] ?? hs[Math.floor(hs.length / 2)] ?? 0.5;
     // scaled so the spread of heights is the measured one (or a sixth of the full range): the
     // extremes — Olympus, Hellas, Maxwell — then fall where the painter's features put them.
     // A flat painter (a cloud-top map) gets its relief from the fractal instead

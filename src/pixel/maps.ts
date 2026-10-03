@@ -1,5 +1,6 @@
 import type { Look } from '../physics/body';
 import { buildMap, lookKey, type SurfaceMap } from './surface';
+import { marsReady } from './marsdata';
 
 /**
  * Surface maps, shared by everything that draws a body: the map, the 3D view,
@@ -43,6 +44,13 @@ class MapService {
         };
       }
     } catch { this.worker = null; }
+    // maps of Mars painted before its measured maps came in are dropped (its key changes, so it is painted again)
+    marsReady.then(ok => { if (ok) this.forget('Mars|'); });
+  }
+
+  /** drop every map whose key starts with `prefix`, so it is painted afresh */
+  forget(prefix: string) {
+    for (const k of [...this.ready.keys()]) if (k.startsWith(prefix)) { this.ready.delete(k); this.used.delete(k); this.onReady(k); }
   }
 
   /** the width to paint for a disc `px` pixels across (a hemisphere shows half the map) */
