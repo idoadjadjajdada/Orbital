@@ -125,42 +125,58 @@ export function drawJet(ctx: CanvasRenderingContext2D, b: Body, x: number, y: nu
   // the inner disc's own glow
   blit(ctx, halo(Math.max(rPx * 3, 5 + 6 * power), [1, 0.75, 0.5], 0.5 * power), x, y);
   if (proj < 0.2) {
-    const flick = 0.75 + 0.25 * Math.sin(now * 13) * Math.sin(now * 5.3);
-    blit(ctx, halo(Math.max(rPx * 4, 8 + 16 * power), [0.7, 0.8, 1], power * flick), x, y);
-    for (let r = 0; r < 4; r++) {
-      const a = (r / 4) * Math.PI + 0.4;
-      const L = (6 + 18 * power) * flick;
-      for (let t = 2; t < L; t++) for (const sg of [1, -1]) {
-        const px = Math.round(x + sg * Math.cos(a) * t), py = Math.round(y + sg * Math.sin(a) * t);
-        ctx.fillStyle = rgba([0.75, 0.85, 1], power * (1 - t / L));
-        ctx.fillRect(px, py, 1, 1);
-      }
-    }
+    // looking down the jet: a brilliant flickering point, and a soft glow round it
+    const flick = 0.8 + 0.2 * Math.sin(now * 13) * Math.sin(now * 5.3);
+    const R = Math.max(rPx * 5, 10 + 22 * power) * flick;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, R);
+    g.addColorStop(0, rgba([0.95, 0.97, 1], power));
+    g.addColorStop(0.15, rgba([0.75, 0.85, 1], power * 0.55));
+    g.addColorStop(1, rgba([0.5, 0.6, 1], 0));
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, R, 0, 2 * Math.PI); ctx.fill();
   } else {
     const ux = ax[0] / proj, uy = -ax[1] / proj;
-    const n = Math.round(len * proj);
-    // a cone a couple of degrees across, so it widens with distance
+    const n = len * proj;
+    // each jet: a soft sheath and a bright spine, tapering out from the hole, fading toward the tip,
+    // and knots of brighter plasma streaming out along it
     for (const sg of [1, -1]) {
-      for (let k = 2; k < n; k++) {
-        const t = k / n;
-        const knot = 0.55 + 0.45 * Math.sin(k * 0.35 - now * 7);
-        const a = power * (1 - t) ** 1.1 * (0.45 + 0.55 * knot);
-        if (a < 0.04) continue;
-        const half = Math.max(0, Math.round(k * 0.03 * (0.5 + power)));
-        const c: V3 = mix([0.95, 0.97, 1], [0.55, 0.7, 1], t);
-        for (let wv = -half; wv <= half; wv++) {
-          const edge = half > 0 ? 1 - Math.abs(wv) / (half + 1) : 1;
-          const px = Math.round(x + sg * ux * k - uy * wv), py = Math.round(y + sg * uy * k + ux * wv);
-          const v = a * edge;
-          if (v < bayer(px, py) * 0.5) continue;
-          ctx.fillStyle = rgba(c, Math.min(1, v * 1.4));
-          ctx.fillRect(px, py, 1, 1);
-        }
+      const dx = sg * ux, dy = sg * uy, px = -dy, py = dx;
+      const ex = x + dx * n, ey = y + dy * n;
+      // nested bands, each narrower and brighter: together a soft glow brightest down the spine
+      for (const [wTip, wRoot, k, c] of [[0.11, 1.8, 0.1, [0.45, 0.58, 1]], [0.075, 1.4, 0.13, [0.5, 0.62, 1]], [0.045, 1.0, 0.2, [0.65, 0.75, 1]], [0.022, 0.7, 0.35, [0.82, 0.9, 1]], [0.009, 0.45, 0.6, [0.95, 0.97, 1]]] as const) {
+        const wt = Math.max(1.5, n * wTip * (0.6 + 0.6 * power)), w0 = Math.max(0.8, rPx * wRoot);
+        const g = ctx.createLinearGradient(x, y, ex, ey);
+        g.addColorStop(0, rgba(c as unknown as V3, k * power));
+        g.addColorStop(0.35, rgba(c as unknown as V3, k * power * 0.55));
+        g.addColorStop(1, rgba(c as unknown as V3, 0));
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.moveTo(x + px * w0, y + py * w0);
+        ctx.lineTo(ex + px * wt, ey + py * wt);
+        ctx.lineTo(ex - px * wt, ey - py * wt);
+        ctx.lineTo(x - px * w0, y - py * w0);
+        ctx.closePath();
+        ctx.fill();
+      }
+      for (let q = 0; q < 6; q++) {
+        const t = ((q / 6 + now * 0.05 * (sg > 0 ? 1 : 1.07)) % 1);
+        const kx = x + dx * n * t, ky = y + dy * n * t;
+        const kr = Math.max(2, n * (0.012 + 0.05 * t) * (0.6 + 0.6 * power));
+        const a = power * 0.75 * (1 - t) ** 1.4;
+        if (a < 0.03) continue;
+        const g = ctx.createRadialGradient(kx, ky, 0, kx, ky, kr);
+        g.addColorStop(0, rgba([0.95, 0.97, 1], a));
+        g.addColorStop(1, rgba([0.55, 0.7, 1], 0));
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(kx, ky, kr, 0, 2 * Math.PI); ctx.fill();
       }
       // where the jet runs into its surroundings it spreads into a lobe
       if (power > 0.3) {
-        const ex = x + sg * ux * n, ey = y + sg * uy * n;
-        blit(ctx, halo(Math.max(4, n * 0.12), [0.55, 0.6, 1], power * 0.35), ex, ey);
+        const g = ctx.createRadialGradient(ex, ey, 0, ex, ey, Math.max(4, n * 0.14));
+        g.addColorStop(0, rgba([0.55, 0.6, 1], power * 0.3));
+        g.addColorStop(1, rgba([0.4, 0.45, 0.9], 0));
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(ex, ey, Math.max(4, n * 0.14), 0, 2 * Math.PI); ctx.fill();
       }
     }
   }

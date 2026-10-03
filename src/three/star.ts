@@ -37,6 +37,8 @@ uniform float ready;
 uniform float time;
 uniform float seed;
 uniform vec3 tint;
+/** how much of the photo's contrast a star shows: all of it on the Sun and cooler stars, less the hotter it is (its spots and loops washed out in the glare) */
+uniform float contrast;
 varying vec3 vObj;
 varying vec3 vWorldN;
 varying vec3 vWorldP;
@@ -69,6 +71,7 @@ void main() {
   float ph = time * 0.04, p1 = fract(ph), p2 = fract(ph + 0.5);
   float l1 = look(normalize(n + fl * 0.09 * (p1 - 0.5))), l2 = look(normalize(n + fl * 0.09 * (p2 - 0.5)));
   float l = ready > 0.5 ? mix(l1, l2, abs(2.0 * p1 - 1.0)) : 0.55 + 0.25 * vnoise3(n * 6.0);
+  l = 0.6 + (l - 0.6) * contrast;
   // granules boiling under it, and the bright knots flaring
   float gr = vnoise3(n * 90.0 + vec3(time * 0.2)) * 0.6 + vnoise3(n * 230.0 - vec3(time * 0.3)) * 0.4;
   l *= 0.9 + 0.2 * gr;
@@ -129,6 +132,8 @@ function lutFor(sun: boolean, teff: number) {
   return t;
 }
 
+const contrastFor = (sun: boolean, teff: number) => sun ? 1 : Math.max(0.3, Math.min(1, 1 - (teff - 6500) / 20000));
+
 /** a star's surface material; `seed` (0–1) turns it to a face of its own */
 export function starMaterial(sun: boolean, teff: number, seed: number) {
   if (!mapTex) {
@@ -142,7 +147,7 @@ export function starMaterial(sun: boolean, teff: number, seed: number) {
     vertexShader: VERT, fragmentShader: FRAG,
     uniforms: {
       map: { value: mapTex }, lut: { value: lutFor(sun, teff) }, ready: { value: mapTex.image ? 1 : 0 },
-      time: { value: 0 }, seed: { value: sun ? 0 : seed }, tint: { value: new THREE.Vector3(c[0], c[1], c[2]) },
+      time: { value: 0 }, seed: { value: sun ? 0 : seed }, tint: { value: new THREE.Vector3(c[0], c[1], c[2]) }, contrast: { value: contrastFor(sun, teff) },
     },
   });
   mats.push(m);
@@ -157,6 +162,7 @@ export function tickStar(m: THREE.ShaderMaterial, sun: boolean, teff: number, t:
     m.uniforms.lut.value = lut;
     const c = starRGB(teff);
     (m.uniforms.tint.value as THREE.Vector3).set(c[0], c[1], c[2]);
+    m.uniforms.contrast.value = contrastFor(sun, teff);
   }
 }
 

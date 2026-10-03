@@ -22,6 +22,7 @@ import { Shuttle } from './shuttle';
 import { Giant, HULL_BAR } from './giant';
 import { starMaterial, tickStar, dropStar } from './star';
 import { Lights, LIGHT_GLSL } from './lights';
+import { HoleLook } from './hole';
 
 /**
  * The sandbox seen from inside it, at true scale. The scene is laid out in
@@ -44,6 +45,8 @@ interface Obj {
   /** the map drawn (its own copy once cratered), the shared one it came from, and its textures: colour and glow; height, cloud and shine */
   map?: SurfaceMap; base?: SurfaceMap; owned?: boolean; tex?: THREE.DataTexture; aux?: THREE.DataTexture;
   seen: Set<object>; mat?: THREE.ShaderMaterial; clouds?: THREE.Mesh; jet?: THREE.Group; style?: string;
+  /** a black hole's traced look, and when its disc's extent was last measured */
+  hole?: HoleLook; holeT?: number;
 }
 
 const VERT = /* glsl */ `
@@ -279,6 +282,28 @@ void main() {
 /** the great storms that turn on themselves (lon E, lat, half-sizes °, as the painters place them): Jupiter's Great Red Spot, Neptune's Great Dark Spot */
 const VORTEX: Record<string, [number, number, number, number]> = { Jupiter: [60, -22, 8.5, 6], Neptune: [30, -22, 9, 5.8] };
 
+const PART_VERT = /* glsl */ `
+#include <common>
+#include <logdepthbuf_pars_vertex>
+uniform float px;
+varying vec3 vC;
+void main() {
+  vC = color;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  gl_PointSize = 3.5 * px;
+  #include <logdepthbuf_vertex>
+}`;
+const PART_FRAG = /* glsl */ `
+#include <common>
+#include <logdepthbuf_pars_fragment>
+varying vec3 vC;
+void main() {
+  #include <logdepthbuf_fragment>
+  vec2 q = gl_PointCoord * 2.0 - 1.0;
+  float a = exp(-dot(q, q) * 3.0);
+  gl_FragColor = vec4(vC * a * 0.4, 1.0);
+}`;
+
 export type Mode = 'pilot' | 'walk' | 'eva' | 'scope' | 'surface' | 'craft' | 'shuttle';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -400,7 +425,11 @@ export class View3D {
     this.markers = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ size: 3, sizeAttenuation: false, vertexColors: true, depthWrite: false, fog: false }));
     this.markers.frustumCulled = false;
     this.scene.add(this.markers);
-    this.parts = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ size: 2, sizeAttenuation: false, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+    // gas and debris: soft glowing motes rather than hard dots, so many together read as a cloud
+    this.parts = new THREE.Points(new THREE.BufferGeometry(), new THREE.ShaderMaterial({
+      vertexShader: PART_VERT, fragmentShader: PART_FRAG, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, vertexColors: true,
+      uniforms: { px: { value: Math.min(2, window.devicePixelRatio || 1) } },
+    }));
     this.parts.frustumCulled = false;
     this.scene.add(this.parts);
     this.labels = document.createElement('div');
@@ -1251,7 +1280,7 @@ export class View3D {
         mk.push(rel[0], rel[1], rel[2]);
         mc.push(t[0], t[1], t[2]);
       }
-      const glowy = b.cls === 'star' || b.cls === 'wd' || b.cls === 'ns' || b.look.white || b.look.wormhole;
+      const glowy = b.cls === 'star' || b.cls === 'wd' || b.cls === 'ns' || b.look.white || b.look.wormhole || (b.cls === 'bh' && this.app.accRate(b) > 0);
       if (angPx < 0.6 && !glowy && !b.feed) continue;
       seen.add(b);
       let o = this.objs.get(b);
@@ -1829,9 +1858,8 @@ export class View3D {
       group.add(m);
     } else if (b.cls === 'bh') {
       o.kind = 'hole';
-      group.add(new THREE.Mesh(this.sphere, new THREE.MeshBasicMaterial({ color: 0x000000, fog: false })));
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(1, 0.03, 6, 96), new THREE.MeshBasicMaterial({ color: 0xffb070 }));
-      group.add(ring);
+      o.hole = new HoleLook(this.glowTex);
+      group.add(o.hole.group);
     } else if (b.cls === 'star' || b.cls === 'wd' || b.cls === 'ns') {
       o.kind = 'star';
       // a true star's surface boils (star.ts); a white dwarf's or a neutron star's is a plain glare
@@ -1917,7 +1945,7 @@ export class View3D {
     if (o.kind === 'worm') tickMouth(g.getObjectByName('mouth') as THREE.Group, performance.now() / 1000, 1);
     if (o.kind !== 'world') {
       g.scale.setScalar(Rm);
-      if (o.kind === 'hole') this.jets(b, o, Rm);
+      if (o.kind === 'hole') this.hole(b, o);
       return;
     }
     // a world: the best map for how big it looks (they arrive from the painter as they are ready), its turning frame, its light, its craters
@@ -1978,27 +2006,40 @@ export class View3D {
     } else u.hasAtmo.value = 0;
   }
 
-  /** jets from a feeding hole, along its spin, as long as it is big */
-  private jets(b: Body, o: Obj, Rm: number) {
-    const on = b.feed > 0 && b.feedLeft > 0;
-    if (!on) { if (o.jet) o.jet.visible = false; return; }
-    if (!o.jet) {
-      o.jet = new THREE.Group();
-      for (const s of [1, -1]) {
-        const cone = new THREE.Mesh(new THREE.ConeGeometry(0.04, 1, 12, 1, true), new THREE.MeshBasicMaterial({ color: 0x9ab8ff, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-        cone.position.y = s * 0.5;
-        cone.rotation.x = s > 0 ? Math.PI : 0;
-        o.jet.add(cone);
+  /**
+   * a black hole: its traced shadow, ring and disc (hole.ts), drawn at its own scale (the horizon
+   * radius), the disc reaching out to whatever gas is round it, bright as it is fed
+   */
+  private hole(b: Body, o: Obj) {
+    const look = o.hole!, rs = schwarzschild(b.m);
+    o.group.scale.setScalar(rs * AU_M);
+    // (its place this frame, so the eye is found in its frame as it is drawn)
+    o.group.updateMatrixWorld(true);
+    // the disc's extent: out to most of the gas round it (measured now and then), at least the bright inner disc
+    const now = performance.now();
+    if (!o.holeT || now - o.holeT > 4000) {
+      o.holeT = now;
+      const ds: number[] = [];
+      for (const p of this.app.world.bodies) {
+        if (!p.alive || !p.isParticle) continue;
+        const d = Math.hypot(p.x - b.x, p.y - b.y, p.z - b.z) / rs;
+        if (d < 3e6) ds.push(d);
       }
-      o.group.add(o.jet);
+      ds.sort((x, y) => x - y);
+      look.setOuter(ds.length > 30 ? Math.max(16, Math.min(2e6, ds[Math.floor(ds.length * 0.85)])) : 16);
     }
-    o.jet.visible = true;
-    const L = 3000;
-    o.jet.scale.set(L, L, L);
-    const ax = new THREE.Vector3(b.lx, b.ly, b.lz).normalize();
-    o.jet.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), ax);
-    void Rm;
+    // how hard it is fed: by what it is given (a quasar's, a microquasar's), or by what falls in
+    const rate = this.app.accRate(b);
+    const fed = rate > 0 ? Math.max(0, Math.min(1, (Math.log10(rate / (2.2e-8 * b.m)) + 4) / 4)) : 0;
+    const feeding = b.feed > 0 && b.feedLeft > 0;
+    const glow = Math.max(feeding ? 0.85 : 0, fed);
+    const axis = new THREE.Vector3(b.lx, b.ly, b.lz);
+    if (axis.lengthSq() < 1e-20) axis.set(0, 0, 1);
+    // stellar holes' discs are hotter (X-ray bright); a quasar's runs cooler at the same brightness
+    const hue = b.m < 1e3 ? 1 : 0.4;
+    look.update(axis, glow, feeding ? 1 : fed, this.camera, this.renderer.getDrawingBufferSize(new THREE.Vector2()), (now / 1000) % 4200, hue);
   }
+
 
   private drawLabels(P: V3, hide: boolean) {
     const cam = this.camera;
@@ -2159,6 +2200,7 @@ function dispose(o: Obj) {
   });
   o.tex?.dispose();
   o.aux?.dispose();
+  o.hole?.dispose();
 }
 
 

@@ -8,6 +8,7 @@ import { bakeSprite, bodyFrame, starRGB, type V3 } from './sprites';
 import { paintCrater, cloneMap, lookKey, type SurfaceMap } from './surface';
 import { maps, MapService } from './maps';
 import { bayer } from './noise';
+import { drawAccretion } from './accretion';
 import { bakeShaped } from './shaped';
 import { drawFlash, drawJet, drawPulsar, drawWhiteHole, drawWormhole, drawCraft } from './phenomena';
 import { chip } from '../physics/materials';
@@ -98,6 +99,8 @@ export class Renderer {
   private spinVis = new Map<Body, number>();
   private trails = new Map<Body, Trail>();
   private jet = new Map<Body, { rate: number; power: number }>();
+  /** a fed hole's disc: how far out it reaches, horizon radii, and when that was measured */
+  private discExt = new Map<Body, { t: number; r: number }>();
   private haloCache = new Map<string, HTMLCanvasElement>();
   private flashes: { e: SimEvent; t0: number; dur: number }[] = [];
   private aim: { pts: [number, number, number][]; impact: [number, number, number] | null } | null = null;
@@ -337,11 +340,13 @@ export class Renderer {
       if (x < -8 || y < -8 || x > W + 8 || y > H + 8) continue;
       let near: Body | null = null, nd = Infinity;
       for (const h of compact) { const dd = Math.hypot(b.x - h.x, b.y - h.y, b.z - h.z); if (dd < nd) { nd = dd; near = h; } }
-      const inner = near ? Math.max(near.captureRadius, 2e-5) : 0;
+      // the disc's inner edge: the innermost stable orbit, three horizon radii, for a hole
+      const inner = near ? Math.max(near.captureRadius, near.cls === 'bh' ? 3 * schwarzschild(near.m) : 0, 2e-5) : 0;
       let c: V3, w: number, sz: number;
       if (near && b.cls === 'gasp' && nd < 3000 * inner) {
         // a thin disc is hotter inward as r^-3/4: red at the rim, blue-white at the inner edge
-        const h = Math.max(b.heat, Math.min(1, Math.pow((3 * inner) / nd, 0.75)));
+        // (the gas's own heat counts only past the warmth it is set going with: a shock, a collision)
+        const h = Math.max((b.heat - 0.6) * 2.5, Math.min(1, Math.pow((3 * inner) / nd, 0.75)));
         c = blackbody(2500 + 30000 * h * h);
         w = 0.5 + 2.5 * h * h;
         sz = 0.04 * nd * this.scale;
@@ -527,7 +532,18 @@ export class Renderer {
     if (j.power < 0.03) return;
     // as long as the hole is big — thousands of Schwarzschild radii — and longer the harder it is fed
     // (never drawn longer than the screen: zoomed in on a giant hole it would be billions of pixels)
-    const len = Math.min(2 * (this.W + this.H), Math.max(30, schwarzschild(b.m) * this.scale * (800 + 6000 * j.power)));
+    const rs = schwarzschild(b.m);
+    const len = Math.min(2 * (this.W + this.H), Math.max(30, rs * this.scale * (800 + 6000 * j.power)));
+    // the disc it feeds from: out to most of the gas round it, measured now and then
+    let ext = this.discExt.get(b);
+    if (!ext || s.timeReal - ext.t > 3) {
+      const ds: number[] = [];
+      for (const p of s.bodies) if (p.alive && p.isParticle) { const dd = Math.hypot(p.x - b.x, p.y - b.y, p.z - b.z) / rs; if (dd < 3e6) ds.push(dd); }
+      ds.sort((u, v) => u - v);
+      ext = { t: s.timeReal, r: ds.length > 30 ? Math.max(16, Math.min(2e6, ds[Math.floor(ds.length * 0.85)])) : 16 };
+      this.discExt.set(b, ext);
+    }
+    if (b.cls === 'bh') drawAccretion(this.ctx, b, d.sx, d.sy, rs * this.scale, Math.min(ext.r, (this.W + this.H) / Math.max(1e-9, rs * this.scale)), j.power, s.timeReal);
     drawJet(this.ctx, b, d.sx, d.sy, d.r, j.power, len, s.timeReal, this.haloFn);
   }
 

@@ -1,0 +1,117 @@
+import type { Body } from '../physics/body';
+import { vnoise } from './noise';
+
+/**
+ * A fed black hole's accretion disc on the map: the disc as it lies, tilted
+ * by the hole's spin, seen from above. Hottest just outside the innermost
+ * stable orbit (the thin-disc law), white-blue there through gold to a dull
+ * red rim; the gas streaming round at the orbital speed of each radius, so
+ * the inner streaks lap the outer ones; the side whose gas comes toward the
+ * eye beamed brighter; and in the middle the hole's shadow ringed by the
+ * light that wound round it. Painted into a small canvas each frame (a few
+ * tens of thousands of texels), and drawn smoothly scaled.
+ */
+
+const RES = 192;
+const PERIOD = 14;
+
+interface Disc { cv: HTMLCanvasElement; img: ImageData; t: number }
+const discs = new WeakMap<Body, Disc>();
+
+/** colour for a temperature, 0 (dull red) to 2 (blue-white) */
+function heat(t: number, out: number[]) {
+  const ss = (a: number, b: number, x: number) => { const u = Math.max(0, Math.min(1, (x - a) / (b - a))); return u * u * (3 - 2 * u); };
+  const mix = (a: number[], b: number[], k: number) => { out[0] = a[0] + (b[0] - a[0]) * k; out[1] = a[1] + (b[1] - a[1]) * k; out[2] = a[2] + (b[2] - a[2]) * k; };
+  mix([0.6, 0.12, 0.02], [1, 0.55, 0.18], ss(0, 0.5, t));
+  const c1 = [out[0], out[1], out[2]];
+  mix(c1, [1, 0.86, 0.62], ss(0.45, 0.95, t));
+  const c2 = [out[0], out[1], out[2]];
+  mix(c2, [0.92, 0.95, 1], ss(0.9, 1.5, t));
+  const c3 = [out[0], out[1], out[2]];
+  mix(c3, [0.7, 0.8, 1], ss(1.4, 2.2, t));
+}
+
+/**
+ * draw a hole's disc: centred at (x, y) px, the horizon `rsPx` px across, out to `rOut` horizon radii,
+ * as bright as `power` (0–1), at the time `now` (s)
+ */
+export function drawAccretion(ctx: CanvasRenderingContext2D, b: Body, x: number, y: number, rsPx: number, rOut: number, power: number, now: number) {
+  const Ln = Math.hypot(b.lx, b.ly, b.lz);
+  const n = Ln > 0 ? [b.lx / Ln, b.ly / Ln, b.lz / Ln] : [0, 0, 1];
+  const rIn = 3;
+  const outPx = rOut * rsPx;
+  if (outPx < 3) return;
+  // the disc's own axes: e1 in the sky plane, e2 the other
+  let e1 = [-n[1], n[0], 0];
+  const l1 = Math.hypot(e1[0], e1[1]);
+  e1 = l1 > 1e-6 ? [e1[0] / l1, e1[1] / l1, 0] : [1, 0, 0];
+  const e2 = [n[1] * e1[2] - n[2] * e1[1], n[2] * e1[0] - n[0] * e1[2], n[0] * e1[1] - n[1] * e1[0]];
+  // edge-on, the disc is a line: give it a little thickness so it still shows
+  const cosI = Math.max(0.06, Math.abs(n[2]));
+  let d = discs.get(b);
+  if (!d) {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = RES;
+    d = { cv, img: cv.getContext('2d')!.createImageData(RES, RES), t: -1 };
+    discs.set(b, d);
+  }
+  // fine enough for the size it is drawn at, never more than RES across
+  const N = Math.max(32, Math.min(RES, Math.round(outPx * 2)));
+  const data = d.img.data;
+  const k = Math.min(1, Math.log(60) / Math.log(Math.max(rOut / rIn, 1.01)));
+  const ph = now / PERIOD, p1 = ph - Math.floor(ph), p2 = (ph + 0.5) - Math.floor(ph + 0.5), wmix = Math.abs(2 * p1 - 1);
+  const col = [0, 0, 0];
+  // e1 lies in the sky plane, so a point's screen position is u·e1 + v·(e2's sky part); invert for (u, v)
+  const a11 = e1[0], a12 = e2[0], a21 = e1[1], a22 = e2[1];
+  // (that determinant is the axis's tilt toward the eye: edge-on it is kept from zero, so the disc keeps a little thickness)
+  const det0 = a11 * a22 - a12 * a21, det = (det0 < 0 ? -1 : 1) * Math.max(0.06, Math.abs(det0));
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    // pixel → sky offset in horizon radii (y up on the sky, down on screen)
+    const sx = ((i + 0.5) / N * 2 - 1) * rOut, sy = -((j + 0.5) / N * 2 - 1) * rOut;
+    const u = (a22 * sx - a12 * sy) / det, v = (-a21 * sx + a11 * sy) / det;
+    const r = Math.hypot(u, v);
+    const o = (j * RES + i) * 4;
+    const sr = Math.hypot(sx, sy);
+    // the shadow and the ring round it, seen straight down the line of sight
+    const ring = Math.exp(-(((sr - 2.6) / 0.25) ** 2)) * (0.3 + power);
+    if (sr < 2.6) { data[o] = 0; data[o + 1] = 0; data[o + 2] = 0; data[o + 3] = 255; continue; }
+    let R = ring * 255, G = ring * 220, B = ring * 170, A = Math.min(1, ring);
+    if (r > rIn * 0.95 && r < rOut) {
+      const x2 = rIn / (rIn * Math.pow(r / rIn, k));
+      const T = Math.pow(x2, 0.75) * Math.pow(Math.max(0, 1 - Math.sqrt(x2)), 0.25) / 0.488;
+      // the gas carried round, two looks faded together so the shear never builds
+      const lr = Math.log(r), phi = Math.atan2(v, u), w = 0.9 * Math.pow(r, -1.5);
+      const g1 = gas(phi - w * (p1 - 0.5) * PERIOD, lr), g2 = gas(phi - w * (p2 - 0.5) * PERIOD, lr);
+      const g0 = g1 + (g2 - g1) * wmix;
+      // Doppler: the gas's speed along the line of sight (toward the eye is +z)
+      const vz = (-Math.sin(phi) * e1[2] + Math.cos(phi) * e2[2]);
+      const beta = Math.sqrt(0.5 / Math.max(r - 1, 1.05));
+      const gam = 1 / Math.sqrt(1 - beta * beta);
+      const g = Math.sqrt(Math.max(0, 1 - 1 / r)) / (gam * (1 - beta * vz));
+      const I = g * g * g * (T * T + 0.75 * Math.pow(T, 0.4) * (1 - T)) * (0.35 + 1.3 * g0 * g0) * power;
+      heat(Math.pow(T, 0.45) * g + 0.2 * (g0 - 0.5), col);
+      const edge = Math.min(1, Math.max(0, (r - rIn * 0.95) / (rIn * 0.17))) * (1 - Math.min(1, Math.max(0, (r - rOut * 0.6) / (rOut * 0.4))));
+      const a = edge * (0.55 + 0.6 * g0) * cosI ** 0.3;
+      const tone = (c: number) => 1 - Math.exp(-c * I * 3);
+      R += tone(col[0]) * 255 * a; G += tone(col[1]) * 255 * a; B += tone(col[2]) * 255 * a; A = Math.min(1, A + a);
+    }
+    data[o] = Math.min(255, R); data[o + 1] = Math.min(255, G); data[o + 2] = Math.min(255, B); data[o + 3] = Math.round(A * 255);
+  }
+  d.cv.getContext('2d')!.putImageData(d.img, 0, 0, 0, 0, N, N);
+  const prevSmooth = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = true;
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.drawImage(d.cv, 0, 0, N, N, x - outPx, y - outPx, outPx * 2, outPx * 2);
+  ctx.globalCompositeOperation = 'source-over';
+  // the shadow itself, over whatever was drawn there
+  if (rsPx * 2.6 > 1.5) {
+    ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.arc(x, y, rsPx * 2.6 * 0.96, 0, 2 * Math.PI); ctx.fill();
+  }
+  ctx.imageSmoothingEnabled = prevSmooth;
+}
+
+function gas(phi: number, lr: number) {
+  const cx = Math.cos(phi), sy = Math.sin(phi);
+  return vnoise(cx * 3.5 + 11, sy * 3.5, lr * 9) * 0.55 + vnoise(cx * 9 + 3, sy * 9, lr * 26) * 0.3 + vnoise(cx * 22, sy * 22 + 5, lr * 60) * 0.15;
+}
