@@ -23,6 +23,37 @@ export { LIGHT_GLSL } from './lightglsl';
 const SKY0 = 2;
 export const MAX_SKY_LAMPS = NLAMP - SKY0;
 
+/**
+ * the shaft of lit air under a lamp: a cone, brightest where it is seen face on (through the most
+ * air) and fading to nothing at its edges and up toward the lamp, so it reads as a glow, not a sheet
+ */
+const SHAFT_VERT = /* glsl */ `
+#include <common>
+#include <logdepthbuf_pars_vertex>
+varying vec3 vN;
+varying vec3 vP;
+varying float vDown;
+void main() {
+  vDown = -position.y;
+  vN = normalize(mat3(modelMatrix) * normal);
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vP = wp.xyz;
+  gl_Position = projectionMatrix * viewMatrix * wp;
+  #include <logdepthbuf_vertex>
+}`;
+const SHAFT_FRAG = /* glsl */ `
+#include <common>
+#include <logdepthbuf_pars_fragment>
+varying vec3 vN;
+varying vec3 vP;
+varying float vDown;
+void main() {
+  #include <logdepthbuf_fragment>
+  float face = abs(dot(normalize(vN), normalize(-vP)));
+  float a = 0.05 * pow(face, 2.5) * smoothstep(0.0, 0.8, vDown);
+  gl_FragColor = vec4(vec3(1.0, 0.94, 0.82) * a, 1.0);
+}`;
+
 export interface SkyLamp {
   id: number; b: Body;
   /** where it is over, and where it is going, degrees in the body's frame */
@@ -30,6 +61,8 @@ export interface SkyLamp {
   /** height over the datum, m; the radius of the pool of light, m; brightness */
   alt: number; spread: number; power: number;
   on: boolean;
+  /** the world has air for the beam to show in */
+  air: boolean;
   mesh: THREE.Group;
 }
 
@@ -96,8 +129,10 @@ export class Lights {
       star.scale.setScalar(Math.max(L.alt * 0.02, d * 0.035) / L.alt);
       star.material.opacity = L.on ? 1 : 0.25;
       L.mesh.scale.setScalar(L.alt);
+      // the shaft of lit air: only where there is air, and seen from outside it (from inside it is only a haze)
       const shaft = L.mesh.children[1] as THREE.Mesh;
-      shaft.visible = L.on;
+      const toEye = pos.clone().negate().normalize();
+      shaft.visible = L.on && L.air && toEye.dot(n.clone().negate()) < cosA;
       shaft.scale.set(L.spread / L.alt, 1, L.spread / L.alt);
     }
   }
@@ -132,14 +167,14 @@ export class Lights {
   }
 
   /** hang a lamp over a point (degrees, the body's frame) of a world */
-  hang(b: Body, lat: number, lon: number): SkyLamp | string {
+  hang(b: Body, lat: number, lon: number, air = false): SkyLamp | string {
     if (this.lamps.filter(l => l.b.alive).length >= MAX_SKY_LAMPS) return `${MAX_SKY_LAMPS} lamps are all in the sky already: move one, or take one down`;
     const R = b.r * AU_M;
     // high enough to see a good way round, low enough to make a bright pool
     const alt = Math.max(15e3, Math.min(400e3, R * 0.025));
     const mesh = this.lampMesh();
     this.root.add(mesh);
-    const L: SkyLamp = { id: this.nextId++, b, lat, lon, toLat: lat, toLon: lon, alt, spread: Math.min(alt * 1.2, Math.max(3e3, R * 0.03)), power: 1, on: true, mesh };
+    const L: SkyLamp = { id: this.nextId++, b, lat, lon, toLat: lat, toLon: lon, alt, spread: Math.min(alt * 1.2, Math.max(3e3, R * 0.03)), power: 1, on: true, air, mesh };
     this.lamps.push(L);
     return L;
   }
@@ -171,10 +206,9 @@ export class Lights {
     const g = new THREE.Group();
     const star = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.glow, color: 0xfff2d8, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }));
     g.add(star);
-    const cone = new THREE.Mesh(
-      new THREE.ConeGeometry(1, 1, 48, 1, true).translate(0, -0.5, 0),
-      new THREE.MeshBasicMaterial({ color: 0xfff0d0, transparent: true, opacity: 0.035, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false }),
-    );
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(1, 1, 64, 8, true).translate(0, -0.5, 0), new THREE.ShaderMaterial({
+      vertexShader: SHAFT_VERT, fragmentShader: SHAFT_FRAG, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    }));
     g.add(cone);
     g.traverse(o => { o.frustumCulled = false; });
     return g;

@@ -112,6 +112,9 @@ void main() {
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }`;
 
+/** how much paler than the sky overhead it is at the horizon (the long path through the air), clear air to hazy */
+const HORIZON_WHITE = '(0.45 + 0.4 * haze)';
+
 const SKY_FRAG = /* glsl */ `
 uniform vec3 up;
 uniform vec3 sunDir;
@@ -128,7 +131,7 @@ void main() {
   float day = smoothstep(-0.2, 0.1, s);
   float mu = max(dot(v, sunDir), 0.0);
   float hz = pow(1.0 - clamp(e, 0.0, 1.0), 3.0);
-  vec3 c = mix(skyCol, mix(skyCol, vec3(1.0), 0.3 + 0.4 * haze), hz);
+  vec3 c = mix(skyCol, mix(skyCol, vec3(1.0), ${HORIZON_WHITE}), hz);
   // the sun low: its own colour round it, and along the horizon
   float low = 1.0 - smoothstep(0.0, 0.35, abs(s + 0.05));
   c = mix(c, duskCol, low * clamp(pow(mu, 2.5) * 1.2 + hz * 0.35, 0.0, 1.0));
@@ -171,6 +174,8 @@ export class Ground {
   /** the haze where you are: how fast it thickens with distance (per m) and its colour, for everything else on the ground too */
   fogK = 0;
   readonly fogCol = new THREE.Color();
+  /** the sky's colour at the horizon */
+  private readonly horizon = new THREE.Color();
   /** called when you come across a living thing or a site for the first time */
   onFind: (what: string, note: string) => void = () => {};
   /** biome under you, on the Earth */
@@ -401,7 +406,8 @@ export class Ground {
     const dens = a.bar > 1e-4 ? a.bar * Math.exp(-Math.max(0, alt) / Math.max(1, a.H * 1000)) : 0;
     this.fogK = dens > 0 ? Math.min(1 / 1500, dens * (0.3 + 4 * a.haze) / 18e3 + a.haze * 6 * Math.min(1, dens / 0.003) / 45e3) : 0;
     u.fogK.value = this.fogK;
-    const fog = this.skyCol.clone().lerp(new THREE.Color(1, 1, 1), 0.25).multiplyScalar(0.2 + 0.8 * this.daylight);
+    // the haze is the colour of the sky at the horizon, so the far ground melts into it without a seam
+    const fog = this.horizon;
     this.fogCol.copy(fog);
     (u.fogCol.value as THREE.Vector3).set(fog.r, fog.g, fog.b);
     this.rockMat.color.setScalar(1);
@@ -442,6 +448,10 @@ export class Ground {
     su.haze.value = a.haze;
     this.sky.visible = thick > 0.01 || !!giant;
     this.skyCol.copy(sky).multiplyScalar(this.daylight * thick);
+    // the sky's colour at the horizon, as its shader draws it over the dark
+    const dayS = smooth(-0.2, 0.1, s), low = 1 - smooth(0, 0.35, Math.abs(s + 0.05));
+    this.horizon.copy(sky).lerp(new THREE.Color(1, 1, 1), 0.45 + 0.4 * a.haze)
+      .multiplyScalar((0.2 + 0.8 * dayS) * thick * Math.min(1, dayS + 0.6 * low * (1 - dayS)));
     // sunlight through the air: reddened toward the horizon, dimmed under thick cloud
     const path = Math.min(40, 1 / Math.max(0.03, s + 0.05)) * Math.min(1, col);
     const red = light(sunRGB);

@@ -16,7 +16,7 @@ import { Radar, fmtTime } from './radar';
 import { NavMap } from './navmap';
 import { Ground, bodyQuat, latLonOf, arc } from './ground';
 import { tangent } from './terrain';
-import { gravity } from './science';
+import { gravity, atmosphere } from './science';
 import { Fleet, type CraftKind } from './fleet';
 import { Shuttle } from './shuttle';
 import { Giant, HULL_BAR } from './giant';
@@ -901,7 +901,7 @@ export class View3D {
     const b = this.missionTarget();
     if (!b) { this.app.onToast('Pick a world to hang a lamp over'); return; }
     const [la, lo] = this.pointUnder(b);
-    const L = this.lights.hang(b, la, lo);
+    const L = this.lights.hang(b, la, lo, atmosphere(b, this.stars()).bar > 0.01);
     if (typeof L === 'string') { this.app.onToast(L); return; }
     this.app.onToast(`Lamp ${L.id} hung ${fmtLength(L.alt / AU_M)} over ${b.name}, lighting ${fmtLength(L.spread / AU_M)} round the point under you`);
   }
