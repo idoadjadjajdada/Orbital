@@ -5,14 +5,15 @@ import { lagrangePoints, habitableZone, barycentre } from '../physics/analysis';
 import { schwarzschild } from '../physics/units';
 import { blackbody } from '../physics/stellar';
 import { bakeSprite, bodyFrame, starRGB, type V3 } from './sprites';
-import { buildMap, paintCrater, type SurfaceMap } from './surface';
+import { paintCrater, cloneMap, lookKey, type SurfaceMap } from './surface';
+import { maps, MapService } from './maps';
 import { bayer } from './noise';
 import { bakeShaped } from './shaped';
 import { drawFlash, drawJet, drawPulsar, drawWhiteHole, drawWormhole, drawCraft } from './phenomena';
 import { chip } from '../physics/materials';
 
 /** CSS pixels per art pixel: the size of one chunky pixel */
-export const PIX = 2;
+export const PIX = 1;
 
 export interface Flags { trails: boolean; orbits: boolean; zones: boolean; labels: boolean }
 
@@ -76,7 +77,24 @@ export class Renderer {
   private acc = new Float32Array(0);
   private partImg!: ImageData;
   private sprites = new Map<Body, Cached>();
-  private maps = new Map<Body, { map: SurfaceMap; style: string; seen: Set<object> }>();
+  /** each world's map: the shared one (`base`), or its own copy once craters are painted in (`owned`) */
+  private maps = new Map<Body, { map: SurfaceMap; base: SurfaceMap; style: string; seen: Set<object>; owned: boolean }>();
+
+  /** the map a body should be drawn with at `px` pixels across, upgraded as better ones are painted */
+  private mapEntry(b: Body, px: number) {
+    let e = this.maps.get(b);
+    const key = lookKey(b.look);
+    const w = MapService.widthFor(px, 1024);
+    if (!e || e.style !== key || e.base.w < w) {
+      const m = maps.want(b.look, w);
+      if (!e || e.style !== key || m !== e.base) {
+        e = { map: m, base: m, style: key, seen: new Set(), owned: false };
+        this.maps.set(b, e);
+        this.sprites.delete(b);
+      }
+    }
+    return e;
+  }
   private spinVis = new Map<Body, number>();
   private trails = new Map<Body, Trail>();
   private jet = new Map<Body, { rate: number; power: number }>();
@@ -97,7 +115,8 @@ export class Renderer {
     const w = this.canvas.clientWidth || window.innerWidth, h = this.canvas.clientHeight || window.innerHeight;
     this.W = Math.max(1, Math.ceil(w / PIX)); this.H = Math.max(1, Math.ceil(h / PIX));
     this.canvas.width = this.W; this.canvas.height = this.H;
-    this.ctx.imageSmoothingEnabled = false;
+    this.ctx.imageSmoothingEnabled = true;
+    this.ctx.imageSmoothingQuality = 'high';
     this.part = document.createElement('canvas');
     this.part.width = this.W; this.part.height = this.H;
     this.partCtx = this.part.getContext('2d')!;
@@ -180,13 +199,9 @@ export class Renderer {
    * light comes from, so the map can show day and night.
    */
   surfaceOf(b: Body, sources: Body[]): { map: SurfaceMap; frame: [V3, V3, V3]; L: V3 | null } | null {
-    let e = this.maps.get(b);
-    // not drawn yet (the 3D view is showing): make its map now
-    if (!e) {
-      if (b.cls === 'star' || b.cls === 'wd' || b.cls === 'ns' || b.cls === 'bh' || b.look.craft) return null;
-      e = { map: buildMap(b.look), style: `${b.look.style}|${b.look.c1}|${b.look.c2}`, seen: new Set() };
-      this.maps.set(b, e);
-    }
+    if (b.cls === 'star' || b.cls === 'wd' || b.cls === 'ns' || b.cls === 'bh' || b.look.craft || b.look.wormhole || b.look.white) return null;
+    // the inspector shows it 256 texels wide, so at least that
+    const e = this.mapEntry(b, 120);
     const stars = sources.filter(x => (x.cls === 'star' || x.cls === 'wd') && (x.star?.L ?? 0) > 0);
     const { L } = this.lightFor(b, stars);
     return { map: e.map, frame: bodyFrame(bodyAxis(b), this.spinVis.get(b) ?? 0), L };
@@ -386,10 +401,8 @@ export class Renderer {
       for (let y = 0; y < cv.height; y++) for (let x = 0; x < cv.width; x++) {
         const q = Math.hypot(x - R, y - R) / R;
         if (q > 1) continue;
-        // dithered, in steps: a pixel-art glow
-        const f = Math.pow(1 - q, 2.2) * strength;
-        const lv = Math.floor(f * 4 + bayer(x, y)) / 4;
-        if (lv <= 0) continue;
+        const lv = Math.pow(1 - q, 2.2) * strength;
+        if (lv <= 0.003) continue;
         const o = (y * cv.width + x) * 4;
         img.data[o] = 255 * c[0] * lv; img.data[o + 1] = 255 * c[1] * lv; img.data[o + 2] = 255 * c[2] * lv; img.data[o + 3] = 255;
       }
@@ -424,13 +437,8 @@ export class Renderer {
     }
 
     // the surface map, and craters painted into it as they happen
-    let entry = this.maps.get(b);
     const isWorld = b.cls !== 'star' && b.cls !== 'wd' && b.cls !== 'ns' && b.cls !== 'bh';
-    const lookKey = `${b.look.style}|${b.look.c1}|${b.look.c2}`;
-    if (isWorld && (!entry || entry.style !== lookKey)) {
-      entry = { map: buildMap(b.look), style: lookKey, seen: new Set() };
-      this.maps.set(b, entry);
-    }
+    const entry = isWorld ? this.mapEntry(b, d.r * 2) : undefined;
     const [fx, fy, fz] = bodyFrame(axis, sv);
     const scars: { d: V3; a: number; k: number }[] = [];
     if (entry && b.craters.length) {
@@ -448,6 +456,7 @@ export class Renderer {
           if (k > 0.05) scars.push({ d: local, a: Math.max(c.a, 0.06), k });
         } else if (!entry.seen.has(c)) {
           entry.seen.add(c);
+          if (!entry.owned) { entry.map = cloneMap(entry.base); entry.owned = true; }
           paintCrater(entry.map, local[0], local[1], local[2], c.a);
           this.sprites.delete(b);
         }
@@ -456,7 +465,7 @@ export class Renderer {
 
     // ---- the sprite, rebaked when what it shows has changed ----
     const dpx = Math.max(2, Math.round(d.r * 2));
-    const bakeD = Math.min(dpx, 360);
+    const bakeD = Math.min(dpx, 480);
     const { L, col } = this.lightFor(b, stars);
     if (b.shape && !b.shape.packed) {
       const sh = b.shape;
@@ -479,7 +488,7 @@ export class Renderer {
     const lq = L ? (() => { const n = Math.hypot(L[0], L[1], L[2]); return `${Math.round(Math.atan2(L[1], L[0]) * 10)},${Math.round((L[2] / n) * 8)}`; })() : 'none';
     const spinQ = Math.round((sv / (2 * Math.PI)) * Math.min(96, bakeD * 2));
     const timeQ = b.cls === 'star' ? Math.floor(s.timeReal * 3) : 0;
-    const key = `${bakeD}|${lq}|${spinQ}|${Math.round(b.heat * 10)}|${b.craters.length}|${scars.map(x => Math.round(x.k * 5)).join('')}|${timeQ}|${Math.round(b.star?.teff ?? 0) >> 7}|${b.look.style}`;
+    const key = `${bakeD}|${entry?.map.w ?? 0}|${lq}|${spinQ}|${Math.round(b.heat * 10)}|${b.craters.length}|${scars.map(x => Math.round(x.k * 5)).join('')}|${timeQ}|${Math.round(b.star?.teff ?? 0) >> 7}|${b.look.style}`;
     let cached = this.sprites.get(b);
     if (!cached || (cached.key !== key && (this.bakeBudget > 0 || cached.d !== bakeD && Math.abs(cached.d - bakeD) > bakeD * 0.3))) {
       const sp = bakeSprite({

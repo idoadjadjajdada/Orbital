@@ -1,6 +1,7 @@
 // Deterministic 3D value noise, so a world with the same seed always looks the same.
 
-function hash(x: number, y: number, z: number): number {
+/** a deterministic pseudo-random number in 0..1 for an integer lattice point */
+export function hash(x: number, y: number, z: number): number {
   let h = (x * 374761393 + y * 668265263 + z * 2147483647) | 0;
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   h ^= h >>> 16;

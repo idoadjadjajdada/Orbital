@@ -32,7 +32,7 @@ export function iconOf(b: { look: Look; heat: number; cls: Cls; star?: StarState
   const sp = bakeSprite({
     look: b.look, cls: b.cls, heat: b.heat, teff: b.star?.teff ?? 5772, giant: b.star?.phase === 'giant',
     d, axis: [0, Math.sin(b.tilt * 0.5 + 0.5), Math.cos(b.tilt * 0.5 + 0.5)], spin: 0.6, light: [-1, 0.5, 0.6], lightCol: [1.15, 1.12, 1.08],
-    scars: [], time: 0, map: isWorld ? buildMap(b.look) : null,
+    scars: [], time: 0, map: isWorld ? buildMap(b.look, 64) : null,
   });
   const cv = document.createElement('canvas');
   cv.width = cv.height = sp.size;

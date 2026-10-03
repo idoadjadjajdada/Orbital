@@ -137,6 +137,7 @@ function dwarfPlanets(w: World, s: Body, inner: boolean, outer: boolean) {
     b.m = kg / MSUN_KG; b.r = rkm * KM;
     if (name === 'Ceres') b.look = { ...b.look, style: 'barren', c1: 0x5a5856, c2: 0x8a8682 };
     if (a > 5) b.look = { ...b.look, style: 'ice', c1: 0x9a8a80, c2: 0xf0ebe6 };
+    b.look = { ...b.look, real: name };
     refreshRoche(b);
     place(b, s, elementsDeg(a, e, i, node, peri, M), s.m);
     w.add(b);

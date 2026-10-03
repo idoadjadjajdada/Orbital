@@ -1,12 +1,10 @@
 import { GRID, MAT, OUTLINE_N, type Shape } from '../physics/materials';
-import { bayer } from './noise';
 import type { V3 } from './sprites';
 
 const hex = (c: number): V3 => [((c >> 16) & 255) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255];
 const PAL = new Map<number, { c: V3; d: V3; glow: number }>();
 for (const m of [...MAT.values()]) PAL.set(m.id, { c: hex(m.color), d: hex(m.dark), glow: m.key === 'lava' ? 0.8 : 0 });
 
-const Q = 4;
 
 /** the outline's radius at angle th, eased from the drawing toward a circle by `round` */
 function edgeAt(s: Shape, th: number): [number, number] {
@@ -55,7 +53,7 @@ export function bakeShaped(s: Shape, d: number, spin: number, light: V3 | null, 
       // back to the screen frame
       const n: V3 = [cs * nu - sn * nv, sn * nu + cs * nv, z];
       let lit = L ? Math.max(0, n[0] * L[0] + n[1] * L[1] + n[2] * L[2]) : 0.55;
-      lit = Math.floor(Math.min(1, lit) * Q + bayer(px, py)) / Q;
+      lit = Math.min(1, lit);
       const mark = s.marks[k];
       const shade = (1 - 0.22 * mark) * (rn > 0.9 ? 0.85 : 1);
       let r = (pal.d[0] + (pal.c[0] * lightCol[0] - pal.d[0]) * lit) * shade;

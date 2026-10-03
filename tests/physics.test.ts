@@ -566,3 +566,14 @@ describe('exotic objects', () => {
     expect(makeBody('sail', 1).beta).toBeGreaterThan(0);
   });
 });
+
+describe('circumbinary moons', () => {
+  it("Pluto's small moons go round Pluto and Charon together, and survive", async () => {
+    const { addPlanetSystem } = await import('../src/physics/solarsystem');
+    const w = new World();
+    addPlanetSystem(w, 'Pluto', 1);
+    for (let k = 0; k < 200; k++) { w.step(1 / 365.25 / 2, 1e9); w.events.length = 0; }
+    const alive = w.bodies.filter(b => b.alive).map(b => b.name);
+    for (const n of ['Charon', 'Styx', 'Nix', 'Kerberos', 'Hydra']) expect(alive).toContain(n);
+  });
+});

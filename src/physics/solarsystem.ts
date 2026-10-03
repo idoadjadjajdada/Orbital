@@ -77,6 +77,7 @@ export function makePlanet(name: string): Body {
   b.spin = (2 * Math.PI) / ((Math.abs(p.day) * HOUR)) * Math.sign(p.day);
   const L = LOOKS[name];
   if (L) b.look = { ...b.look, ...L } as Look;
+  b.look = { ...b.look, real: name };
   if (name === 'Saturn' && b.look.rings) b.look.rings = { ...b.look.rings };
   setAxis(b, eqToEcl(poleVec(...p.pole)));
   refreshRoche(b);
@@ -120,7 +121,7 @@ export function makeMoon(row: MoonRow, host: Body): Body {
   const src = m > SOURCE_MASS;
   const b = new Body({
     name, kind: 'moon', cls: look[0] === 'ice' ? 'ice' : 'rock', m, r, source: src,
-    look: { style: look[0] as Look['style'], seed: hashName(name), c1: look[1], c2: look[2], atmo: look[3] },
+    look: { style: look[0] as Look['style'], seed: hashName(name), c1: look[1], c2: look[2], atmo: look[3], real: name },
   });
   b.sizeGuess = !known;
   const mu = G * (host.m + m);
@@ -152,7 +153,25 @@ export function moonsOf(planet: string) { return MOONS.filter(m => m[0] === plan
  */
 export function addPlanetSystem(w: World, name: string, mSun: number | null): Body[] {
   const pl = makePlanet(name);
-  const moons = moonsOf(name).map(row => makeMoon(row, pl));
+  // a moon beyond a massive inner moon goes round the pair, not the planet alone:
+  // Pluto's small moons orbit the Pluto–Charon barycentre, and their tabulated
+  // elements are about it
+  const moons: Body[] = [];
+  const rows = moonsOf(name).map((row, k) => ({ row, k })).sort((p, q) => p.row[4] - q.row[4]);
+  const placed: { b: Body; a: number }[] = [];
+  for (const { row, k } of rows) {
+    const inner = placed.filter(p => p.a < row[4] && p.b.m > 0.01 * pl.m).map(p => p.b);
+    let host: Body = pl;
+    if (inner.length) {
+      const all = [pl, ...inner];
+      const M = all.reduce((s, b) => s + b.m, 0);
+      const c = (f: (b: Body) => number) => all.reduce((s, b) => s + b.m * f(b), 0) / M;
+      host = { m: M, x: c(b => b.x), y: c(b => b.y), z: c(b => b.z), vx: c(b => b.vx), vy: c(b => b.vy), vz: c(b => b.vz) } as Body;
+    }
+    const b = makeMoon(row, host);
+    placed.push({ b, a: row[4] });
+    moons[k] = b;
+  }
   const out = [pl, ...moons];
   // shift so the barycentre of planet + moons sits on the planet's heliocentric orbit
   let M = 0, x = 0, y = 0, z = 0, vx = 0, vy = 0, vz = 0;

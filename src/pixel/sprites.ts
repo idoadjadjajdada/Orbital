@@ -1,7 +1,7 @@
 import type { Look, Cls } from '../physics/body';
 import { blackbody } from '../physics/stellar';
-import { vnoise, fbm, bayer } from './noise';
-import { buildMap, ringTau, type SurfaceMap } from './surface';
+import { vnoise, fbm } from './noise';
+import { buildMap, ringTau, sampleMap, type SurfaceMap } from './surface';
 
 export type V3 = [number, number, number];
 
@@ -52,7 +52,8 @@ export function bodyFrame(axis: V3, spin: number): [V3, V3, V3] {
   return [x, cross(a, x), a];
 }
 
-const Q = 4; // lighting levels
+/** relief: how strongly the height map tilts the surface for shading */
+const BUMP = 0.035;
 
 /**
  * Bake one body's sprite. Returns RGBA pixels of a square `size` px across,
@@ -75,6 +76,7 @@ export function bakeSprite(p: SpriteIn): { size: number; data: Uint8ClampedArray
   const ringN: V3 = norm(p.axis);
   const ringCol = rings ? hex(rings.color) : [0, 0, 0];
   const H: V3 | null = L ? norm([L[0], L[1], L[2] + 1]) : null;
+  const smp = { r: 0, g: 0, b: 0, e: 0, s: 0, dx: 0, dy: 0 };
 
   for (let py = 0; py < size; py++) {
     for (let px = 0; px < size; px++) {
@@ -82,8 +84,10 @@ export function bakeSprite(p: SpriteIn): { size: number; data: Uint8ClampedArray
       const u = (px + 0.5 - half) / R, v = -(py + 0.5 - half) / R;
       const rr = u * u + v * v;
       let r = 0, g = 0, b = 0, a = 0;
-      let onDisc = rr <= 1;
-      const zp = onDisc ? Math.sqrt(1 - rr) : 0;
+      // the limb is anti-aliased: a pixel half over the edge is half covered
+      const cover = Math.max(0, Math.min(1, (1 - Math.sqrt(rr)) * R + 0.5));
+      const onDisc = cover > 0;
+      const zp = onDisc ? Math.sqrt(Math.max(0, 1 - Math.min(1, rr))) : 0;
 
       // ---- rings: where the line of sight meets the ring plane ----
       let ringA = 0, rR = 0, rG = 0, rB = 0, ringFront = false;
@@ -105,7 +109,7 @@ export function bakeSprite(p: SpriteIn): { size: number; data: Uint8ClampedArray
             const t = dot(P, L);
             if (t < 0 && dot(P, P) - t * t < 1) lit *= 0.08;
           }
-          lit = Math.floor(Math.min(1, lit) * Q + bayer(px, py)) / Q;
+          lit = Math.min(1, lit);
           rR = ringCol[0] * (0.2 + lit * lc[0]); rG = ringCol[1] * (0.2 + lit * lc[1]); rB = ringCol[2] * (0.2 + lit * lc[2]);
         }
       }
@@ -115,8 +119,8 @@ export function bakeSprite(p: SpriteIn): { size: number; data: Uint8ClampedArray
         const nb: V3 = [dot(n, bx), dot(n, by), dot(n, bz)];
         if (p.cls === 'bh') {
           // the shadow, with the photon ring a pixel wide at its edge
-          const edge = rr > (1 - 2 / d) ** 2;
-          r = edge ? 1 : 0; g = edge ? 0.7 : 0; b = edge ? 0.4 : 0; a = 1;
+          const edge = Math.max(0, 1 - Math.abs(Math.sqrt(rr) - (1 - 1.5 / d)) * d * 0.7);
+          r = edge; g = edge * 0.7; b = edge * 0.4; a = cover;
         } else if (isStar) {
           const mu = zp;
           let I = 1 - 0.55 * (1 - mu) - 0.25 * (1 - mu) ** 2;
@@ -124,26 +128,29 @@ export function bakeSprite(p: SpriteIn): { size: number; data: Uint8ClampedArray
           I *= 0.82 + 0.36 * fbm(nb[0] * gran, nb[1] * gran, nb[2] * gran + p.time * 0.05, 3);
           // sunspots only on cool stars with convective surfaces, and small
           if (!p.giant && p.cls === 'star' && p.teff < 6500 && fbm(nb[0] * 4 + 7, nb[1] * 4, nb[2] * 4, 3) > 0.79) I *= 0.6;
-          I = Math.floor(I * 5 + bayer(px, py)) / 5;
           // the limb is a little redder: the light comes from higher, cooler gas
           const warm = mu < 0.3 ? [1, 0.82, 0.68] : [1, 1, 1];
-          r = sc[0] * I * warm[0] * 1.2 + 0.08 * I; g = sc[1] * I * warm[1] * 1.2 + 0.08 * I; b = sc[2] * I * warm[2] * 1.2 + 0.04 * I; a = 1;
+          r = sc[0] * I * warm[0] * 1.2 + 0.08 * I; g = sc[1] * I * warm[1] * 1.2 + 0.08 * I; b = sc[2] * I * warm[2] * 1.2 + 0.04 * I; a = cover;
         } else {
           const m = p.map!;
           const lat = Math.asin(Math.max(-1, Math.min(1, nb[2])));
           let lon = Math.atan2(nb[1], nb[0]); if (lon < 0) lon += 2 * Math.PI;
-          const ti = Math.min(m.w - 1, Math.floor((lon / (2 * Math.PI)) * m.w));
-          const tj = Math.min(m.h - 1, Math.floor(((lat / Math.PI) + 0.5) * m.h));
-          const k = tj * m.w + ti;
-          let ar = m.rgb[k * 3], ag = m.rgb[k * 3 + 1], ab = m.rgb[k * 3 + 2];
+          sampleMap(m, lat, lon, smp);
+          let ar = smp.r, ag = smp.g, ab = smp.b;
           for (const s of p.scars) {
             const dd = Math.acos(Math.max(-1, Math.min(1, dot(nb, s.d)))) / s.a;
             if (dd < 1.4) { const f = 1 - 0.7 * s.k * (1 - dd / 1.4); ar *= f; ag *= f; ab *= f; }
           }
-          let diff = 0.05;
+          // the relief tilts the surface: a slope up to the east faces west, and so on
+          const cl = Math.max(0.05, Math.cos(lat)), sl = Math.sin(lat), co = Math.cos(lon), si = Math.sin(lon);
+          const gx = (smp.dx / cl) * BUMP, gy = smp.dy * BUMP;
+          const pb: V3 = [nb[0] - gx * -si - gy * -sl * co, nb[1] - gx * co - gy * -sl * si, nb[2] - gy * cl];
+          const nn = norm([pb[0] * bx[0] + pb[1] * by[0] + pb[2] * bz[0], pb[0] * bx[1] + pb[1] * by[1] + pb[2] * bz[1], pb[0] * bx[2] + pb[1] * by[2] + pb[2] * bz[2]]);
+          let diff = 0.035;
           let glint = 0;
           if (L) {
-            let dl = dot(n, L);
+            let dl = dot(nn, L);
+            const dl0 = dot(n, L);
             // the rings' shadow on the planet
             if (rings && Math.abs(dot(ringN, L)) > 1e-3) {
               const t = -dot(ringN, n) / dot(ringN, L);
@@ -153,9 +160,10 @@ export function bakeSprite(p: SpriteIn): { size: number; data: Uint8ClampedArray
                 if (rq >= rings.inner && rq <= rings.outer) dl *= Math.exp(-ringTau(rings.kind, rq) / Math.abs(dot(ringN, L)));
               }
             }
-            const lvl = Math.floor(Math.max(0, Math.min(1, dl * 1.1)) * Q + bayer(px, py) - 0.15) / Q;
-            diff = 0.05 + Math.max(0, lvl);
-            if (m.spec[k] && H && dot(n, H) > 0.985) glint = 0.6;
+            // a soft terminator: no relief lit past it
+            const term = Math.max(0, Math.min(1, (dl0 + 0.04) / 0.1));
+            diff = 0.035 + Math.max(0, dl) * term;
+            if (smp.s && H) glint = Math.pow(Math.max(0, dot(n, H)), 60) * 0.7 * term;
           }
           r = ar * diff * lc[0] + glint; g = ag * diff * lc[1] + glint; b = ab * diff * lc[2] + glint;
           // a lit atmosphere glows at the limb
@@ -164,12 +172,9 @@ export function bakeSprite(p: SpriteIn): { size: number; data: Uint8ClampedArray
             r += atmo[0] * rim * 0.9; g += atmo[1] * rim * 0.9; b += atmo[2] * rim * 0.9;
           }
           // heat: lava cracks, a magma ocean after an impact, a brown dwarf's own glow
-          const e = m.emit[k] * (p.look.style === 'lava' ? 1.4 : 0.8) + p.heat * p.heat * (0.6 + 0.8 * vnoise(nb[0] * 9, nb[1] * 9, nb[2] * 9));
-          if (e > 0.05) {
-            const lvl = Math.floor(Math.min(1, e) * 3 + bayer(px, py)) / 3;
-            r += 1.0 * lvl; g += 0.38 * lvl; b += 0.08 * lvl;
-          }
-          a = 1;
+          const e = smp.e * (p.look.style === 'lava' ? 1.4 : 0.8) + Math.max(0, (p.heat - 0.55) / 0.45) ** 2 * (0.6 + 0.8 * vnoise(nb[0] * 9, nb[1] * 9, nb[2] * 9));
+          if (e > 0.02) { const lv = Math.min(1, e); r += 1.0 * lv; g += 0.38 * lv; b += 0.08 * lv; }
+          a = cover;
         }
       }
       if (ringA > 0.02 && (ringFront || !onDisc)) {
@@ -187,4 +192,4 @@ export function bakeSprite(p: SpriteIn): { size: number; data: Uint8ClampedArray
 }
 
 /** A body's map, built on first use. */
-export function mapFor(look: Look): SurfaceMap { return buildMap(look); }
+export function mapFor(look: Look): SurfaceMap { return buildMap(look, 128); }

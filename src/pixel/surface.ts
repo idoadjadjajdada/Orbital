@@ -1,115 +1,212 @@
 import type { Look } from '../physics/body';
 import { fbm, ridged, vnoise } from './noise';
+import { REAL, paintTerran, cratered, ss, type Tx, type Detail, type V3 } from './worlds';
 
 /**
  * A body's surface as an equirectangular map in its own spinning frame:
- * colour, emission and shininess per texel. Baked once from the body's look;
- * the sprite renderer then only has to look up and light it, which is cheap
- * enough to redo every frame as the body turns and its star moves.
+ * colour, height, glow, shine and cloud per texel, rows from south to north.
+ * Real worlds are painted from what is known of them (see worlds.ts); made-up
+ * ones from noise of the right character. Maps come in any size: small for a
+ * dot on the map, large for a world filling the 3D view, built a few rows at
+ * a time so a big one does not stall a frame.
  */
-export interface SurfaceMap { w: number; h: number; rgb: Float32Array; emit: Float32Array; spec: Uint8Array; gas: boolean }
+export interface SurfaceMap {
+  w: number; h: number;
+  rgb: Float32Array; emit: Float32Array; spec: Uint8Array;
+  /** relief, 0–1 with 0.5 the datum: for shading the hills and craters */
+  height: Float32Array;
+  /** cloud cover 0–1, drawn over the ground, or null for a world without weather */
+  cloud: Float32Array | null;
+  gas: boolean;
+}
 
-export const MAP_W = 128, MAP_H = 64;
+const hex = (c: number): V3 => [((c >> 16) & 255) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255];
+const isGas = (st: string) => st === 'gas' || st === 'icegiant' || st === 'hotjupiter' || st === 'browndwarf';
 
-const hex = (c: number): [number, number, number] => [((c >> 16) & 255) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255];
-const mix = (a: number[], b: number[], t: number) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-const ss = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
-/** pixel art reads as a limited palette: a few tones per channel */
-const post = (v: number) => Math.round(v * 14) / 14;
+/** how finely to paint at a given width */
+export function detailFor(w: number): Detail {
+  const l = Math.log2(w / 32);
+  return { oct: Math.max(3, Math.min(8, Math.round(2 + l))), craters: w <= 64 ? 1 : w <= 256 ? 2 : w <= 512 ? 3 : 4, res: w };
+}
 
-export function buildMap(look: Look): SurfaceMap {
-  const W = MAP_W, H = MAP_H;
-  const rgb = new Float32Array(W * H * 3), emit = new Float32Array(W * H), spec = new Uint8Array(W * H);
+/** the key under which two looks paint the same map */
+export const lookKey = (l: Look) => `${l.real ?? ''}|${l.style}|${l.c1}|${l.c2}|${l.seed % 1000}`;
+
+export interface MapJob { map: SurfaceMap; done: boolean; step(budgetMs: number): boolean }
+
+/** start painting a map `w` wide (and half as tall); `step` paints rows until the budget runs out */
+export function mapJob(look: Look, w: number): MapJob {
+  const W = Math.max(16, Math.round(w)), H = W >> 1;
+  const st = look.style;
+  const gas = isGas(st);
+  const paint = look.real ? REAL[look.real] : undefined;
+  const clouds = look.real === 'Earth' || (!paint && (st === 'terran' || st === 'ocean'));
+  const map: SurfaceMap = {
+    w: W, h: H, rgb: new Float32Array(W * H * 3), emit: new Float32Array(W * H), spec: new Uint8Array(W * H),
+    height: new Float32Array(W * H), cloud: clouds ? new Float32Array(W * H) : null, gas,
+  };
+  const d = detailFor(W);
   const c1 = hex(look.c1), c2 = hex(look.c2);
   const sd = (look.seed % 1000) * 0.137;
-  const st = look.style;
-  const gas = st === 'gas' || st === 'icegiant' || st === 'hotjupiter' || st === 'browndwarf';
-  for (let j = 0; j < H; j++) {
-    const lat = ((j + 0.5) / H - 0.5) * Math.PI;
-    for (let i = 0; i < W; i++) {
-      const lon = ((i + 0.5) / W) * 2 * Math.PI;
-      const nx = Math.cos(lat) * Math.cos(lon), ny = Math.cos(lat) * Math.sin(lon), nz = Math.sin(lat);
-      const sx = nx * 2 + sd, sy = ny * 2 + sd, sz = nz * 2 + sd;
-      const alat = Math.abs(nz);
-      let col: number[];
-      let e = 0, sp = 0;
-      if (st === 'terran' || st === 'ocean') {
-        const h = fbm(sx * 1.3, sy * 1.3, sz * 1.3);
-        const sea = st === 'ocean' ? 0.66 : 0.53;
-        if (h < sea) { col = mix(c1.map(v => v * 0.55), c1, ss(sea - 0.25, sea, h)); sp = 1; }
-        else {
-          const m = fbm(sx * 3.1 + 5, sy * 3.1, sz * 3.1);
-          col = mix(c2, [0.55, 0.45, 0.3], ss(0.45, 0.65, m));
-          col = mix(col, [0.42, 0.4, 0.38], ss(sea + 0.12, sea + 0.22, h));
+  const o: Tx = { r: 0, g: 0, b: 0, h: 0.5, e: 0, s: 0, c: 0 };
+  const bandSet = gas ? gasBands(look, c1, c2) : null;
+  let row = 0;
+  const job: MapJob = {
+    map, done: false,
+    step(budget: number) {
+      const t0 = performance.now();
+      while (row < H) {
+        const j = row++;
+        const lat = ((j + 0.5) / H - 0.5) * Math.PI;
+        const cl = Math.cos(lat), sl = Math.sin(lat);
+        for (let i = 0; i < W; i++) {
+          const lon = ((i + 0.5) / W) * 2 * Math.PI;
+          const n: V3 = [cl * Math.cos(lon), cl * Math.sin(lon), sl];
+          o.r = o.g = o.b = 0.5; o.h = 0.5; o.e = 0; o.s = 0; o.c = 0;
+          if (paint) paint(o, lat, lon, n, d);
+          else procedural(o, look, n, lat, d, c1, c2, sd, bandSet);
+          const k = j * W + i;
+          map.rgb[k * 3] = Math.max(0, Math.min(1, o.r)); map.rgb[k * 3 + 1] = Math.max(0, Math.min(1, o.g)); map.rgb[k * 3 + 2] = Math.max(0, Math.min(1, o.b));
+          map.height[k] = o.h; map.emit[k] = o.e; map.spec[k] = o.s;
+          if (map.cloud) map.cloud[k] = o.c;
         }
-        const ice = ss(0.8, 0.86, alat + 0.06 * fbm(sx * 4, sy * 4, sz * 4, 3));
-        col = mix(col, [0.92, 0.95, 1], ice);
-        const cl = ss(0.55, 0.72, fbm(nx * 2.5 + sd * 3, ny * 2.5, nz * 5, 4));
-        col = mix(col, [1, 1, 1], cl * 0.85);
-        if (ice > 0.5 || cl > 0.5) sp = 0;
-      } else if (st === 'rocky' || st === 'barren' || st === 'desert') {
-        const h = fbm(sx * 1.6, sy * 1.6, sz * 1.6);
-        col = mix(c1, c2, ss(0.3, 0.7, h));
-        const c = vnoise(sx * 9, sy * 9, sz * 9);
-        const cr = ss(0.8, 0.86, c) - 0.6 * ss(0.86, 0.95, c);
-        col = col.map(v => v * (1 + (st === 'desert' ? 0.08 : 0.25) * cr));
-        if (st === 'desert') {
-          const dune = 0.5 + 0.5 * Math.sin(nz * 40 + fbm(sx * 3, sy * 3, sz * 3, 3) * 8);
-          col = col.map(v => v * (0.92 + 0.08 * dune));
-          col = mix(col, [0.95, 0.92, 0.9], ss(0.9, 0.95, alat) * 0.8);
-        }
-      } else if (st === 'ice') {
-        const h = fbm(sx * 1.4, sy * 1.4, sz * 1.4);
-        col = mix(c1, c2, ss(0.25, 0.65, h));
-        col = mix(col, c1.map(v => v * 0.6), ss(0.92, 0.98, ridged(sx * 2.5, sy * 2.5, sz * 2.5)));
-        sp = 0;
-      } else if (st === 'lava') {
-        const crack = ss(0.72, 0.9, ridged(sx * 2.2, sy * 2.2, sz * 2.2));
-        col = mix(c1, c1.map(v => Math.min(1, v * 1.6)), fbm(sx * 4, sy * 4, sz * 4, 3));
-        e = crack;
-      } else if (st === 'iron' || st === 'carbon') {
-        const h = fbm(sx * 2, sy * 2, sz * 2);
-        col = mix(c1, c2, st === 'carbon' ? ss(0.4, 0.8, h) : h);
-        sp = 1;
-      } else if (gas) {
-        const bands = st === 'icegiant' ? 3 : st === 'browndwarf' ? 7 : 9;
-        const turb = fbm(nx * 3 + sd, ny * 3 + sd, nz * 14 + sd);
-        const b = Math.sin((nz + turb * (st === 'icegiant' ? 0.06 : 0.14)) * bands * Math.PI);
-        col = mix(c1, c2, 0.5 + 0.5 * b);
-        col = col.map(v => v * (0.88 + 0.24 * fbm(nx * 8 + sd, ny * 8 + sd, nz * 30 + sd, 3)));
-        if (st === 'gas') {
-          // one great storm
-          const sx2 = Math.cos(sd), sy2 = Math.sin(sd), sz2 = -0.35, n2 = Math.hypot(sx2, sy2, sz2);
-          const d = Math.hypot(nx - sx2 / n2, ny - sy2 / n2, nz - sz2 / n2);
-          col = mix(col, [0.75, 0.38, 0.28], ss(0.16, 0.09, d) * 0.8);
-        }
-        if (st === 'browndwarf') e = 0.5 + 0.4 * b * b;
-      } else {
-        col = mix(c1, c2, fbm(sx, sy, sz));
+        if (performance.now() - t0 > budget) break;
       }
-      const k = j * W + i;
-      rgb[k * 3] = post(Math.min(1, col[0])); rgb[k * 3 + 1] = post(Math.min(1, col[1])); rgb[k * 3 + 2] = post(Math.min(1, col[2]));
-      emit[k] = e; spec[k] = sp;
-    }
+      job.done = row >= H;
+      return job.done;
+    },
+  };
+  return job;
+}
+
+/** a whole map at once (small ones are quick) */
+export function buildMap(look: Look, w = 256): SurfaceMap {
+  const j = mapJob(look, w);
+  j.step(Infinity);
+  return j.map;
+}
+
+/** a copy, to paint craters into without touching the original */
+export function cloneMap(m: SurfaceMap): SurfaceMap {
+  return { ...m, rgb: m.rgb.slice(), emit: m.emit.slice(), spec: m.spec.slice(), height: m.height.slice(), cloud: m.cloud ? m.cloud.slice() : null };
+}
+
+/** belts and zones for a giant planet of the given look: latitudes and colours from its seed */
+function gasBands(look: Look, c1: V3, c2: V3) {
+  const n = look.style === 'icegiant' ? 5 : look.style === 'browndwarf' ? 9 : 13;
+  const out: { to: number; c: V3 }[] = [];
+  let lat = -90;
+  for (let k = 0; k < n; k++) {
+    const r = vnoise(k * 1.7 + (look.seed % 97), 3.3, 1.1);
+    lat += (180 / n) * (0.6 + 0.8 * r);
+    const t = k % 2 ? 0.15 + 0.3 * r : 0.65 + 0.35 * r;
+    out.push({ to: k === n - 1 ? 91 : Math.min(89, lat), c: [c1[0] + (c2[0] - c1[0]) * t, c1[1] + (c2[1] - c1[1]) * t, c1[2] + (c2[2] - c1[2]) * t] });
   }
-  return { w: W, h: H, rgb, emit, spec, gas };
+  return out;
+}
+
+function procedural(o: Tx, look: Look, n: V3, lat: number, d: Detail, c1: V3, c2: V3, sd: number, bands: { to: number; c: V3 }[] | null) {
+  const st = look.style;
+  const sx = n[0] * 2 + sd, sy = n[1] * 2 + sd, sz = n[2] * 2 + sd;
+  const latD = (lat * 180) / Math.PI, alat = Math.abs(latD);
+  const mixc = (a: V3, b: V3, t: number) => { o.r = a[0] + (b[0] - a[0]) * t; o.g = a[1] + (b[1] - a[1]) * t; o.b = a[2] + (b[2] - a[2]) * t; };
+  const toward = (c: V3, t: number) => { if (t <= 0) return; o.r += (c[0] - o.r) * t; o.g += (c[1] - o.g) * t; o.b += (c[2] - o.b) * t; };
+  if (st === 'terran' || st === 'ocean') {
+    paintTerran(o, n, latD, st === 'ocean' ? 0.64 : 0.52, sd, c1, c2, d);
+  } else if (st === 'barren' || st === 'rocky') {
+    cratered(o, n, d, c1, c2, st === 'barren' ? 0.6 : 0.3, look.seed % 97);
+    const hi = fbm(sx * 1.5, sy * 1.5, sz * 1.5, d.oct);
+    o.h += (hi - 0.5) * 0.2;
+    if (st === 'rocky') { const k = 0.85 + 0.3 * hi; o.r *= k; o.g *= k; o.b *= k; }
+  } else if (st === 'desert') {
+    const h = fbm(sx * 1.6, sy * 1.6, sz * 1.6, d.oct);
+    mixc(c1, c2, ss(0.3, 0.7, h));
+    const dune = 0.5 + 0.5 * Math.sin(n[2] * 60 + fbm(sx * 3, sy * 3, sz * 3, 3) * 10);
+    const k = 0.9 + 0.12 * dune; o.r *= k; o.g *= k; o.b *= k;
+    o.h = 0.5 + 0.1 * (h - 0.5) + 0.02 * dune;
+    toward([0.95, 0.93, 0.9], ss(78, 86, alat + (h - 0.5) * 10) * 0.85);
+  } else if (st === 'ice') {
+    cratered(o, n, d, c1, c2, 0.35, look.seed % 97);
+    const r = ridged(sx * 2.5, sy * 2.5, sz * 2.5, d.oct);
+    toward([c1[0] * 0.6, c1[1] * 0.6, c1[2] * 0.6], ss(0.9, 0.98, r) * 0.8);
+    o.h -= 0.04 * ss(0.9, 0.98, r);
+  } else if (st === 'lava') {
+    const crack = ss(0.7, 0.92, ridged(sx * 2.2, sy * 2.2, sz * 2.2, d.oct));
+    mixc(c1, [Math.min(1, c1[0] * 1.5), Math.min(1, c1[1] * 1.5), Math.min(1, c1[2] * 1.5)], fbm(sx * 4, sy * 4, sz * 4, d.oct));
+    o.e = crack;
+    o.h = 0.5 - 0.06 * crack + 0.08 * fbm(sx * 3, sy * 3, sz * 3, d.oct);
+  } else if (st === 'iron' || st === 'carbon') {
+    cratered(o, n, d, c1, c2, 0.4, look.seed % 97);
+    o.s = st === 'iron' ? 1 : 0;
+  } else if (bands) {
+    // zonal bands, rippled by turbulence and drawn out along the latitudes
+    const turb = fbm(n[0] * 3 + sd, n[1] * 3 + sd, n[2] * 16 + sd, d.oct);
+    const L = latD + (turb - 0.5) * (st === 'icegiant' ? 3 : 7);
+    let i = bands.findIndex(b => L < b.to);
+    if (i < 0) i = bands.length - 1;
+    const b = bands[i], p = bands[Math.max(0, i - 1)];
+    mixc(p.c, b.c, ss(0, 3, L - (i > 0 ? p.to : -91)));
+    const fine = fbm(n[0] * 10 + sd, n[1] * 10 + sd, n[2] * 50 + sd, d.oct);
+    const k = 0.9 + 0.2 * fine; o.r *= k; o.g *= k; o.b *= k;
+    o.h = 0.5 + 0.05 * (fine - 0.5);
+    if (st === 'gas' || st === 'hotjupiter') {
+      // one great storm
+      const sx2 = Math.cos(sd), sy2 = Math.sin(sd), sz2 = -0.35, n2 = Math.hypot(sx2, sy2, sz2);
+      const dd = Math.hypot(n[0] - sx2 / n2, n[1] - sy2 / n2, n[2] - sz2 / n2);
+      toward([0.78, 0.42, 0.3], ss(0.17, 0.08, dd) * 0.85);
+    }
+    if (st === 'browndwarf' || st === 'hotjupiter') o.e = (st === 'browndwarf' ? 0.5 : 0.2) + 0.4 * (fine - 0.3);
+  } else {
+    mixc(c1, c2, fbm(sx, sy, sz, d.oct));
+  }
 }
 
 /** Paint a crater into the map: a dark floor, a bright rim, a pale blanket. Direction in the body's frame. */
 export function paintCrater(m: SurfaceMap, dx: number, dy: number, dz: number, ang: number) {
   const a = Math.max(ang, 1.2 * Math.PI / m.h); // never smaller than a texel or it would vanish
-  for (let j = 0; j < m.h; j++) {
+  // only the rows and columns it can reach
+  const lat0 = Math.asin(Math.max(-1, Math.min(1, dz))), reach = a * 2.2;
+  const j0 = Math.max(0, Math.floor(((lat0 - reach) / Math.PI + 0.5) * m.h)), j1 = Math.min(m.h - 1, Math.ceil(((lat0 + reach) / Math.PI + 0.5) * m.h));
+  const lon0 = Math.atan2(dy, dx), cosl = Math.cos(Math.min(Math.PI / 2 - 1e-3, Math.abs(lat0) + reach));
+  const span = cosl > 0.05 && Math.abs(lat0) + reach < Math.PI / 2 ? reach / cosl : Math.PI;
+  const di = Math.ceil((span / (2 * Math.PI)) * m.w) + 1, ic = Math.round(((lon0 / (2 * Math.PI)) + 1) % 1 * m.w);
+  for (let j = j0; j <= j1; j++) {
     const lat = ((j + 0.5) / m.h - 0.5) * Math.PI;
-    for (let i = 0; i < m.w; i++) {
+    for (let q = span >= Math.PI ? 0 : ic - di; q <= (span >= Math.PI ? m.w - 1 : ic + di); q++) {
+      const i = ((q % m.w) + m.w) % m.w;
       const lon = ((i + 0.5) / m.w) * 2 * Math.PI;
       const nx = Math.cos(lat) * Math.cos(lon), ny = Math.cos(lat) * Math.sin(lon), nz = Math.sin(lat);
       const d = Math.acos(Math.max(-1, Math.min(1, nx * dx + ny * dy + nz * dz))) / a;
       if (d > 2.2) continue;
-      const k = (j * m.w + i) * 3;
+      const k = j * m.w + i;
       const f = d < 0.8 ? 0.62 : d < 1.15 ? 1.35 : 1.08;
-      for (let c = 0; c < 3; c++) m.rgb[k + c] = Math.min(1, post(m.rgb[k + c] * f));
+      for (let c = 0; c < 3; c++) m.rgb[k * 3 + c] = Math.min(1, m.rgb[k * 3 + c] * f);
+      m.height[k] += d < 1 ? -0.1 * (1 - d * d) : d < 1.3 ? 0.05 * (1 - Math.abs(d - 1.12) / 0.18) : 0;
+      if (m.cloud) m.cloud[k] *= 0.6;
     }
   }
+}
+
+/**
+ * Look up a point of a map, blended between texels: colour with the clouds
+ * over it, glow, shine, and the slope of the ground (for shading relief).
+ */
+export function sampleMap(m: SurfaceMap, lat: number, lon: number, out: { r: number; g: number; b: number; e: number; s: number; dx: number; dy: number }) {
+  const u = ((lon / (2 * Math.PI)) % 1 + 1) % 1 * m.w - 0.5, v = Math.max(0, Math.min(m.h - 1.001, (lat / Math.PI + 0.5) * m.h - 0.5));
+  const i0 = Math.floor(u), j0 = Math.floor(v), fu = u - i0, fv = v - j0;
+  const ia = (i0 + m.w) % m.w, ib = (i0 + 1) % m.w, j1 = Math.min(m.h - 1, j0 + 1);
+  const k00 = j0 * m.w + ia, k01 = j0 * m.w + ib, k10 = j1 * m.w + ia, k11 = j1 * m.w + ib;
+  const w00 = (1 - fu) * (1 - fv), w01 = fu * (1 - fv), w10 = (1 - fu) * fv, w11 = fu * fv;
+  const ch = (a: Float32Array, c: number, n: number) => a[k00 * n + c] * w00 + a[k01 * n + c] * w01 + a[k10 * n + c] * w10 + a[k11 * n + c] * w11;
+  let r = ch(m.rgb, 0, 3), g = ch(m.rgb, 1, 3), b = ch(m.rgb, 2, 3);
+  if (m.cloud) { const c = ch(m.cloud, 0, 1); r += (1 - r) * c; g += (1 - g) * c; b += (1 - b) * c; }
+  out.r = r; out.g = g; out.b = b;
+  out.e = ch(m.emit, 0, 1);
+  out.s = m.spec[k00];
+  // the slope, per radian of longitude and latitude
+  const hW = m.height[j0 * m.w + ia], hE = m.height[j0 * m.w + ib], hN = m.height[j1 * m.w + ia];
+  out.dx = (hE - hW) * m.w / (2 * Math.PI);
+  out.dy = (hN - hW) * m.h / Math.PI;
 }
 
 const band = (r: number, a: number, b: number) => (r >= a && r <= b ? 1 : 0);

@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import type { App } from '../app';
 import type { Body } from '../physics/body';
 import { AU_M, schwarzschild, fmtLength, sig } from '../physics/units';
-import { buildMap, paintCrater, ringTau, type SurfaceMap } from '../pixel/surface';
+import { paintCrater, ringTau, cloneMap, lookKey, type SurfaceMap } from '../pixel/surface';
+import { maps, MapService } from '../pixel/maps';
 import { bodyFrame, starRGB, type V3 } from '../pixel/sprites';
 import { bodyAxis, tintOf } from '../pixel/renderer';
 import { Controls3D } from './controls';
@@ -28,7 +29,12 @@ import { NavMap } from './navmap';
  * rides along the same way.
  */
 
-interface Obj { group: THREE.Group; kind: 'world' | 'star' | 'hole' | 'white' | 'worm' | 'craft'; map?: SurfaceMap; tex?: THREE.DataTexture; seen: Set<object>; mat?: THREE.ShaderMaterial; jet?: THREE.Group; style?: string }
+interface Obj {
+  group: THREE.Group; kind: 'world' | 'star' | 'hole' | 'white' | 'worm' | 'craft';
+  /** the map drawn (its own copy once cratered), the shared one it came from, and its textures: colour and glow; height, cloud and shine */
+  map?: SurfaceMap; base?: SurfaceMap; owned?: boolean; tex?: THREE.DataTexture; aux?: THREE.DataTexture;
+  seen: Set<object>; mat?: THREE.ShaderMaterial; clouds?: THREE.Mesh; jet?: THREE.Group; style?: string;
+}
 
 const VERT = /* glsl */ `
 #include <common>
@@ -45,38 +51,122 @@ void main() {
   #include <logdepthbuf_vertex>
 }`;
 
+/** a world's surface: its map, lit smoothly, with relief from its height map and a glint off its seas */
+const WORLD_VERT = /* glsl */ `
+#include <common>
+#include <logdepthbuf_pars_vertex>
+varying vec3 vObj;
+varying vec3 vWorldN;
+varying vec3 vWorldP;
+varying vec3 vEast;
+varying vec3 vNorth;
+void main() {
+  vObj = position;
+  vec3 n = normalize(position);
+  vec3 e = normalize(vec3(-n.y, n.x, 0.0) + vec3(1e-6, 0.0, 0.0));
+  vWorldN = normalize(mat3(modelMatrix) * n);
+  vEast = normalize(mat3(modelMatrix) * e);
+  vNorth = normalize(mat3(modelMatrix) * cross(n, e));
+  vec4 wp = modelMatrix * vec4(position, 1.0);
+  vWorldP = wp.xyz;
+  gl_Position = projectionMatrix * viewMatrix * wp;
+  #include <logdepthbuf_vertex>
+}`;
+
+/** where on the map: longitude without a seam (the nearer of two wrappings), latitude */
+const MAP_UV = /* glsl */ `
+vec2 mapUV(vec3 n) {
+  float lon = atan(n.y, n.x) / 6.2831853;
+  float u1 = fract(lon), u2 = fract(lon + 0.5) - 0.5;
+  float u = fwidth(u1) <= fwidth(u2) + 1e-5 ? u1 : u2;
+  return vec2(u, asin(clamp(n.z, -1.0, 1.0)) / 3.14159265 + 0.5);
+}
+float hash3(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float vnoise3(vec3 x) {
+  vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(hash3(i), hash3(i + vec3(1, 0, 0)), f.x), mix(hash3(i + vec3(0, 1, 0)), hash3(i + vec3(1, 1, 0)), f.x), f.y),
+             mix(mix(hash3(i + vec3(0, 0, 1)), hash3(i + vec3(1, 0, 1)), f.x), mix(hash3(i + vec3(0, 1, 1)), hash3(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}`;
+
 const FRAG = /* glsl */ `
 #include <common>
 #include <logdepthbuf_pars_fragment>
 uniform sampler2D map;
+uniform sampler2D aux;
+uniform vec2 texel;
 uniform vec3 lightDir;
 uniform vec3 lightCol;
 uniform float lit;
 uniform float heat;
 uniform vec3 atmo;
 uniform float hasAtmo;
+uniform float bump;
+uniform float detail;
 varying vec3 vObj;
 varying vec3 vWorldN;
 varying vec3 vWorldP;
+varying vec3 vEast;
+varying vec3 vNorth;
+${MAP_UV}
 void main() {
   #include <logdepthbuf_fragment>
   vec3 n = normalize(vObj);
-  float lon = atan(n.y, n.x);
-  if (lon < 0.0) lon += 6.2831853;
-  float lat = asin(clamp(n.z, -1.0, 1.0));
-  vec4 tex = texture2D(map, vec2(lon / 6.2831853, lat / 3.14159265 + 0.5));
-  vec3 N = normalize(vWorldN);
-  // lit in a few steps, like the sprites
-  float d = lit > 0.5 ? max(dot(N, lightDir), 0.0) : 0.45;
-  d = floor(d * 4.0 + 0.5) / 4.0;
-  vec3 col = tex.rgb * (0.04 + d * lightCol);
+  vec2 uv = mapUV(n);
+  vec4 tex = texture2D(map, uv);
+  vec4 ax = texture2D(aux, uv);
+  // relief: the slope of the height map tilts the surface
+  float h = ax.r;
+  float hE = texture2D(aux, uv + vec2(texel.x, 0.0)).r, hN = texture2D(aux, uv + vec2(0.0, texel.y)).r;
+  float cl = max(0.05, sqrt(1.0 - n.z * n.z));
+  vec2 g = vec2((hE - h) / (texel.x * 6.2831853) / cl, (hN - h) / (texel.y * 3.14159265));
+  // and close up, finer grain than the map holds
+  float fine = detail > 0.0 ? vnoise3(n * 900.0) * 0.6 + vnoise3(n * 2600.0) * 0.4 : 0.5;
+  vec3 N0 = normalize(vWorldN);
+  vec3 N = normalize(N0 - bump * (normalize(vEast) * g.x + normalize(vNorth) * g.y));
+  vec3 col = tex.rgb * (1.0 + detail * (fine - 0.5) * 0.25);
+  vec3 V = normalize(-vWorldP);
+  if (lit > 0.5) {
+    float dl = dot(N, lightDir), dl0 = dot(N0, lightDir);
+    // a soft terminator, and no relief lit past it
+    float term = clamp((dl0 + 0.03) / 0.1, 0.0, 1.0);
+    vec3 c = col * (0.025 + max(dl, 0.0) * term * lightCol);
+    // a glint off the sea
+    vec3 H = normalize(lightDir + V);
+    c += ax.b * pow(max(dot(N0, H), 0.0), 90.0) * 0.55 * term * lightCol;
+    col = c;
+  } else col *= 0.45;
   col += tex.a * vec3(1.0, 0.45, 0.12);
   col = max(col, heat * vec3(1.0, 0.35, 0.08) * 0.8);
-  // a thin sky seen edge-on
-  vec3 V = normalize(-vWorldP);
-  float rim = pow(1.0 - max(dot(N, V), 0.0), 3.0);
-  col += hasAtmo * atmo * rim * (0.15 + 0.85 * max(dot(N, lightDir) + 0.3, 0.0));
+  // the sky seen edge-on, brightest on the day side and reddening at the terminator
+  float rim = pow(1.0 - max(dot(N0, V), 0.0), 2.5);
+  float day = lit > 0.5 ? dot(N0, lightDir) : 0.3;
+  vec3 sky = mix(vec3(1.0, 0.55, 0.3) * atmo, atmo, smoothstep(-0.1, 0.4, day));
+  col += hasAtmo * sky * rim * clamp(day + 0.35, 0.0, 1.0) * 0.9;
   gl_FragColor = vec4(col, 1.0);
+}`;
+
+/** a world's clouds: a shell just above the ground, drifting */
+const CLOUD_FRAG = /* glsl */ `
+#include <common>
+#include <logdepthbuf_pars_fragment>
+uniform sampler2D aux;
+uniform vec3 lightDir;
+uniform vec3 lightCol;
+uniform float drift;
+varying vec3 vObj;
+varying vec3 vWorldN;
+varying vec3 vWorldP;
+${MAP_UV}
+void main() {
+  #include <logdepthbuf_fragment>
+  vec3 n = normalize(vObj);
+  vec2 uv = mapUV(n);
+  float c = texture2D(aux, uv + vec2(drift, 0.0)).g;
+  if (c < 0.01) discard;
+  vec3 N = normalize(vWorldN);
+  float dl = dot(N, lightDir);
+  float lit = clamp((dl + 0.05) / 0.15, 0.0, 1.0) * max(dl, 0.0) * 0.9 + 0.03;
+  gl_FragColor = vec4(lightCol * lit, c * 0.95);
 }`;
 
 const RING_FRAG = /* glsl */ `
@@ -159,7 +249,8 @@ export class View3D {
     this.canvas.hidden = true;
     document.body.insertBefore(this.canvas, document.body.firstChild?.nextSibling ?? null);
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: false, logarithmicDepthBuffer: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(0.5);
+    // full resolution (up to twice the CSS pixels on a sharp screen)
+    this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     this.camera = new THREE.PerspectiveCamera(70, 1, 0.05, 1e19);
     this.camera.up.set(0, 0, 1);
     this.glowTex = glowTexture();
@@ -642,7 +733,7 @@ export class View3D {
     const key = this.visited.map(v => v.id).join();
     if (key !== this.trophyKey) {
       this.trophyKey = key;
-      h.setTrophies(this.visited.map(v => mapTexture(buildMap(v.look))));
+      h.setTrophies(this.visited.map(v => mapTextures(maps.want(v.look, 128), this.renderer)[0]));
     }
   }
 
@@ -921,14 +1012,28 @@ export class View3D {
       group.add(new THREE.Mesh(this.sphere, new THREE.MeshBasicMaterial({ color: 0xffffff })));
       group.add(this.glow(0xffffff, 5));
     } else {
-      o.map = buildMap(b.look);
-      o.style = `${b.look.style}|${b.look.c1}|${b.look.c2}`;
-      o.tex = mapTexture(o.map);
+      o.map = o.base = maps.want(b.look, 128);
+      o.owned = false;
+      o.style = lookKey(b.look);
+      [o.tex, o.aux] = mapTextures(o.map, this.renderer);
       o.mat = new THREE.ShaderMaterial({
-        vertexShader: VERT, fragmentShader: FRAG,
-        uniforms: { map: { value: o.tex }, lightDir: { value: new THREE.Vector3(1, 0, 0) }, lightCol: { value: new THREE.Vector3(1, 1, 1) }, lit: { value: 0 }, heat: { value: 0 }, atmo: { value: new THREE.Vector3() }, hasAtmo: { value: 0 } },
+        vertexShader: WORLD_VERT, fragmentShader: FRAG,
+        uniforms: {
+          map: { value: o.tex }, aux: { value: o.aux }, texel: { value: new THREE.Vector2(1 / o.map.w, 1 / o.map.h) },
+          lightDir: { value: new THREE.Vector3(1, 0, 0) }, lightCol: { value: new THREE.Vector3(1, 1, 1) }, lit: { value: 0 }, heat: { value: 0 },
+          atmo: { value: new THREE.Vector3() }, hasAtmo: { value: 0 }, bump: { value: o.map.gas ? 0.01 : 0.05 }, detail: { value: o.map.gas ? 0 : 1 },
+        },
       });
       group.add(new THREE.Mesh(this.sphere, o.mat));
+      if (o.map.cloud) {
+        const cm = new THREE.ShaderMaterial({
+          vertexShader: VERT, fragmentShader: CLOUD_FRAG, transparent: true, depthWrite: false,
+          uniforms: { aux: { value: o.aux }, lightDir: o.mat.uniforms.lightDir, lightCol: o.mat.uniforms.lightCol, drift: { value: 0 } },
+        });
+        o.clouds = new THREE.Mesh(this.sphere, cm);
+        o.clouds.scale.setScalar(1.008);
+        group.add(o.clouds);
+      }
       const rg = b.look.rings;
       if (rg) {
         const prof = new Uint8Array(256 * 4);
@@ -980,11 +1085,21 @@ export class View3D {
       if (o.kind === 'hole') this.jets(b, o, Rm);
       return;
     }
-    // a world: its turning frame, its light, its craters
-    if (o.style !== `${b.look.style}|${b.look.c1}|${b.look.c2}`) {
-      o.map = buildMap(b.look); o.style = `${b.look.style}|${b.look.c1}|${b.look.c2}`; o.seen.clear();
-      writeMap(o.tex!, o.map);
+    // a world: the best map for how big it looks (they arrive from the painter as they are ready), its turning frame, its light, its craters
+    const px = (Rm / Math.max(1, g.position.length())) / (Math.tan((this.camera.fov * Math.PI) / 360) / (window.innerHeight / 2));
+    const want = MapService.widthFor(px * 2, 1024);
+    if (o.style !== lookKey(b.look) || o.base!.w < want) {
+      const m = maps.want(b.look, want);
+      if (o.style !== lookKey(b.look) || m !== o.base) {
+        o.map = o.base = m; o.owned = false; o.style = lookKey(b.look); o.seen.clear();
+        o.tex!.dispose(); o.aux!.dispose();
+        [o.tex, o.aux] = mapTextures(m, this.renderer);
+        const u = o.mat!.uniforms;
+        u.map.value = o.tex; u.aux.value = o.aux; (u.texel.value as THREE.Vector2).set(1 / m.w, 1 / m.h);
+        if (o.clouds) (o.clouds.material as THREE.ShaderMaterial).uniforms.aux.value = o.aux;
+      }
     }
+    if (o.clouds) (o.clouds.material as THREE.ShaderMaterial).uniforms.drift.value = (performance.now() / 1000 / 3600) % 1;
     const spin = (b.spinAngle ?? 0);
     const [fx, fy, fz] = bodyFrame(bodyAxis(b), spin);
     const m = new THREE.Matrix4().makeBasis(new THREE.Vector3(...fx), new THREE.Vector3(...fy), new THREE.Vector3(...fz));
@@ -994,10 +1109,11 @@ export class View3D {
     for (const c of b.craters) {
       if (o.seen.has(c) || o.map!.gas) continue;
       o.seen.add(c);
+      if (!o.owned) { o.map = cloneMap(o.base!); o.owned = true; }
       paintCrater(o.map!, c.x * fx[0] + c.y * fx[1] + c.z * fx[2], c.x * fy[0] + c.y * fy[1] + c.z * fy[2], c.x * fz[0] + c.y * fz[1] + c.z * fz[2], c.a);
       fresh = true;
     }
-    if (fresh) writeMap(o.tex!, o.map!);
+    if (fresh) writeMaps(o.tex!, o.aux!, o.map!);
     const u = o.mat!.uniforms;
     let best: Body | null = null, bf = 0;
     for (const s of stars) {
@@ -1011,7 +1127,8 @@ export class View3D {
       (u.lightCol.value as THREE.Vector3).set(0.55 + 0.6 * c[0], 0.55 + 0.6 * c[1], 0.55 + 0.6 * c[2]);
       u.lit.value = 1;
     } else u.lit.value = 0;
-    u.heat.value = b.heat;
+    // a surface glows only once it is molten; a warm one (tidally heated Io) shows it at its volcanoes
+    u.heat.value = Math.max(0, (b.heat - 0.55) / 0.45);
     if (b.look.atmo !== undefined) {
       const a = b.look.atmo;
       (u.atmo.value as THREE.Vector3).set(((a >> 16) & 255) / 255, ((a >> 8) & 255) / 255, (a & 255) / 255);
@@ -1082,22 +1199,31 @@ export class View3D {
   }
 }
 
-function mapTexture(m: SurfaceMap) {
-  const t = new THREE.DataTexture(new Uint8Array(m.w * m.h * 4), m.w, m.h, THREE.RGBAFormat);
-  t.magFilter = THREE.NearestFilter;
-  t.minFilter = THREE.NearestFilter;
-  t.wrapS = THREE.RepeatWrapping;
-  writeMap(t, m);
-  return t;
+/** a map as two textures: colour with glow in alpha; height, cloud and shine. Filtered smoothly, mipmapped */
+function mapTextures(m: SurfaceMap, r: THREE.WebGLRenderer): [THREE.DataTexture, THREE.DataTexture] {
+  const mk = () => {
+    const t = new THREE.DataTexture(new Uint8Array(m.w * m.h * 4), m.w, m.h, THREE.RGBAFormat);
+    t.magFilter = THREE.LinearFilter;
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.generateMipmaps = true;
+    t.wrapS = THREE.RepeatWrapping;
+    t.anisotropy = Math.min(8, r.capabilities.getMaxAnisotropy());
+    return t;
+  };
+  const a = mk(), b = mk();
+  writeMaps(a, b, m);
+  return [a, b];
 }
 
-function writeMap(t: THREE.DataTexture, m: SurfaceMap) {
-  const d = t.image.data as Uint8Array;
+function writeMaps(t: THREE.DataTexture, aux: THREE.DataTexture, m: SurfaceMap) {
+  const d = t.image.data as Uint8Array, x = aux.image.data as Uint8Array;
   for (let k = 0; k < m.w * m.h; k++) {
     d[k * 4] = m.rgb[k * 3] * 255; d[k * 4 + 1] = m.rgb[k * 3 + 1] * 255; d[k * 4 + 2] = m.rgb[k * 3 + 2] * 255;
     d[k * 4 + 3] = Math.min(1, m.emit[k]) * 255;
+    x[k * 4] = Math.max(0, Math.min(1, m.height[k])) * 255; x[k * 4 + 1] = m.cloud ? m.cloud[k] * 255 : 0; x[k * 4 + 2] = m.spec[k] * 255; x[k * 4 + 3] = 255;
   }
   t.needsUpdate = true;
+  aux.needsUpdate = true;
 }
 
 function setPoints(p: THREE.Points, pos: number[], col: number[]) {

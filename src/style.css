@@ -13,7 +13,7 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color: var(--text); -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; overscroll-behavior: none; }
-#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; image-rendering: pixelated; image-rendering: crisp-edges; }
+#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
 img { image-rendering: pixelated; }
 #c.grab { cursor: grab; }
 #c.grabbing { cursor: grabbing; }
@@ -80,7 +80,7 @@ dd a { color: var(--acc2); cursor: pointer; text-decoration: none; }
 .imap .row { justify-content: space-between; }
 .isub { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); }
 .imap .seg { gap: 3px; }
-#iMap { width: 100%; aspect-ratio: 2 / 1; image-rendering: pixelated; border-radius: 4px; background: #05060a; }
+#iMap { width: 100%; aspect-ratio: 2 / 1; border-radius: 4px; background: #05060a; }
 
 .builder, .help {
   left: 50%; top: 50%; transform: translate(-50%, -50%); background: var(--panel-solid); border: 1px solid var(--line);
@@ -165,7 +165,7 @@ kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-
 .find button span { white-space: nowrap; }
 
 /* ---- 3D ---- */
-#c3 { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; image-rendering: pixelated; z-index: 1; cursor: crosshair; background: #000; }
+#c3 { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; z-index: 1; cursor: crosshair; background: #000; }
 #labels3 { position: fixed; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
 #labels3 .lbl { pointer-events: none; }
 #labels3 .lbl.hatch { color: #7dff9a; }

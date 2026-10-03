@@ -34,6 +34,8 @@ export interface Look {
   wormhole?: boolean;
   /** a spacecraft: which pixel sprite */
   craft?: 'station' | 'telescope' | 'mirror' | 'probe' | 'sat' | 'sail' | 'lander';
+  /** a real world, painted from its maps rather than made up (its name) */
+  real?: string;
 }
 
 export type Phase = 'proto' | 'ms' | 'giant' | 'agb' | 'remnant' | 'none';

@@ -1,3 +1,4 @@
+import { sampleMap } from '../pixel/surface';
 import { iconOf, type App, type Flag, type Tool } from '../app';
 import { Builder } from './builder';
 import { buildCustom } from '../physics/custom';
@@ -398,7 +399,7 @@ export class Hud {
         rows.push(['Time left', fmtDuration(Math.max(0, life - s.age))]);
       } else if (b.cls === 'wd') rows.push(['Cooling for', fmtDuration(s.age)]);
     }
-    if (b.heat > 0.05 && !b.star) rows.push(['Surface', b.heat > 0.4 ? 'molten' : 'cooling']);
+    if (b.heat > 0.05 && !b.star) rows.push(['Surface', b.heat > 0.55 ? 'molten' : b.heat > 0.3 ? 'volcanic' : 'cooling']);
     if (b.craters.length) rows.push([b.cls === 'gas' ? 'Impact scars' : 'Craters', String(b.craters.length)]);
     if (b.compact) {
       const rate = this.app.accRate(b);
@@ -457,7 +458,7 @@ export class Hud {
     if (!surf) return;
     $('iMapT').textContent = b.craters.length ? `Surface · ${b.craters.length} ${b.cls === 'gas' ? 'scars' : 'craters'}` : 'Surface';
     const { map, frame, L } = surf;
-    const W = map.w, H = map.h;
+    const W = 384, H = 192;
     if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
     const img = ctx.createImageData(W, H);
     // the light in the body's own frame
@@ -468,6 +469,7 @@ export class Hud {
       Ll = frame.map(e => e[0] * l[0] + e[1] * l[1] + e[2] * l[2]);
     }
     const moll = this.proj === 'moll';
+    const smp = { r: 0, g: 0, b: 0, e: 0, s: 0, dx: 0, dy: 0 };
     for (let y = 0; y < H; y++) {
       for (let x = 0; x < W; x++) {
         let lat: number, lon: number;
@@ -482,16 +484,13 @@ export class Hud {
           lat = (0.5 - (y + 0.5) / H) * Math.PI;
           lon = ((x + 0.5) / W) * 2 * Math.PI;
         }
-        // the map is stored south to north
-        const j = Math.min(H - 1, Math.max(0, Math.floor((lat / Math.PI + 0.5) * H)));
-        const i = Math.min(W - 1, Math.max(0, Math.floor((((lon / (2 * Math.PI)) % 1) + 1) % 1 * W)));
-        const k = j * W + i;
-        let r = map.rgb[k * 3], g = map.rgb[k * 3 + 1], bl = map.rgb[k * 3 + 2];
-        const e = map.emit[k] + (b.heat > 0.3 ? b.heat * 0.6 : 0);
+        sampleMap(map, lat, lon, smp);
+        let r = smp.r, g = smp.g, bl = smp.b;
+        const e = smp.e + Math.max(0, (b.heat - 0.55) / 0.45) * 0.6;
         if (Ll) {
           const nx = Math.cos(lat) * Math.cos(lon), ny = Math.cos(lat) * Math.sin(lon), nz = Math.sin(lat);
           const mu = nx * Ll[0] + ny * Ll[1] + nz * Ll[2];
-          const lit = mu > 0.04 ? 1 : mu > -0.04 ? 0.6 : 0.3;
+          const lit = 0.28 + 0.72 * Math.max(0, Math.min(1, (mu + 0.05) / 0.12));
           r *= lit; g *= lit; bl *= lit;
         }
         if (e > 0) { r = Math.max(r, e); g = Math.max(g, e * 0.45); bl = Math.max(bl, e * 0.12); }
