@@ -67,18 +67,28 @@ const BINDS: Record<Mode, Bind[]> = {
 
 const TITLE: Record<Mode, string> = { pilot: 'At the helm', walk: 'On foot', eva: 'Spacewalk', scope: 'Telescope' };
 
-/** touch buttons for each place */
-const TOUCH: Record<Mode, [string, string][]> = {
-  pilot: [['up', '▲'], ['down', '▼'], ['boost', 'Boost'], ['slower', '−'], ['faster', '+'], ['go', 'Go to'], ['od', 'Overdrive'], ['jump', 'Wormhole'], ['map', 'Map'], ['view', 'Camera'], ['leave', 'Leave helm']],
-  walk: [['jump', 'Jump'], ['use', 'Use'], ['map', 'Map']],
-  eva: [['up', '▲'], ['down', '▼'], ['boost', 'Boost'], ['slower', '−'], ['faster', '+'], ['use', 'Board'], ['call', 'Call ship'], ['map', 'Map']],
-  scope: [['zin', 'Zoom +'], ['zout', 'Zoom −'], ['track', 'Track'], ['leave', 'Step back']],
+/** touch: the buttons under the right thumb, held down */
+const THUMB: Record<Mode, [string, string][]> = {
+  pilot: [['up', '▲'], ['down', '▼'], ['boost', 'Boost']],
+  walk: [['jump', 'Jump']],
+  eva: [['up', '▲'], ['down', '▼'], ['boost', 'Boost']],
+  scope: [['zin', '＋'], ['zout', '−']],
 };
+/** touch: the rail of commands, tapped: key, icon, name */
+const RAIL: Record<Mode, [string, string, string][]> = {
+  pilot: [['go', '◎', 'Go to'], ['od', '⏩', 'Overdrive'], ['worm', '🌀', 'Wormhole'], ['map', '🗺', 'Map'], ['view', '🎥', 'Camera'], ['leave', '🚶', 'Leave helm'], ['help', '?', 'Help']],
+  walk: [['map', '🗺', 'Map'], ['help', '?', 'Help']],
+  eva: [['call', '📡', 'Call ship'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
+  scope: [['track', '◎', 'Track'], ['leave', '↩', 'Step back'], ['help', '?', 'Help']],
+};
+const HELD = new Set(['up', 'down', 'boost', 'jump']);
+
+const TOUCH_HELP = 'Touch: put your left thumb down anywhere on the left of the screen and move it to fly or walk; drag anywhere else to look; tap something to select it (on foot: tap to use what is under the dot). The buttons under your right thumb are held; the ones down the side are tapped. − and + above the stick set the throttle. Things fade back when you leave them alone; 👁 at the top hides them all.';
 
 export class Controls3D {
   throttle = 1;
   private keys = new Set<string>();
-  private stick = { x: 0, y: 0, id: -1, cx: 0, cy: 0 };
+  private stick = { x: 0, y: 0, id: -1, cx: 0, cy: 0, moved: 0 };
   private look = { id: -1, x: 0, y: 0, moved: 0 };
   private hold = { up: false, down: false, boost: false, jump: false };
   /** boost latched on by clicking the left stick, until the stick is let go */
@@ -90,8 +100,13 @@ export class Controls3D {
   private barEl: HTMLElement;
   private useEl: HTMLElement;
   private sheetEl: HTMLElement;
-  private btnsEl: HTMLElement;
+  private thumbEl: HTMLElement;
+  private railEl: HTMLElement;
+  private thrEl: HTMLElement;
+  private stickEl: HTMLElement;
   private knob: HTMLElement;
+  /** the last touch, for fading what is not being used */
+  private touched = performance.now();
   private flashEl: HTMLElement;
   private shownMode: Mode | null = null;
   private barKey = '';
@@ -109,7 +124,9 @@ export class Controls3D {
       <div class="bar3"></div>
       <div class="flash3"></div>
       <div class="stick3"><div class="knob3"></div></div>
-      <div class="btns3"></div>
+      <div class="thr3"><button data-b="slower">−</button><span></span><button data-b="faster">+</button></div>
+      <div class="thumb3"></div>
+      <div class="rail3"></div>
       <div class="sheet3" hidden></div>`;
     document.body.appendChild(this.root);
     const $ = (s: string) => this.root.querySelector(s) as HTMLElement;
@@ -117,10 +134,13 @@ export class Controls3D {
     this.barEl = $('.bar3');
     this.useEl = $('.use3');
     this.sheetEl = $('.sheet3');
-    this.btnsEl = $('.btns3');
+    this.thumbEl = $('.thumb3');
+    this.railEl = $('.rail3');
+    this.thrEl = $('.thr3');
+    this.stickEl = $('.stick3');
     this.knob = $('.knob3');
     this.flashEl = $('.flash3');
-    const stick = $('.stick3');
+    const stick = this.stickEl;
 
     window.addEventListener('keydown', e => this.key(e, true));
     window.addEventListener('keyup', e => this.key(e, false));
@@ -142,65 +162,99 @@ export class Controls3D {
     });
     cv.addEventListener('wheel', e => { e.preventDefault(); this.dev = 'kb'; this.zoom(Math.exp(-e.deltaY * 0.0015)); }, { passive: false });
 
-    // touch: the stick
-    stick.addEventListener('pointerdown', e => {
+    // touch: a stick wherever the left thumb lands, drag elsewhere to look, a tap selects (or uses, on foot)
+    const down = (e: PointerEvent, el: HTMLElement) => {
+      if (e.pointerType === 'mouse' || !this.v.active) return;
       e.preventDefault();
       this.dev = 'touch';
-      stick.setPointerCapture(e.pointerId);
-      const r = stick.getBoundingClientRect();
-      this.stick = { x: 0, y: 0, id: e.pointerId, cx: r.left + r.width / 2, cy: r.top + r.height / 2 };
-    });
-    stick.addEventListener('pointermove', e => {
-      if (e.pointerId !== this.stick.id) return;
-      const R = 50;
-      let dx = (e.clientX - this.stick.cx) / R, dy = (e.clientY - this.stick.cy) / R;
-      const l = Math.hypot(dx, dy);
-      if (l > 1) { dx /= l; dy /= l; }
-      this.stick.x = dx; this.stick.y = dy;
-      this.knob.style.transform = `translate(${dx * R}px, ${dy * R}px)`;
-    });
-    const release = (e: PointerEvent) => { if (e.pointerId === this.stick.id) { this.stick = { x: 0, y: 0, id: -1, cx: 0, cy: 0 }; this.knob.style.transform = ''; } };
-    stick.addEventListener('pointerup', release);
-    stick.addEventListener('pointercancel', release);
-
-    // touch (and pen): drag to look, tap to select or use
-    cv.addEventListener('pointerdown', e => {
-      if (e.pointerType === 'mouse' || !this.v.active) return;
-      this.dev = 'touch';
-      cv.setPointerCapture(e.pointerId);
-      this.look = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: 0 };
-    });
-    cv.addEventListener('pointermove', e => {
-      if (e.pointerId !== this.look.id) return;
-      const dx = e.clientX - this.look.x, dy = e.clientY - this.look.y;
-      this.look.x = e.clientX; this.look.y = e.clientY;
-      this.look.moved += Math.abs(dx) + Math.abs(dy);
-      this.v.turn(dx * 0.004, dy * 0.004, 0);
-    });
-    const lookEnd = (e: PointerEvent) => {
-      if (e.pointerId !== this.look.id) return;
-      if (this.look.moved < 8) {
-        if (this.v.mode === 'walk') this.v.prompt?.act();
-        else this.app().select(this.v.pick(e.clientX, e.clientY));
-      }
-      this.look.id = -1;
+      this.wake();
+      el.setPointerCapture(e.pointerId);
+      const left = el === stick || (e.clientX < window.innerWidth * 0.42 && this.v.mode !== 'scope');
+      if (left && this.stick.id < 0) {
+        this.stick = { x: 0, y: 0, id: e.pointerId, cx: e.clientX, cy: e.clientY, moved: 0 };
+        // the stick comes to the thumb
+        stick.classList.add('live');
+        stick.style.left = `${e.clientX - stick.offsetWidth / 2}px`;
+        stick.style.top = `${e.clientY - stick.offsetHeight / 2}px`;
+      } else if (this.look.id < 0) this.look = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: 0 };
     };
-    cv.addEventListener('pointerup', lookEnd);
-    cv.addEventListener('pointercancel', lookEnd);
+    const move = (e: PointerEvent) => {
+      if (e.pointerId === this.stick.id) {
+        const R = 50;
+        let dx = (e.clientX - this.stick.cx) / R, dy = (e.clientY - this.stick.cy) / R;
+        this.stick.moved = Math.max(this.stick.moved, Math.hypot(dx, dy) * R);
+        const l = Math.hypot(dx, dy);
+        if (l > 1) { dx /= l; dy /= l; }
+        this.stick.x = dx; this.stick.y = dy;
+        this.knob.style.transform = `translate(${dx * R}px, ${dy * R}px)`;
+      } else if (e.pointerId === this.look.id) {
+        const dx = e.clientX - this.look.x, dy = e.clientY - this.look.y;
+        this.look.x = e.clientX; this.look.y = e.clientY;
+        this.look.moved += Math.abs(dx) + Math.abs(dy);
+        // the view follows the finger, as in most games; the setting turns it round
+        const k = 0.0045 * this.app().lookSpeed * (this.app().lookInvert ? -1 : 1);
+        this.v.turn(-dx * k, -dy * k, 0);
+      }
+    };
+    const up = (e: PointerEvent) => {
+      if (e.pointerId === this.stick.id) {
+        const tap = this.stick.moved < 8;
+        this.stick = { x: 0, y: 0, id: -1, cx: 0, cy: 0, moved: 0 };
+        this.knob.style.transform = '';
+        stick.classList.remove('live');
+        stick.style.left = stick.style.top = '';
+        if (tap && e.type === 'pointerup') this.tap(e.clientX, e.clientY);
+      } else if (e.pointerId === this.look.id) {
+        if (this.look.moved < 8 && e.type === 'pointerup') this.tap(e.clientX, e.clientY);
+        this.look.id = -1;
+      }
+    };
+    for (const el of [cv, stick]) {
+      el.addEventListener('pointerdown', e => down(e, el));
+      el.addEventListener('pointermove', move);
+      el.addEventListener('pointerup', up);
+      el.addEventListener('pointercancel', up);
+    }
 
-    this.btnsEl.addEventListener('pointerdown', e => {
+    // touch buttons: the held ones let go only when their own finger lifts
+    const held = new Map<number, HTMLElement>();
+    this.root.addEventListener('pointerdown', e => {
       const b = (e.target as HTMLElement).closest<HTMLElement>('[data-b]');
       if (!b) return;
       e.preventDefault();
       this.dev = 'touch';
+      this.wake();
       const k = b.dataset.b!;
-      if (k === 'up' || k === 'down' || k === 'boost' || k === 'jump') this.hold[k] = true;
+      if (HELD.has(k)) {
+        this.hold[k as keyof typeof this.hold] = true;
+        held.set(e.pointerId, b);
+        b.setPointerCapture(e.pointerId);
+        b.classList.add('down');
+      }
       this.touchButton(k);
     });
-    const off = () => { this.hold.up = this.hold.down = this.hold.boost = this.hold.jump = false; };
-    this.btnsEl.addEventListener('pointerup', off);
-    this.btnsEl.addEventListener('pointercancel', off);
-    this.btnsEl.addEventListener('pointerleave', off);
+    const letGo = (e: PointerEvent) => {
+      const b = held.get(e.pointerId);
+      if (!b) return;
+      held.delete(e.pointerId);
+      this.hold[b.dataset.b as keyof typeof this.hold] = false;
+      b.classList.remove('down');
+    };
+    this.root.addEventListener('pointerup', letGo);
+    this.root.addEventListener('pointercancel', letGo);
+    // any touch on the screen brings the faded controls back
+    window.addEventListener('pointerdown', () => this.wake(), true);
+  }
+
+  /** a tap on the view: on foot it uses what is in front of you, otherwise it selects what is under the finger */
+  private tap(x: number, y: number) {
+    if (this.v.mode === 'walk') this.v.prompt?.act();
+    else this.app().select(this.v.pick(x, y));
+  }
+
+  private wake() {
+    this.touched = performance.now();
+    this.root.classList.remove('idle');
   }
 
   private app() { return this.v.app; }
@@ -255,7 +309,7 @@ export class Controls3D {
       + order.map(m => `<div class="col${m === this.v.mode ? ' now' : ''}"><div class="bsub">${TITLE[m]}</div><table>`
         + BINDS[m].map(b => `<tr><td>${b.t}</td><td>${glyphs(b.k, 'kb')}</td><td>${glyphs(b.p, 'pad')}</td></tr>`).join('')
         + `</table></div>`).join('')
-      + `</div><p>${pad ? 'Showing the keyboard and the controller.' : 'Plug in a controller and its buttons show here too.'} Use the helm to fly; leave it to walk the ship, which flies on by itself — the autopilot and wormholes included. The airlock is off the commons to port; outside, the ship holds station until you call it.</p>`;
+      + `</div>${this.dev === 'touch' ? `<p>${TOUCH_HELP}</p>` : ''}<p>${pad ? 'Showing the keyboard and the controller.' : 'Plug in a controller and its buttons show here too.'} Use the helm to fly; leave it to walk the ship, which flies on by itself — the autopilot and wormholes included. The airlock is off the commons to port; outside, the ship holds station until you call it.</p>`;
   }
 
   /** a touch button */
@@ -265,7 +319,8 @@ export class Controls3D {
     if (k === 'faster') this.throttle = clamp(this.throttle * 2, 1e-3, 1e3);
     if (k === 'go') this.goSelected();
     if (k === 'od') this.toggleOd();
-    if (k === 'jump' && v.mode === 'pilot') this.jumpSelected();
+    if (k === 'worm') this.jumpSelected();
+    if (k === 'help') this.sheet();
     if (k === 'map') v.openMap();
     if (k === 'view') v.ship.view = v.ship.view === 'chase' ? 'cockpit' : 'chase';
     if (k === 'leave') { if (v.mode === 'scope') v.leaveScope(); else v.leaveHelm(); }
@@ -423,7 +478,7 @@ export class Controls3D {
     // what you can use, under the crosshair
     const dev = this.dev;
     const useKey = mode === 'eva' ? (dev === 'pad' ? 'A' : 'F') : dev === 'pad' ? 'A' : 'F';
-    const use = r.prompt ? `${dev === 'touch' ? '' : glyphs([useKey], dev === 'pad' ? 'pad' : 'kb')} ${r.prompt}` : '';
+    const use = r.prompt ? `${dev === 'touch' ? '<b>👆</b>' : glyphs([useKey], dev === 'pad' ? 'pad' : 'kb')} ${r.prompt}` : '';
     if (this.useEl.innerHTML !== use) { this.useEl.innerHTML = use; this.useEl.hidden = !use; }
 
     // the bar of main actions, in the glyphs of what was used last
@@ -439,12 +494,17 @@ export class Controls3D {
     // touch buttons for where you are
     if (this.shownMode !== mode) {
       this.shownMode = mode;
-      this.btnsEl.innerHTML = TOUCH[mode].map(([k, t]) => `<button data-b="${k}">${t}</button>`).join('');
+      this.thumbEl.innerHTML = THUMB[mode].map(([k, t]) => `<button data-b="${k}">${t}</button>`).join('');
+      this.railEl.innerHTML = RAIL[mode].map(([k, i, t]) => `<button data-b="${k}"><b>${i}</b><span>${t}</span></button>`).join('');
       this.root.dataset.mode = mode;
     }
-    for (const b of this.btnsEl.querySelectorAll<HTMLElement>('[data-b="od"]')) b.classList.toggle('on', r.od);
-    for (const b of this.btnsEl.querySelectorAll<HTMLButtonElement>('[data-b="use"]')) b.disabled = !r.prompt;
-    for (const b of this.btnsEl.querySelectorAll<HTMLElement>('[data-b="track"]')) b.classList.toggle('on', v.scope.track);
+    for (const b of this.railEl.querySelectorAll<HTMLElement>('[data-b="od"]')) b.classList.toggle('on', r.od);
+    for (const b of this.railEl.querySelectorAll<HTMLElement>('[data-b="view"]')) b.classList.toggle('on', r.view === 'cockpit');
+    for (const b of this.railEl.querySelectorAll<HTMLElement>('[data-b="track"]')) b.classList.toggle('on', v.scope.track);
+    const thrEl = this.thrEl.querySelector('span')!, tt = `×${r.throttle >= 1 ? r.throttle.toFixed(r.throttle < 10 ? 1 : 0) : r.throttle.toPrecision(2)}`;
+    if (thrEl.textContent !== tt) thrEl.textContent = tt;
+    // what has not been touched for a while fades back
+    if (dev === 'touch' && performance.now() - this.touched > 5000) this.root.classList.add('idle');
     const o = Math.min(1, r.flash).toFixed(2);
     if (this.flashEl.style.opacity !== o) this.flashEl.style.opacity = o;
   }

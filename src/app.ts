@@ -91,6 +91,9 @@ export class App {
   brush: { x: number; y: number } | null = null;
   private undoStack: Snapshot[] = [];
   onUndo: (label: string | null) => void = () => {};
+  /** touch look in 3D: how fast (a multiplier), and whether dragging moves the world rather than the view */
+  lookSpeed = 1;
+  lookInvert = false;
   /** the view from inside: loaded the first time it is asked for */
   mode3d = false;
   v3: import('./three/view3d').View3D | null = null;

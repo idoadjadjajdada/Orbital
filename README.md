@@ -14,8 +14,13 @@ npm run test:browser   # smoke test in Chromium, desktop and iPad, after a build
 python3 tools/fetch-moons.py   # refresh the moon table from JPL
 ```
 
-Runs in any current browser, iPad Safari included: touch to throw and
-select, double-tap to follow, pinch to zoom, drag to slide the view.
+Runs in any current browser, iPad and iPhone Safari included: touch to throw
+and select, double-tap to follow, pinch to zoom, drag to slide the view. On a
+small screen what is not needed folds away: the less-used buttons sit behind
+⋯, the bodies to throw in are in a drawer behind ＋ at the start of the tools
+(it closes once you pick one, so you can see where to throw it), the inspector
+shows just a body's name until you open it, and 👁 hides everything to leave
+just the sky.
 
 The view is a flat, top-down pixel-art map. The physics underneath is fully
 3D — tilted orbits, ring planes and moons on their planets' equators are all
@@ -98,8 +103,17 @@ can use; `H` shows every control for every place.
 | **Outside** | `W` `A` `S` `D` `Space` `C` thrusters · `Q` `E` roll · `Shift` boost · wheel thrust level · `F` board (at the airlock) · `G` call the ship · `M` nav map | left stick and triggers thrust, bumpers roll, `A` board or select, `X` call the ship |
 | **Telescope** | mouse aim · wheel zoom · click select · `T` track the target · `F` or `Esc` step back | right stick aims, triggers zoom, `A` select, `X` track, `B` step back |
 
-`V` (or Menu) goes back to the map from anywhere. Touch has a stick, drag to
-look, tap to select (or use, on foot), and buttons for each place.
+`V` (or Menu) goes back to the map from anywhere.
+
+**Touch.** Put your left thumb down anywhere on the left of the screen and a
+stick appears under it, to fly or walk; drag anywhere else to look (the view
+follows your finger; *Settings* can turn that round, and set how fast it
+turns); tap something to select it, or on foot to use what is in front of you.
+The round buttons under your right thumb are held (up, down, boost; jump on
+foot), the rail beside them is tapped (go to, overdrive, wormhole, map, camera,
+leave the helm), − and + above the stick set the throttle, and what you can
+use shows as a big button. Controls you leave alone fade back after a few
+seconds.
 
 **The ship** is about 55 m long. Forward is the **bridge**: the helm, a
 console with live readouts, and a holographic **nav table** showing what is

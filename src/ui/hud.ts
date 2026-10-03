@@ -105,7 +105,13 @@ export class Hud {
     };
     $('helpBtn').onclick = () => { $('help').hidden = !$('help').hidden; };
     $('modeBtn').onclick = () => void app.toggle3D();
-    app.onMode = () => { $('modeBtn').textContent = app.mode3d ? 'Map' : '3D'; $('modeBtn').classList.toggle('on', app.mode3d); this.sync(); };
+    app.onMode = () => {
+      $('modeBtn').textContent = app.mode3d ? 'Map' : '3D';
+      $('modeBtn').classList.toggle('on', app.mode3d);
+      // on a touch screen the 3D view needs its room: the inspector folds to its name
+      if (app.mode3d && matchMedia('(pointer: coarse)').matches) $('inspector').classList.add('min');
+      this.sync();
+    };
     // settings, and the cheat for the clock
     $('setBtn').onclick = () => { $('settings').hidden = !$('settings').hidden; };
     $('sClose').onclick = () => { $('settings').hidden = true; };
@@ -113,8 +119,15 @@ export class Hud {
     cheat.oninput = () => { app.warpLog = Number(cheat.value); };
     $('cheatReal').onclick = () => { app.warpLog = Math.log10(1 / (365.25 * 86400)); };
     $('hClose').onclick = () => { $('help').hidden = true; };
+    this.buildCompact();
     $('clear').onclick = () => app.clear();
-    app.onSelect = () => this.inspect(true);
+    let last: unknown = null;
+    app.onSelect = b => {
+      // on a small screen (or a touch screen in 3D) a newly picked body shows just its name until opened
+      if (b && b !== last && (Hud.compact() || (app.mode3d && matchMedia('(pointer: coarse)').matches))) $('inspector').classList.add('min');
+      last = b;
+      this.inspect(true);
+    };
     app.onToast = m => this.toast(m);
     app.onFrame = () => this.tick();
     window.addEventListener('keydown', e => {
@@ -236,13 +249,22 @@ export class Hud {
     box.appendChild(f);
     this.syncCards();
   }
+  private armedIcon: string | null | undefined;
   private syncCards() {
-    for (const c of $('cards').children) (c as HTMLElement).classList.toggle('on', (c as HTMLElement).dataset.key === this.app.armed);
+    const key = this.app.armed;
+    for (const c of $('cards').children) (c as HTMLElement).classList.toggle('on', (c as HTMLElement).dataset.key === key);
+    const icon = key ? (key === 'custom' ? this.forgeIcon() : this.icons.get(key) ?? null) : null;
+    if (icon === this.armedIcon) return;
+    this.armedIcon = icon;
+    $('drawerBtn').innerHTML = icon ? `<img src="${icon}" alt=""><span>Armed</span>` : '<b>＋</b><span>Bodies</span>';
+    $('drawerBtn').classList.toggle('on', !!key);
   }
 
   arm(key: string | null) {
     this.app.armed = key;
     this.syncCards();
+    // the drawer gets out of the way so you can see where to throw, and its button wears what you picked
+    if (key && Hud.compact()) document.body.classList.remove('drawer');
     if (key) {
       const e = CATALOG.find(c => c.key === key);
       if (e) this.toast(`${e.name}: ${e.blurb} Drag from space to throw it, tap to place it.`);
@@ -269,6 +291,47 @@ export class Hud {
     $('pause').textContent = this.app.paused ? '▶' : '❚❚';
     this.syncCards();
   }
+
+  /**
+   * Small screens: the less-used buttons fold behind ⋯, the bodies to throw
+   * in sit in a drawer behind ＋, the inspector folds down to its title, and
+   * 👁 hides everything to leave just the sky.
+   */
+  private buildCompact() {
+    const app = this.app, body = document.body;
+    $('moreBtn').onclick = () => $('moreBtn').closest('.top-right')!.classList.toggle('more');
+    document.addEventListener('pointerdown', e => {
+      const tr = $('moreBtn').closest('.top-right')!;
+      if (tr.classList.contains('more') && !tr.contains(e.target as Node)) tr.classList.remove('more');
+    });
+    const clean = (on: boolean) => { body.classList.toggle('clean', on); $('showUi').hidden = !on; };
+    $('hideBtn').onclick = () => { clean(true); $('moreBtn').closest('.top-right')!.classList.remove('more'); };
+    $('showUi').onclick = () => clean(false);
+    $('drawerBtn').onclick = () => body.classList.toggle('drawer');
+    $('iMin').onclick = e => { e.stopPropagation(); $('inspector').classList.toggle('min'); };
+    $('inspector').querySelector('.ihead')!.addEventListener('click', e => {
+      if (!(e.target as HTMLElement).closest('button') && $('inspector').classList.contains('min')) $('inspector').classList.remove('min');
+    });
+    // the look settings, kept on this device
+    const sp = $<HTMLInputElement>('lookSpeed'), inv = $<HTMLInputElement>('lookInvert');
+    const show = () => { $('lookV').textContent = `×${app.lookSpeed.toFixed(2)}`; };
+    try {
+      const saved = JSON.parse(localStorage.getItem('orbital.look') ?? 'null');
+      if (saved) { sp.value = String(saved.speed ?? 0); inv.checked = !!saved.invert; }
+    } catch { /* no storage: defaults */ }
+    const apply = () => {
+      app.lookSpeed = Math.pow(3, Number(sp.value));
+      app.lookInvert = inv.checked;
+      show();
+      try { localStorage.setItem('orbital.look', JSON.stringify({ speed: Number(sp.value), invert: inv.checked })); } catch { /* fine */ }
+    };
+    sp.oninput = apply;
+    inv.onchange = apply;
+    apply();
+  }
+
+  /** a small screen, where panels fold away */
+  static compact() { return matchMedia('(max-width: 720px), (max-height: 520px)').matches; }
 
   private buildInspector() {
     $('iClose').onclick = () => this.app.select(null);
