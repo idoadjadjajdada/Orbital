@@ -15,29 +15,66 @@ concurrency:
   group: pages-${{ github.ref }}
   cancel-in-progress: true
 
+# Everything that can run side by side does: the build, the unit tests, and the browser
+# suite cut into parts, one job each. The browser jobs use the Chrome already on the
+# runner rather than downloading one. Deploying waits only for all of them to pass.
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - run: npm test
+      - run: npm ci --no-audit --no-fund
       - run: npm run build
-      - run: npx playwright install --with-deps chromium
-      - run: npm run test:browser
-        timeout-minutes: 10
       - uses: actions/upload-pages-artifact@v3
         if: github.ref == 'refs/heads/main'
         with:
           path: dist
 
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: true
+      matrix:
+        part: [map, ship, land, giant, touch]
+    name: browser (${{ matrix.part }})
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: 1
+      - name: npm run test:browser
+        env:
+          PARTS: ${{ matrix.part }}
+        run: |
+          # the runner's own Chrome if it has one; Playwright's otherwise
+          if [ -x /usr/bin/google-chrome ]; then export CHROMIUM_PATH=/usr/bin/google-chrome; else npx playwright install --with-deps chromium; fi
+          npm run test:browser
+
   deploy:
     if: github.ref == 'refs/heads/main'
-    needs: build
+    needs: [build, unit, browser]
     runs-on: ubuntu-latest
     environment:
       name: github-pages

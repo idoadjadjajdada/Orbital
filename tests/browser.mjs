@@ -13,13 +13,34 @@ let fails = 0;
 const until = (pg, fn, arg) => pg.waitForFunction(fn, arg, { timeout: 8000 }).then(() => true, () => false);
 const ok = (name, cond, extra = '') => { if (!cond) fails++; console.log(`${cond ? '  ok  ' : 'FAIL  '}${name}${extra ? `  [${extra}]` : ''}`); };
 
-try {
-  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
-  const errs = [];
+/**
+ * The suite is in parts, each in a page of its own, so they can run side by side (CI runs one
+ * part per job): PARTS=map,ship picks some; all of them by default.
+ */
+const ALL = ['map', 'ship', 'land', 'giant', 'touch'];
+const want = new Set((process.env.PARTS || ALL.join(',')).split(',').map(x => x.trim()).filter(Boolean));
+for (const w of want) if (!ALL.includes(w)) { console.log(`unknown part ${w}: the parts are ${ALL.join(', ')}`); process.exit(2); }
+let page, errs = [];
+/** a fresh page with the app booted */
+async function fresh() {
+  if (page) await page.close();
+  page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  errs = [];
   page.on('pageerror', e => errs.push(e.message));
   page.on('console', m => { if (m.type() === 'error') errs.push(m.text()); });
   await page.goto('http://localhost:4174/');
   await page.waitForFunction(() => window.orbital && window.orbital.world.time > 0, null, { timeout: 30000 });
+}
+const part = async name => {
+  if (!want.has(name)) return false;
+  console.log(`-- ${name}`);
+  await fresh();
+  return true;
+};
+const clean = name => ok(`${name}: no errors`, errs.length === 0, errs.join(' | '));
+
+try {
+  if (await part('map')) {
   ok('boots without errors', errs.length === 0, errs.join(' | '));
   ok('the solar system is loaded', await page.evaluate(() => window.orbital.world.sources.length) >= 20);
   const nCtl = await page.evaluate(() => window.orbital.world.sources.length);
@@ -154,6 +175,11 @@ try {
     ok(`${key} places and runs`, await page.evaluate(() => window.orbital.world.bodies.length > 0 && isFinite(window.orbital.world.time)));
   }
 
+  ok('Mars is painted from MOLA and the mosaic, fetched once', await page.evaluate(async () => (await import('/src/pixel/marsdata.ts')).marsReady));
+  clean('map');
+  }
+
+  if (await part('ship')) {
   // the view from inside
   await page.evaluate(() => { const a = window.orbital; a.loadPreset('earth'); a.select(a.world.sources.find(b => b.name === 'Earth')); });
   await page.keyboard.press('KeyV');
@@ -164,10 +190,15 @@ try {
   const flew = await until(page, p => { const q = window.orbital.v3.where(); return Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) > 0; }, p0);
   await page.keyboard.up('KeyW');
   ok('W flies forward', flew);
+  await page.keyboard.press('KeyN');
+  ok('N switches the floodlight on', await until(page, () => window.orbital.v3.lights.flood && window.orbital.v3.lights.uniforms.lampPos.value[0].w > 0));
+  await page.keyboard.press('KeyN');
+  ok('and off', await page.evaluate(() => !window.orbital.v3.lights.flood));
+  ok('the Sun boils: its surface is the live shader', await page.evaluate(() => { const a = window.orbital, v = a.v3, s = a.world.sources.find(b => b.name === 'Sun'); return !!v.objs.get(s)?.mat?.uniforms?.time; }));
   await page.evaluate(() => { const a = window.orbital; a.select(a.world.sources.find(b => b.name === 'Moon')); });
   await page.keyboard.press('KeyT');
   await page.waitForTimeout(1500);
-  ok('the autopilot engages overdrive for the Moon', await page.evaluate(() => window.orbital.v3.ship.odLevel > 0));
+  ok('the autopilot engages overdrive for the Moon', await until(page, () => window.orbital.v3.ship.odLevel > 0));
   await page.waitForTimeout(7000);
   ok('T flies to the selection', await page.evaluate(() => window.orbital.v3.nearest().b?.name === 'Moon'));
   await page.keyboard.press('KeyM');
@@ -276,7 +307,10 @@ try {
   await page.keyboard.press('KeyV');
   await page.waitForTimeout(300);
   ok('V goes back to the map', await page.evaluate(() => !window.orbital.mode3d && document.getElementById('c3').hidden));
+  clean('ship');
+  }
 
+  if (await part('land')) {
   // landing: fly to a real site, set down, step out, walk, scan, send a rover, back aboard, lift off
   await page.evaluate(() => { const a = window.orbital; a.loadPreset('earth'); a.select(a.world.sources.find(b => b.name === 'Moon')); });
   await page.keyboard.press('KeyV');
@@ -288,6 +322,10 @@ try {
   ok('each leg telescopes to the ground under it', await page.evaluate(() => window.orbital.v3.landing.reach.length === 6 && window.orbital.v3.landing.reach.every(r => r > 0.3 && r < 20)));
   await page.evaluate(() => { const v = window.orbital.v3; v.leaveHelm(); v.use('airlock'); });
   ok('the airlock lets you down the ladder onto the Moon', await page.evaluate(() => window.orbital.v3.mode === 'surface' && /On Moon/.test(window.orbital.v3.readout().where) && /0\.17 g · vacuum/.test(window.orbital.v3.readout().near)));
+  await page.evaluate(() => window.orbital.v3.hangLamp());
+  ok('a lamp hangs in the sky over where you stand', await until(page, () => { const v = window.orbital.v3, L = v.lights.lamps[0]; return v.lights.lamps.length === 1 && !!L && L.b.name === 'Moon' && v.lights.uniforms.lampPos.value[2].w > 0; }));
+  ok('and can be sent north', await page.evaluate(() => { const v = window.orbital.v3, L = v.lights.lamps[0], la = L.toLat; v.lights.nudge(L, 'n'); return L.toLat > la; }));
+  await page.evaluate(() => { const v = window.orbital.v3; v.lights.remove(v.lights.lamps[0]); });
   ok('Apollo 11 is found and logged', await until(page, () => window.orbital.v3.logbook.finds.some(f => /Apollo 11/.test(f.what))));
   const s0 = await page.evaluate(() => [...window.orbital.v3.surf.n]);
   await page.keyboard.down('KeyW'); await page.waitForTimeout(1500); await page.keyboard.up('KeyW');
@@ -330,9 +368,13 @@ try {
   await page.keyboard.press('KeyF');
   ok('docked, you are in the hangar', await page.evaluate(() => window.orbital.v3.mode === 'walk' && window.orbital.v3.foot.deck === 1 && window.orbital.v3.shuttle.state === 'docked'));
   await page.evaluate(() => window.orbital.v3.use('helm'));
+  clean('land');
+  }
+
+  if (await part('giant')) {
   // into a giant, and a probe after you
   await page.evaluate(() => { const a = window.orbital; a.loadPreset('jupiter'); a.select(a.world.sources.find(b => b.name === 'Jupiter')); });
-  await page.keyboard.press('KeyV'); await page.keyboard.press('KeyV');
+  await page.keyboard.press('KeyV');
   await page.waitForFunction(() => window.orbital.v3?.active, null, { timeout: 30000 });
   await page.evaluate(() => {
     const v = window.orbital.v3, b = window.orbital.selected, T = window.__THREE, sun = window.orbital.world.sources.find(x => x.name === 'Sun');
@@ -345,9 +387,11 @@ try {
   ok('a probe falls into it, reading the air, until it is crushed', await page.waitForFunction(() => { const c = window.orbital.v3.fleet.crafts.find(x => x.kind === 'probe'); return c && c.state === 'lost' && c.profile.length > 5 && /crushed/.test(c.status); }, null, { timeout: 150000 }).then(() => true, () => false));
   await page.keyboard.press('KeyV');
 
-  ok('still no errors', errs.length === 0, errs.join(' | '));
-  await page.close();
+  clean('giant');
+  }
 
+  if (want.has('touch')) {
+  console.log('-- touch');
   // the same app on an iPad: touch only, no hover, no keyboard
   const ipad = await browser.newContext({ viewport: { width: 1194, height: 834 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
   const t = await ipad.newPage();
@@ -425,6 +469,7 @@ try {
   ok('iPhone: and brings it back', await ph.isVisible('#tools'));
   ok('iPhone: no errors', perrs.length === 0, perrs.join(' | '));
   await phone.close();
+  }
 } finally {
   await browser.close();
   await server.close();

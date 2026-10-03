@@ -10,8 +10,10 @@ npm install
 npm run dev        # http://localhost:5173
 npm test           # physics tests (vitest)
 npm run build      # static site in dist/
-npm run test:browser   # smoke test in Chromium, desktop and iPad, after a build
+npm run test:browser   # smoke test in Chromium, desktop and iPad (PARTS=map,ship,land,giant,touch picks parts)
 python3 tools/fetch-moons.py   # refresh the moon table from JPL
+python3 tools/bake-mars.py     # Mars' heights and colour from the MOLA map and mosaic in tools/data
+python3 tools/bake-sun.py      # the Sun's surface from the photograph in tools/data
 ```
 
 Runs in any current browser, iPad and iPhone Safari included: touch to throw
@@ -31,14 +33,39 @@ measured profiles and shadow the planet and are shadowed by it.
 
 **Surfaces are real where they can be.** The Earth's continents, ice caps,
 deserts, lakes and mountain ranges come from Natural Earth (public domain),
-baked by `tools/fetch-earth.py`; the Moon has its maria and rayed craters in
-the right places, Mars its Tharsis volcanoes, Valles Marineris, Hellas and
-polar caps, and Mercury, Venus, Jupiter (bands and the Great Red Spot),
+baked by `tools/fetch-earth.py`. **Mars is measured**: its ground is MOLA's
+laser altimetry (Olympus Mons at 21.9 km, Hellas' floor near −7, the north
+lower than the south) and its colour a true-colour mosaic, both read back by
+`tools/bake-mars.py` from the maps in `tools/data` — the elevation from the
+MOLA map's colour scale, the summits above the scale's top rebuilt to their
+measured heights, the poles from its polar insets, the mosaic fitted to the
+relief so the two line up — and written as two small pictures, 180° W at the
+left like the Earth's, that each painting thread fetches once. Landing on Mars
+puts you on that ground. The Moon has its maria and rayed craters in
+the right places, and Mercury, Venus, Jupiter (bands and the Great Red Spot),
 Saturn, Uranus, Neptune, Io, Europa, Ganymede, Callisto, Titan, Triton,
 Pluto (Sputnik Planitia and Cthulhu), Charon and the other major moons and
 dwarf planets their own painters. Anything else is generated from its style.
-Maps are painted in a background worker and sharpen as a body grows on screen,
-up to 2048 texels round.
+Maps are painted in two background workers and sharpen as a body grows on
+screen, up to 2048 texels round, with the relief kept to 16 bits so it shades
+smoothly close up.
+
+**The Sun is a photograph, alive.** Its surface is an extreme-ultraviolet
+picture of the Sun (coronal loops over the active regions, the dark coronal
+holes), wrapped round the sphere by `tools/bake-sun.py` with no seam, and set
+moving by a shader: the equator turning faster than the poles, the plasma
+drawn along a slowly changing flow, granules boiling under it and the bright
+knots flaring. Every other star wears the same weather in its own colour —
+deep orange on a red dwarf, blue-white on an A star — turned to a face of its
+own.
+
+**Weather on the giants.** Their belts and zones slide past each other on
+alternating jets, eddies wander along them, and lightning flickers in the
+belts on the night side. Jupiter's Great Red Spot, painted with its brick-red
+spiral core, pale collar and turbulent wake, turns on itself (anticlockwise,
+fastest near its rim), as does Neptune's Great Dark Spot. In the rings, clumps
+and wakes go round at the orbital speed of their radius, the inner edge
+lapping the outer, and Saturn's spokes come and go across the B ring.
 
 ## Playing
 
@@ -109,11 +136,11 @@ can use; `H` shows every control for every place.
 
 | | Keyboard and mouse | Controller (Xbox layout) |
 |---|---|---|
-| **At the helm** | click to capture the mouse and steer · `W` `A` `S` `D` fly · `Space` `C` up, down · `Q` `E` roll · `Shift` boost · wheel or `+` `−` throttle · click selects · `T` fly to it · `O` overdrive · `J` wormhole · `M` nav map · `Z` chase view or cockpit · `F` leave the helm | left stick flies, right stick steers, `LT` `RT` down, up, `LB` `RB` roll, `L3` boost, `R3` camera · `A` selects (again: fly there) · `X` overdrive · `Y` wormhole · `B` leave the helm · d-pad ◀ ▶ targets, ▲ ▼ throttle · View nav map |
+| **At the helm** | click to capture the mouse and steer · `W` `A` `S` `D` fly · `Space` `C` up, down · `Q` `E` roll · `Shift` boost · wheel or `+` `−` throttle · click selects · `T` fly to it · `O` overdrive · `J` wormhole · `N` floodlight · `M` nav map · `Z` chase view or cockpit · `F` leave the helm | left stick flies, right stick steers, `LT` `RT` down, up, `LB` `RB` roll, `L3` boost, `R3` camera · `A` selects (again: fly there) · `X` overdrive · `Y` wormhole · `B` leave the helm · d-pad ◀ ▶ targets, ▲ ▼ throttle · View nav map |
 | **On foot** | `W` `A` `S` `D` walk · mouse look · `Shift` run · `Space` jump · `F` or click use · `M` nav map | left stick walks, right stick looks, `L3` run, `X` jump, `A` use, View nav map |
 | **Outside** | `W` `A` `S` `D` `Space` `C` thrusters · `Q` `E` roll · `Shift` boost · wheel thrust level · `F` board (at the airlock) · `G` call the ship · `M` nav map | left stick and triggers thrust, bumpers roll, `A` board or select, `X` call the ship |
 | **Telescope** | mouse aim · wheel zoom · click select · `T` track the target · `F` or `Esc` step back | right stick aims, triggers zoom, `A` select, `X` track, `B` step back |
-| **On the ground** | `W` `A` `S` `D` walk · mouse look · `Shift` run · `Space` jump · `F` board (at the ladder) · `R` scan · `G` call the ship down · `K` mission control | left stick walks, right stick looks, `X` jump, `A` board, `Y` scan, `B` call the ship |
+| **On the ground** | `W` `A` `S` `D` walk · mouse look · `Shift` run · `Space` jump · `F` board (at the ladder) · `R` scan · `G` call the ship down · `N` helmet lamp · `K` mission control | left stick walks, right stick looks, `X` jump, `A` board, `Y` scan, `B` call the ship |
 | **Flying Lander 1** | mouse steers · `W` `A` `S` `D` thrust · `Space` `C` up, down · `Shift` boost · `L` come down or lift off · `F` step out, board, dock · `M` nav map | left stick thrusts, right stick steers, `LT` `RT` down, up, `X` land or lift off, `A` step out or dock |
 | **Watching a craft** | mouse round it · wheel closer, further · `W` `A` `S` `D` drive (a rover) · `[` `]` other craft · `F` or `Esc` back | left stick drives, right stick looks, d-pad ◀ ▶ other craft, ▲ ▼ closer, `B` back |
 
@@ -219,8 +246,18 @@ its northern methane seas. Seas are flat and shine.
 with blue sunsets on Mars (its dust lights a sky the thin gas alone could not),
 orange on Titan, black on the Moon, fading to stars at night. Sunlight reddens
 through a long path of air at sunset; distance hazes toward the sky's colour as
-thickly as the air and its dust make it; under Venus's clouds the light comes
-from the whole sky.
+thickly as the air and its dust make it — on the Earth a mountain 60 km off is
+a pale shape and one past 100 km is gone, and the buildings and craft on the
+ground fade with it, as do their labels, which also stop at the horizon;
+under Venus's clouds the light comes from the whole sky.
+
+**Light you bring.** `N` switches on the ship's floodlight: a beam from its
+nose that reaches the ground from orbit, so the night side can be seen (on foot
+or outside it is your helmet lamp too). Settings has a **night-side light**
+that lifts the dark on every world. And Mission control hangs **lamps in the
+sky**: up to three, each over one place on a world and keeping to it as the
+world turns, lighting the ground round it — send one north, south, east or
+west, call it over where you are, make it brighter or wider, at any time.
 
 **What is there.** The hardware real missions left where they left it: every
 Apollo descent stage with its flag (and the rovers of 15, 16 and 17), Luna 9,
@@ -564,10 +601,14 @@ real waves are invisible), and neutron-star mergers a kilonova.
 src/physics/   integrator, forces, collisions, stars, presets — no DOM, fully tested
 src/pixel/     the map renderer: surface maps (worlds.ts paints the real ones, built in a worker), sprites, rings, particles, lensing, bursts
 src/pixel/data/earth.ts     generated from Natural Earth by tools/fetch-earth.py
+src/pixel/data/mars-*       Mars' heights and colour, baked by tools/bake-mars.py (marsdata.ts loads them)
+src/pixel/data/sun-map.jpg  the Sun's surface, baked by tools/bake-sun.py (star.ts animates it)
 src/three/     the 3D view (three.js, loaded on demand), its flying controls, the ship (hull.ts), its consoles (panels.ts, survey.ts) and its scope;
                the ground (terrain.ts, built in terrainworker.ts; ground.ts draws it with its sky and what stands on it), giant
-               interiors (giant.ts), the craft (fleet.ts, craftmesh.ts), what the instruments read (science.ts) and real sites (sites.ts)
+               interiors (giant.ts), the craft (fleet.ts, craftmesh.ts), what the instruments read (science.ts), real sites (sites.ts),
+               the stars (star.ts) and the lights you bring (lights.ts)
 src/physics/data/moons.ts   generated from JPL by tools/fetch-moons.py
 src/ui/        input and tools, HUD, the body builder, the belt histogram
-tests/         physics.test.ts and landing.test.ts (vitest), browser.mjs (Playwright smoke test, landing included)
+tests/         physics, landing and mars tests (vitest); browser.mjs (Playwright smoke test in parts, run side by side in CI);
+               shot.mjs and surface-shot.mjs take pictures of the 3D view to look at
 ```
