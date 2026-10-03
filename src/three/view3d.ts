@@ -20,6 +20,7 @@ import { gravity } from './science';
 import { Fleet, type CraftKind } from './fleet';
 import { Shuttle } from './shuttle';
 import { Giant, HULL_BAR } from './giant';
+import { starMaterial, tickStar, dropStar } from './star';
 
 /**
  * The sandbox seen from inside it, at true scale. The scene is laid out in
@@ -1706,7 +1707,10 @@ export class View3D {
       group.add(ring);
     } else if (b.cls === 'star' || b.cls === 'wd' || b.cls === 'ns') {
       o.kind = 'star';
-      group.add(new THREE.Mesh(this.sphere, new THREE.MeshBasicMaterial({ color: 0xffffff })));
+      // a true star's surface boils (star.ts); a white dwarf's or a neutron star's is a plain glare
+      const live = b.cls === 'star' ? starMaterial(b.name === 'Sun' || b.look.real === 'Sun', b.star?.teff ?? 5772, ((b.look.seed % 997) + 0.5) / 997) : null;
+      if (live) o.mat = live;
+      group.add(new THREE.Mesh(this.sphere, live ?? new THREE.MeshBasicMaterial({ color: 0xffffff })));
       group.add(this.glow(0xffffff, 5));
     } else {
       o.map = o.base = maps.want(b.look, 128);
@@ -1770,9 +1774,11 @@ export class View3D {
     if (o.kind === 'star') {
       const c = b.cls === 'ns' ? [0.6, 0.75, 1] : starRGB(b.star?.teff ?? 5772);
       const mesh = g.children[0] as THREE.Mesh;
-      (mesh.material as THREE.MeshBasicMaterial).color.setRGB(c[0], c[1], c[2]);
+      if (o.mat) tickStar(o.mat, b.name === 'Sun' || b.look.real === 'Sun', b.star?.teff ?? 5772, performance.now() / 1000);
+      else (mesh.material as THREE.MeshBasicMaterial).color.setRGB(c[0], c[1], c[2]);
       const glow = g.children[1] as THREE.Sprite;
-      glow.material.color.setRGB(c[0], c[1], c[2]);
+      if (b.name === 'Sun' || b.look.real === 'Sun') glow.material.color.setRGB(1, 0.78, 0.42);
+      else glow.material.color.setRGB(c[0], c[1], c[2]);
       g.scale.setScalar(Rm);
       return;
     }
@@ -1970,17 +1976,16 @@ function setPoints(p: THREE.Points, pos: number[], col: number[]) {
 }
 
 function glowTexture() {
-  const cv = document.createElement('canvas');
-  cv.width = cv.height = 64;
+  // smooth and falling off fast, as light scattered round a bright thing does: no blocks, no grey wash
+  const S = 256, cv = document.createElement('canvas');
+  cv.width = cv.height = S;
   const g = cv.getContext('2d')!;
-  const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-  gr.addColorStop(0, 'rgba(255,255,255,1)');
-  gr.addColorStop(0.2, 'rgba(255,255,255,0.5)');
-  gr.addColorStop(1, 'rgba(255,255,255,0)');
+  const gr = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+  for (const [t, a] of [[0, 1], [0.1, 0.62], [0.2, 0.3], [0.32, 0.13], [0.5, 0.045], [0.75, 0.012], [1, 0]]) gr.addColorStop(t, `rgba(255,255,255,${a})`);
   g.fillStyle = gr;
-  g.fillRect(0, 0, 64, 64);
+  g.fillRect(0, 0, S, S);
   const t = new THREE.CanvasTexture(cv);
-  t.magFilter = THREE.NearestFilter;
+  t.colorSpace = THREE.NoColorSpace;
   return t;
 }
 
@@ -2009,7 +2014,8 @@ function dispose(o: Obj) {
     const m = x as THREE.Mesh;
     if (m.geometry && m.geometry.type !== 'SphereGeometry') m.geometry.dispose();
     const mat = m.material as THREE.Material | undefined;
-    if (mat) mat.dispose();
+    if (mat && o.kind === 'star' && mat === o.mat) dropStar(o.mat);
+    else if (mat) mat.dispose();
     // a ring's profile lives in a uniform, which disposing the material leaves alone
     if (mat instanceof THREE.ShaderMaterial) (mat.uniforms.prof?.value as THREE.Texture | undefined)?.dispose();
   });
