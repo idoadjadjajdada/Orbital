@@ -162,6 +162,8 @@ export class Renderer {
   flash(e: SimEvent, now: number) {
     const big = e.kind === 'supernova' || e.kind === 'ia' || e.kind === 'kilonova' || e.kind === 'evaporate' || e.kind === 'gw';
     this.flashes.push({ e, t0: now, dur: e.kind === 'crater' ? 1 : e.kind === 'flare' ? 1.6 : big ? 7 : 2.5 });
+    // only drawn (and so pruned) on the map: while the 3D view is up, keep the list from growing
+    if (this.flashes.length > 64) this.flashes = this.flashes.filter(f => now - f.t0 < f.dur).slice(-64);
   }
   forget(b: Body) { this.sprites.delete(b); this.maps.delete(b); this.trails.delete(b); this.jet.delete(b); this.spinVis.delete(b); }
   clearTrails() { this.trails.clear(); }
@@ -439,16 +441,15 @@ export class Renderer {
     // the surface map, and craters painted into it as they happen
     const isWorld = b.cls !== 'star' && b.cls !== 'wd' && b.cls !== 'ns' && b.cls !== 'bh';
     const entry = isWorld ? this.mapEntry(b, d.r * 2) : undefined;
-    const [fx, fy, fz] = bodyFrame(axis, sv);
     const scars: { d: V3; a: number; k: number }[] = [];
     if (entry && b.craters.length) {
       for (const c of b.craters) {
-        const local: V3 = [c.x * fx[0] + c.y * fx[1] + c.z * fx[2], c.x * fy[0] + c.y * fy[1] + c.z * fy[2], c.x * fz[0] + c.y * fz[1] + c.z * fz[2]];
+        // craters are kept in the body's own turning frame, the frame the map is in
+        const local: V3 = [c.x, c.y, c.z];
         if (b.shape && !b.shape.packed) {
           if (!entry.seen.has(c)) {
             entry.seen.add(c);
-            const lx = c.x * Math.cos(sv) + c.y * Math.sin(sv), ly = -c.x * Math.sin(sv) + c.y * Math.cos(sv);
-            chip(b.shape, Math.atan2(ly, lx), c.a);
+            chip(b.shape, Math.atan2(c.y, c.x), c.a);
             this.sprites.delete(b);
           }
         } else if (entry.map.gas) {

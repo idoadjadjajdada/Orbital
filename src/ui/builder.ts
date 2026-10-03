@@ -28,6 +28,8 @@ export class Builder {
   private test: { shape: Shape; t: number; tEnd: number } | null = null;
   private spin = 0;
   private raf = 0;
+  /** the preview's finished picture (a star, or a shape that has settled), kept rather than painted again every frame */
+  private icon: { key: string; img: HTMLImageElement } | null = null;
 
   constructor(private app: App, private onUse: () => void) {
     this.grid = $<HTMLCanvasElement>('bGrid');
@@ -53,10 +55,11 @@ export class Builder {
     $('bTest').onclick = () => this.startTest();
     $('bUse').onclick = () => { this.close(); this.onUse(); };
     $('bClose').onclick = () => this.close();
+    window.addEventListener('keydown', e => { if (e.code === 'Escape' && !$('builder').hidden) this.close(); });
     for (const b of document.querySelectorAll<HTMLElement>('[data-bmode]')) b.onclick = () => { c.mode = b.dataset.bmode as 'world' | 'star'; this.test = null; this.sync(); this.update(); };
   }
 
-  open() { $('builder').hidden = false; this.sync(); this.update(); this.loop(); }
+  open() { $('builder').hidden = false; this.sync(); this.update(); if (!this.raf) this.loop(); }
   close() { $('builder').hidden = true; cancelAnimationFrame(this.raf); this.raf = 0; }
   get isOpen() { return !$('builder').hidden; }
 
@@ -172,14 +175,17 @@ export class Builder {
     const c = this.app.custom;
     const ctx = this.prev.getContext('2d')!;
     ctx.clearRect(0, 0, 96, 96);
-    if (c.mode === 'star') return;
+    if (c.mode === 'star') { if (this.icon?.key.startsWith('star') && this.icon.img.complete) ctx.drawImage(this.icon.img, 18, 18); return; }
     const shape = this.test?.shape ?? makeShape(c.cells, shapeStats(c.cells, 10 ** c.sizeLog));
     if (shape.packed) {
-      const look = lookFromShape(shape, c.seed);
-      const img = new Image();
-      img.src = iconOf({ look: { ...look, seed: c.seed }, heat: 0, cls: 'rock', tilt: 0.3 }, 60);
-      if (img.complete) ctx.drawImage(img, 18, 18);
-      else img.onload = () => ctx.drawImage(img, 18, 18);
+      const look = { ...lookFromShape(shape, c.seed), seed: c.seed };
+      const key = `shape|${JSON.stringify(look)}`;
+      if (this.icon?.key !== key) {
+        const img = new Image();
+        img.src = iconOf({ look, heat: 0, cls: 'rock', tilt: 0.3 }, 60);
+        this.icon = { key, img };
+      }
+      if (this.icon.img.complete) ctx.drawImage(this.icon.img, 18, 18);
       return;
     }
     const sp = bakeShaped(shape, 60, this.spin, [-0.6, 0.5, 0.65], [1.1, 1.08, 1.04], 0);
@@ -240,9 +246,12 @@ export class Builder {
       out.push(['Lifetime', fmtYears(msLife(c.starMass) + giantLife(c.starMass))]);
       out.push(['Ends as', c.starMass < 8 ? 'a white dwarf' : c.starMass < 25 ? 'a neutron star, after a supernova' : 'a black hole']);
       verdict = '';
-      const img = new Image();
-      img.src = iconOf({ look: { style: 'star', seed: 1, c1: 0, c2: 0 }, heat: 0, cls: 'star', tilt: 0, star: { m0: c.starMass, age: 0, phase: stc.phase, L: stc.L, teff, coreM: 0 } }, 60);
-      img.onload = () => { const ctx = this.prev.getContext('2d')!; ctx.clearRect(0, 0, 96, 96); ctx.drawImage(img, 18, 18); };
+      const key = `star|${c.starMass}`;
+      if (this.icon?.key !== key) {
+        const img = new Image();
+        img.src = iconOf({ look: { style: 'star', seed: 1, c1: 0, c2: 0 }, heat: 0, cls: 'star', tilt: 0, star: { m0: c.starMass, age: 0, phase: stc.phase, L: stc.L, teff, coreM: 0 } }, 60);
+        this.icon = { key, img };
+      }
     }
     $('bStats').innerHTML = out.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
     const vEl = $('bVerdict');

@@ -132,7 +132,8 @@ export class Hud {
     app.onToast = m => this.toast(m);
     app.onFrame = () => this.tick();
     window.addEventListener('keydown', e => {
-      if ((e.target as HTMLElement)?.tagName === 'INPUT' || app.mode3d) return;
+      if ((e.target as HTMLElement)?.tagName === 'INPUT' || app.mode3d || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (!$('builder').hidden) return;
       const n = Number(e.key);
       if (n >= 1 && n <= 9) {
         const list = CATALOG.filter(c => c.shelf === this.shelf);

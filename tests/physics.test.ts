@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Body } from '../src/physics/body';
+import { Body, toBodyFrame } from '../src/physics/body';
 import { World } from '../src/physics/world';
 import { energy } from '../src/physics/integrator';
 import { G, C, M_EARTH, M_JUP, R_EARTH, KMS, schwarzschild, R_SUN } from '../src/physics/units';
@@ -604,5 +604,28 @@ describe('the lab survey', () => {
       expect(s.rows.every(([k, v]) => typeof k === 'string' && typeof v === 'string')).toBe(true);
       expect(s.rows.find(r => r[0] === 'Temperature (est.)')).toBeTruthy();
     }
+  });
+});
+
+describe('robustness', () => {
+  it('two bodies dropped on exactly the same spot do not turn the world to NaN', () => {
+    const w = new World();
+    const sun = point('sun', 1, 0.00465);
+    const a = orbiting(sun, point('a', M_EARTH, R_EARTH), 1, 0);
+    const b = orbiting(sun, point('b', M_EARTH, R_EARTH), 1, 0);
+    w.add(sun); w.add(a); w.add(b);
+    run(w, 0.01, 0.001);
+    expect(w.bodies.every(x => !x.alive || [x.x, x.y, x.z, x.vx, x.vy, x.vz].every(Number.isFinite))).toBe(true);
+  });
+  it('craters are kept in the body’s own turning frame, so they turn with it', () => {
+    const w = buildPreset('earth');
+    const moon = w.sources.find(x => x.name === 'Moon')!;
+    const d = 1 / Math.sqrt(3);
+    const before = toBodyFrame(moon, [d, d, d]);
+    moon.spinAngle += 1;
+    const after = toBodyFrame(moon, [d, d, d]);
+    expect(Math.hypot(...before)).toBeCloseTo(1, 9);
+    expect(Math.hypot(before[0] - after[0], before[1] - after[1])).toBeGreaterThan(0.1);
+    expect(after[2]).toBeCloseTo(before[2], 9);
   });
 });

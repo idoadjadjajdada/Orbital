@@ -19,6 +19,8 @@ class MapService {
   private queue: { key: string; look: Look; w: number }[] = [];
   private worker: Worker | null = null;
   private busy = false;
+  /** the job the worker has, to paint here instead if the worker fails */
+  private job: { key: string; look: Look; w: number } | null = null;
   private tick = 0;
   /** called when a map finishes, so whoever drew the stand-in can redraw */
   onReady: (key: string) => void = () => {};
@@ -29,10 +31,16 @@ class MapService {
         this.worker = new Worker(new URL('./mapworker.ts', import.meta.url), { type: 'module' });
         this.worker.onmessage = (e: MessageEvent<{ key: string; map: SurfaceMap }>) => {
           this.busy = false;
+          this.job = null;
           this.store(e.data.key, e.data.map);
           this.next();
         };
-        this.worker.onerror = () => { this.worker = null; this.busy = false; this.next(); };
+        this.worker.onerror = () => {
+          this.worker = null;
+          this.busy = false;
+          if (this.job) this.queue.push(this.job);
+          this.next();
+        };
       }
     } catch { this.worker = null; }
   }
@@ -89,6 +97,7 @@ class MapService {
     const job = this.queue.shift()!;
     if (this.worker) {
       this.busy = true;
+      this.job = job;
       this.worker.postMessage(job);
     } else {
       // no worker (tests, old browsers): paint it in a moment, on this thread

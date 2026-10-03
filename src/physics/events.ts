@@ -1,4 +1,4 @@
-import { Body, type Cls } from './body';
+import { Body, toBodyFrame, type Cls } from './body';
 import { G, C, KM, KMS, GCC, AU_M, YEAR_S, MSUN_KG, radiusFromDensity, schwarzschild, fmtMass } from './units';
 import { becomeRemnant, msLife, M_TOV, remnantMass, structure, newStar, teffOf } from './stellar';
 import { refreshRoche, rocheFactor } from './catalog';
@@ -259,7 +259,8 @@ export function crater(w: World, T: Body, p: Body) {
   absorbInto(T, p);
   grow(T, rho);
   T.heat = Math.min(1, heatBefore + (p.m / T.m) * (v / vesc) ** 2 * 30);
-  T.craters.push({ x: nx, y: ny, z: nz, a: ang, t: w.time });
+  const [cx, cy, cz] = toBodyFrame(T, [nx, ny, nz]);
+  T.craters.push({ x: cx, y: cy, z: cz, a: ang, t: w.time });
   if (T.craters.length > 64) {
     // the smallest go first; the old ones are eroded or buried
     let worst = 0;

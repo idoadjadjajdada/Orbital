@@ -71,13 +71,18 @@ export class World {
   /** a body was moved by hand: its own step size must be found again */
   moved(b: Body) { b.dtWant = 0; this.dirtyForces = true; }
 
+  /** take out what has died now, rather than at the next step (which, paused, may be a while) */
+  sweep() {
+    const dead = this.bodies.filter(b => !b.alive);
+    if (!dead.length) return;
+    this.bodies = this.bodies.filter(b => b.alive);
+    this.sources = this.bodies.filter(b => b.source);
+    for (const b of dead) this.onRemove?.(b);
+  }
+
   private rebuild() {
     if (this.dirtyStructure) {
-      const dead = this.bodies.filter(b => !b.alive);
-      if (dead.length) {
-        this.bodies = this.bodies.filter(b => b.alive);
-        for (const b of dead) this.onRemove?.(b);
-      }
+      this.sweep();
       this.sources = this.bodies.filter(b => b.source);
       this.dirtyStructure = false;
     }

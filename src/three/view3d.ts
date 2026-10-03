@@ -239,6 +239,8 @@ export class View3D {
   private globeTex: THREE.Texture[] = [];
   /** the eye in ship coordinates, when it is inside the hull */
   private localEye: THREE.Vector3 | null = null;
+  /** the render scale, lowered while frames are slow and raised again when they are quick: the frame time (ms, smoothed) and when it was last judged */
+  private res = { scale: 1, ms: 16, last: 0, t: 0 };
   /** outside: the suit, which moves on its own, and which way it faces */
   suit = { nav: { anchor: null, off: [0, 0, 0], vel: [0, 0, 0] } as Mover, quat: new THREE.Quaternion() };
   /** the telescope: where it points (world) and its field of view, degrees */
@@ -321,6 +323,23 @@ export class View3D {
     this.camera.updateProjectionMatrix();
   }
 
+  /** keep the frame rate up on a slow GPU: render fewer pixels while frames take too long */
+  private adapt(dt: number) {
+    const r = this.res, now = performance.now();
+    if (r.last) r.ms += (Math.min(now - r.last, 300) - r.ms) * 0.1;
+    r.last = now;
+    r.t += dt;
+    if (r.t < 1.5 || this.nav.open) return;
+    r.t = 0;
+    const was = r.scale;
+    if (r.ms > 45 && r.scale > 0.4) r.scale = Math.max(0.4, r.scale * 0.75);
+    else if (r.ms < 22 && r.scale < 1) r.scale = Math.min(1, r.scale / 0.75);
+    if (r.scale !== was) {
+      this.renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1) * r.scale);
+      this.resize();
+    }
+  }
+
   /** Step into the sandbox at the helm, beside the selected body (or the followed one, or the heaviest). */
   enter() {
     this.active = true;
@@ -339,6 +358,7 @@ export class View3D {
     sh.view = 'chase';
     this.mode = 'pilot';
     this.foot.seat = null;
+    this.res.last = 0;
     if (b) {
       const d = Math.max(b.r * 4, 2e-7);
       sh.nav.off = [d * 0.8, -d * 0.55, d * 0.25];
@@ -647,6 +667,7 @@ export class View3D {
   // ---------------------------------------------------------------- frame
   frame(dtReal: number) {
     if (!this.active) return;
+    this.adapt(dtReal);
     const app = this.app, sh = this.ship;
     if (!sh.worm || sh.worm.phase !== 'tunnel') this.pickAnchor(sh.nav);
     if (this.mode === 'eva') this.pickAnchor(this.suit.nav);
@@ -837,10 +858,12 @@ export class View3D {
       }
       this.app.onToast(`${b.name} is on the shelf in the commons now`);
     }
-    const key = this.visited.map(v => v.id).join();
+    // (the key has the maps' widths in it, so a globe sharpens once its map is painted)
+    const ms = this.visited.map(v => maps.want(v.look, 128));
+    const key = this.visited.map((v, k) => `${v.id}:${ms[k].w}`).join();
     if (key !== this.trophyKey) {
       this.trophyKey = key;
-      h.setTrophies(this.visited.map(v => mapTextures(maps.want(v.look, 128), this.renderer)[0]));
+      h.setTrophies(ms.map(m => { const [t, aux] = mapTextures(m, this.renderer); aux.dispose(); return t; }));
     }
   }
 
@@ -1247,7 +1270,7 @@ export class View3D {
       if (o.seen.has(c) || o.map!.gas) continue;
       o.seen.add(c);
       if (!o.owned) { o.map = cloneMap(o.base!); o.owned = true; }
-      paintCrater(o.map!, c.x * fx[0] + c.y * fx[1] + c.z * fx[2], c.x * fy[0] + c.y * fy[1] + c.z * fy[2], c.x * fz[0] + c.y * fz[1] + c.z * fz[2], c.a);
+      paintCrater(o.map!, c.x, c.y, c.z, c.a);
       fresh = true;
     }
     if (fresh) writeMaps(o.tex!, o.aux!, o.map!);
@@ -1425,8 +1448,11 @@ function dispose(o: Obj) {
     if (m.geometry && m.geometry.type !== 'SphereGeometry') m.geometry.dispose();
     const mat = m.material as THREE.Material | undefined;
     if (mat) mat.dispose();
+    // a ring's profile lives in a uniform, which disposing the material leaves alone
+    if (mat instanceof THREE.ShaderMaterial) (mat.uniforms.prof?.value as THREE.Texture | undefined)?.dispose();
   });
   o.tex?.dispose();
+  o.aux?.dispose();
 }
 
 

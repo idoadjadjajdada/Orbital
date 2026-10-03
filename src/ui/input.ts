@@ -31,7 +31,7 @@ export class Input {
     canvas.addEventListener('pointerdown', e => this.down(e));
     window.addEventListener('pointermove', e => this.move(e));
     window.addEventListener('pointerup', e => this.up(e));
-    window.addEventListener('pointercancel', e => this.up(e));
+    window.addEventListener('pointercancel', e => this.cancel(e));
     canvas.addEventListener('wheel', e => { e.preventDefault(); this.zoomAt(Math.exp(-e.deltaY * 0.0015), e.offsetX, e.offsetY); }, { passive: false });
     canvas.addEventListener('dblclick', e => {
       const b = this.app.view.pick(e.offsetX, e.offsetY);
@@ -142,6 +142,20 @@ export class Input {
         break;
       }
     }
+  }
+
+  /** a touch the system took back (a swipe from the edge, a call): undo what it was doing rather than finish it */
+  private cancel(e: PointerEvent) {
+    if (!this.pointers.has(e.pointerId)) return;
+    if (this.mode === 'touch2') { this.up(e); return; }
+    this.pointers.delete(e.pointerId);
+    const app = this.app;
+    if (this.mode === 'push') { app.push = null; app.view.setAim(null, null); }
+    if (this.mode === 'grab') this.dropHeld();
+    app.bombard = null; app.field = null; app.laser = null; app.brush = null;
+    this.cancelAim();
+    this.mode = 'none';
+    this.pressBody = null;
   }
 
   private up(e: PointerEvent) {
@@ -326,9 +340,14 @@ export class Input {
     const tag = (e.target as HTMLElement)?.tagName;
     if (tag === 'INPUT' || tag === 'SELECT') return;
     const app = this.app;
-    if (e.code === 'KeyV' && !e.metaKey && !e.ctrlKey) { void app.toggle3D(); return; }
+    if (e.code === 'KeyV' && !e.metaKey && !e.ctrlKey && !e.altKey) { void app.toggle3D(); return; }
     // in 3D the flying controls own the keyboard
     if (app.mode3d) return;
+    // undo, and otherwise leave the browser's shortcuts (copy, select all, new tab…) alone
+    if (e.code === 'KeyZ' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); app.undo(); return; }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    // with the builder open, its keys are its own
+    if (!(document.getElementById('builder')?.hidden ?? true)) return;
     switch (e.code) {
       case 'Space': e.preventDefault(); if (!e.repeat) app.paused = !app.paused; break;
       case 'BracketLeft': app.warpLog = Math.max(-7.5, app.warpLog - 0.25); break;

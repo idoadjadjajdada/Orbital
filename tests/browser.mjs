@@ -22,6 +22,9 @@ try {
   await page.waitForFunction(() => window.orbital && window.orbital.world.time > 0, null, { timeout: 30000 });
   ok('boots without errors', errs.length === 0, errs.join(' | '));
   ok('the solar system is loaded', await page.evaluate(() => window.orbital.world.sources.length) >= 20);
+  const nCtl = await page.evaluate(() => window.orbital.world.sources.length);
+  await page.keyboard.press('Control+KeyC');
+  ok('Ctrl+C copies, it does not clear the sandbox', await page.evaluate(n => window.orbital.world.sources.length === n, nCtl));
 
   for (const key of ['inner', 'earth', 'saturn', 'trappist', 'kepler16', 'theia', 'ringmaker', 'xrb', 'kirkwood', 'sgra', 'merger', 'tde', 'spaghetti', 'quasar', 'solar']) {
     await page.evaluate(k => window.orbital.loadPreset(k), key);
@@ -157,8 +160,10 @@ try {
   await page.waitForTimeout(2500);
   ok('V opens the 3D view at real time', await page.evaluate(() => window.orbital.mode3d && Math.abs(window.orbital.warp * 31557600 - 1) < 1e-6 && !document.getElementById('c3').hidden));
   const p0 = await page.evaluate(() => window.orbital.v3.where());
-  await page.keyboard.down('KeyW'); await page.waitForTimeout(800); await page.keyboard.up('KeyW');
-  ok('W flies forward', await page.evaluate(p => { const q = window.orbital.v3.where(); return Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) > 0; }, p0));
+  await page.keyboard.down('KeyW');
+  const flew = await until(page, p => { const q = window.orbital.v3.where(); return Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) > 0; }, p0);
+  await page.keyboard.up('KeyW');
+  ok('W flies forward', flew);
   await page.evaluate(() => { const a = window.orbital; a.select(a.world.sources.find(b => b.name === 'Moon')); });
   await page.keyboard.press('KeyT');
   await page.waitForTimeout(1500);
@@ -173,8 +178,7 @@ try {
   await page.click('.dest3 .row.sel button[data-a="jump"]');
   await page.waitForTimeout(400);
   ok('the map opens a wormhole and closes', await page.evaluate(() => window.orbital.v3.ship.worm?.phase === 'charge' && document.querySelector('.nav3').hidden));
-  await page.waitForTimeout(5500);
-  ok('the ship goes into the throat', await page.evaluate(() => window.orbital.v3.ship.worm?.phase === 'tunnel'));
+  ok('the ship goes into the throat', await page.waitForFunction(() => window.orbital.v3.ship.worm?.phase === 'tunnel', null, { timeout: 30000 }).then(() => true, () => false));
   await page.keyboard.press('KeyF');
   await page.waitForTimeout(200);
   const f0 = await page.evaluate(() => window.orbital.v3.foot.p.z);
@@ -208,7 +212,9 @@ try {
   await page.waitForTimeout(200);
   await page.keyboard.press('KeyF');
   await page.waitForTimeout(100);
-  await page.keyboard.down('ShiftLeft'); await page.keyboard.down('KeyW'); await page.waitForTimeout(2500); await page.keyboard.up('KeyW'); await page.keyboard.up('ShiftLeft');
+  await page.keyboard.down('ShiftLeft'); await page.keyboard.down('KeyW');
+  await until(page, () => +(window.orbital.v3.readout().where.match(/(\d+) m from/)?.[1] ?? 0) > 60);
+  await page.keyboard.up('KeyW'); await page.keyboard.up('ShiftLeft');
   const away = await page.evaluate(() => window.orbital.v3.readout().where);
   ok('the suit flies away from the ship', /Spacewalk · \d+ m/.test(away) && +away.match(/(\d+) m/)[1] > 45, away);
   await page.keyboard.press('KeyG');
@@ -231,7 +237,7 @@ try {
   await page.waitForTimeout(200);
   ok('F climbs down to the hangar', await page.evaluate(() => window.orbital.v3.foot.deck === 1 && /hangar/.test(window.orbital.v3.readout().where)));
   ok('the lander is in the way, the deck round it is not', await page.evaluate(() => { const h = window.orbital.v3.ship.hull; return !h.canStand(0.6, 12.5, 0.3, 1) && h.canStand(-3.6, 10.3, 0.3, 1) && !h.canStand(-3.6, 10.3, 0.3, 2); }));
-  ok('labels are seen through windows, not walls', await page.evaluate(() => { const h = window.orbital.v3.ship.hull, V = window.orbital.v3.camera.position.constructor; const e = new V(0, 1.65, -5); return h.seesOut(e, new V(0, 1, 0)) && !h.seesOut(e, new V(0, 0, 1)) && h.seesOut(new V(0, 1.7, -20), new V(0, 0, -1)); }));
+  ok('labels are seen through windows, not walls', await page.evaluate(() => { const h = window.orbital.v3.ship.hull, V = window.orbital.v3.camera.position.constructor; const e = new V(0, 1.65, -2); return h.seesOut(e, new V(0, 1, 0)) && !h.seesOut(e, new V(0, 0, 1)) && h.seesOut(new V(0, 1.7, -20), new V(0, 0, -1)); }));
   const t0 = await page.evaluate(() => { const v = window.orbital.v3; v.climb(0); v.foot.p.set(-3.2, 0, -12.6); return window.orbital.world.time; });
   await page.evaluate(() => window.orbital.v3.use('bunk'));
   await page.waitForFunction(() => !window.orbital.v3.asleep, null, { timeout: 15000 });

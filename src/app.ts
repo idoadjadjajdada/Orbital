@@ -99,15 +99,19 @@ export class App {
   /** the view from inside: loaded the first time it is asked for */
   mode3d = false;
   v3: import('./three/view3d').View3D | null = null;
-  private warp2d = -0.6;
+  warp2d = -0.6;
   onMode: () => void = () => {};
 
   /** Switch between the map and the 3D view. In 3D the clock runs at one second a second unless the cheat says otherwise. */
+  private loading3d: Promise<unknown> | null = null;
   async toggle3D() {
     if (!this.mode3d) {
       if (!this.v3) {
-        const { View3D } = await import('./three/view3d');
-        this.v3 = new View3D(this);
+        // pressed again while three.js loads: once is enough
+        if (this.loading3d) return;
+        this.loading3d = import('./three/view3d').then(({ View3D }) => { this.v3 = new View3D(this); });
+        try { await this.loading3d; } finally { this.loading3d = null; }
+        if (this.mode3d || !this.v3) return;
       }
       this.mode3d = true;
       this.warp2d = this.warpLog;
@@ -215,6 +219,12 @@ export class App {
     this.view.scale = this.view.scaleGoal;
     this.warpLog = Math.log10(info.warp);
     this.paused = false;
+    // in 3D: the clock stays at real time (the system's own speed is for the map), and the ship starts over by the new system
+    if (this.mode3d && this.v3) {
+      this.warp2d = this.warpLog;
+      this.warpLog = Math.log10(1 / (365.25 * 86400));
+      this.v3.enter();
+    }
   }
 
   clear() {
@@ -264,6 +274,7 @@ export class App {
     this.remember(`deleting ${b.name}`);
     this.world.kill(b);
     this.world.structural();
+    this.world.sweep();
   }
 
   // ---------------------------------------------------------------- tools
@@ -371,7 +382,7 @@ export class App {
       const dx = v.sx(b.x) - x, dy = v.sy(b.y) - y;
       if (dx * dx + dy * dy < rr * rr) { this.world.kill(b); n++; }
     }
-    if (n) this.world.structural();
+    if (n) { this.world.structural(); this.world.sweep(); }
   }
 
   /** A new body from the armed catalogue entry or the builder. */
@@ -627,7 +638,8 @@ export class App {
   }
 
   loop = () => {
-    this.frame();
+    // the next frame is asked for first, so one that throws cannot stop the clock for good
     requestAnimationFrame(this.loop);
+    try { this.frame(); } catch (e) { console.error(e); }
   };
 }

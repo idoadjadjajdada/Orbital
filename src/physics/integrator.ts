@@ -274,6 +274,8 @@ export class Hermite {
       const dx = s.px - xi, dy = s.py - yi, dz = s.pz - zi;
       const dvx = s.pvx - vxi, dvy = s.pvy - vyi, dvz = s.pvz - vzi;
       const r2 = dx * dx + dy * dy + dz * dz;
+      // two bodies on exactly the same spot would turn everything to NaN: the collision code deals with them
+      if (!(r2 > 0)) continue;
       const rv = dx * dvx + dy * dvy + dz * dvz;
       const v2 = dvx * dvx + dvy * dvy + dvz * dvz;
       const inv2 = 1 / r2, inv = Math.sqrt(inv2), inv3 = inv * inv2;

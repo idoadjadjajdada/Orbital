@@ -106,7 +106,7 @@ export class Body {
   dens = 3;
   /** mass is an estimate from an assumed size and density, not a measurement */
   sizeGuess = false;
-  /** craters, in the body's own rotating frame: unit direction, angular radius (rad), sim time made */
+  /** craters, in the body's own turning frame (see `toBodyFrame`): unit direction, angular radius (rad), sim time made */
   craters: { x: number; y: number; z: number; a: number; t: number }[] = [];
   /** a hand-drawn body: its outline and what it is made of, while it holds a shape */
   shape?: Shape;
@@ -153,4 +153,24 @@ export class Body {
 
   setPos(x: number, y: number, z: number) { this.x = x; this.y = y; this.z = z; }
   setVel(vx: number, vy: number, vz: number) { this.vx = vx; this.vy = vy; this.vz = vz; }
+}
+
+/**
+ * A direction in the sandbox's axes, in a body's own turning frame: z along
+ * its spin axis, x towards its prime meridian as it has turned by now. The
+ * renderers wear the surface map in the same frame (pixel/sprites bodyFrame).
+ */
+export function toBodyFrame(b: Body, d: [number, number, number]): [number, number, number] {
+  const t = b.tilt, n = b.node;
+  const a: [number, number, number] = [Math.sin(t) * Math.sin(n), -Math.sin(t) * Math.cos(n), Math.cos(t)];
+  const ref: [number, number, number] = Math.abs(a[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
+  const cr = (u: number[], v: number[]): [number, number, number] => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  let e1 = cr(ref, a);
+  const l = Math.hypot(e1[0], e1[1], e1[2]);
+  e1 = [e1[0] / l, e1[1] / l, e1[2] / l];
+  const e2 = cr(a, e1);
+  const c = Math.cos(b.spinAngle), s = Math.sin(b.spinAngle);
+  const x = [c * e1[0] + s * e2[0], c * e1[1] + s * e2[1], c * e1[2] + s * e2[2]];
+  const y = cr(a, x);
+  return [d[0] * x[0] + d[1] * x[1] + d[2] * x[2], d[0] * y[0] + d[1] * y[1] + d[2] * y[2], d[0] * a[0] + d[1] * a[1] + d[2] * a[2]];
 }
