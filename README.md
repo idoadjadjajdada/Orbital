@@ -102,7 +102,7 @@ world wears the same surface map (craters and all) it has on the map, with
 bump-mapped relief, a soft terminator, glinting seas, drifting clouds and an
 atmosphere at the limb. three.js is loaded only when you first open it.
 
-There are four places to be, and the controls follow you. A bar along the
+There are six places to be, and the controls follow you. A bar along the
 bottom shows the main actions for where you are, in the glyphs of whatever you
 last used (keys or a controller); a prompt under the crosshair says what you
 can use; `H` shows every control for every place.
@@ -113,6 +113,11 @@ can use; `H` shows every control for every place.
 | **On foot** | `W` `A` `S` `D` walk · mouse look · `Shift` run · `Space` jump · `F` or click use · `M` nav map | left stick walks, right stick looks, `L3` run, `X` jump, `A` use, View nav map |
 | **Outside** | `W` `A` `S` `D` `Space` `C` thrusters · `Q` `E` roll · `Shift` boost · wheel thrust level · `F` board (at the airlock) · `G` call the ship · `M` nav map | left stick and triggers thrust, bumpers roll, `A` board or select, `X` call the ship |
 | **Telescope** | mouse aim · wheel zoom · click select · `T` track the target · `F` or `Esc` step back | right stick aims, triggers zoom, `A` select, `X` track, `B` step back |
+| **On the ground** | `W` `A` `S` `D` walk · mouse look · `Shift` run · `Space` jump · `F` board (at the ladder) · `R` scan · `G` call the ship down · `K` mission control | left stick walks, right stick looks, `X` jump, `A` board, `Y` scan, `B` call the ship |
+| **Watching a craft** | mouse round it · wheel closer, further · `W` `A` `S` `D` drive (a rover) · `[` `]` other craft · `F` or `Esc` back | left stick drives, right stick looks, d-pad ◀ ▶ other craft, ▲ ▼ closer, `B` back |
+
+At the helm, `L` (or `X` near the ground) lands and lifts off, and `K` anywhere
+aboard opens **Mission control**.
 
 `V` (or Menu) goes back to the map from anywhere.
 
@@ -150,9 +155,9 @@ seconds.
   wormhole drive recharges slowly) or wormhole (a 15-second recharge, a slower,
   lower overdrive). A hatch leads down to…
 - The **hangar**, the belly pod on the lower deck: a lander parked over the bay
-  doors, the **landing survey** of nearby worlds, fuel, suits. The lander is
-  not flight-ready yet — landing is a later update — but its doors and legs
-  are in place.
+  doors, the **landing survey** of nearby worlds, fuel, suits, and **Mission
+  control**, where the probes, orbiters, landers, rovers, stations and bases go
+  out from (the bay doors open as each one leaves).
 
 Signs over the doors say where they go, and labels for worlds show through the
 windows, not the walls. Leave the helm and the ship flies on by itself: the
@@ -184,8 +189,105 @@ wormhole to. Wheel or pinch to zoom, drag to pan, tap to select, double-tap to
 go; on a controller the left stick pans, the triggers zoom, the d-pad picks,
 `A` goes, `Y` opens a wormhole, `X` finds the ship, `B` closes it.
 
-Coming next: landing, with terrain, caves and formations generated from what
-each world is made of.
+### Landing
+
+Fly down within 8 km of any solid world's ground and **land** (`L`). The ship
+levels itself on the slope and comes down, slowing to a walking pace; each of
+its six legs telescopes to the ground under it, and a ladder drops from the
+airlock. Step outside from the commons and you are **on the ground**, in that
+world's gravity — a long, slow jump on the Moon, a short one on the Earth —
+under its sky. `L` again lifts off. Out in a suit, fly down to the ground and
+you land on your feet; `G` brings the ship down beside you. Mission control
+lists the real landing sites and flies you to any of them.
+
+**The ground** comes from the same painter as the world's map, so Olympus
+Mons, Hellas, the maria and the Natural Earth continents are where the map has
+them, scaled to each world's measured relief (the spread of its elevations
+from LOLA, MOLA and Magellan: the Moon's maria sit 2 km below its highlands,
+Olympus 25 km over Hellas). Below what the map can hold, fractal hills, crater
+fields at every scale on airless worlds (fresh and worn), boulders strewn in a
+power law, and dunes where there is sand and wind carry the detail down to the
+metre. It is built in a worker as rings round the point under you, fine
+underfoot and coarse at the horizon, and rebuilt as you move. Venus's and
+Titan's maps are their cloud tops, so their ground has its own painters, from
+the radar: Ishtar, Maxwell Montes, Aphrodite; Titan's dune seas, Xanadu and
+its northern methane seas. Seas are flat and shine.
+
+**The sky** is the colour the air makes it: blue on the Earth, butterscotch
+with blue sunsets on Mars (its dust lights a sky the thin gas alone could not),
+orange on Titan, black on the Moon, fading to stars at night. Sunlight reddens
+through a long path of air at sunset; distance hazes toward the sky's colour as
+thickly as the air and its dust make it; under Venus's clouds the light comes
+from the whole sky.
+
+**What is there.** The hardware real missions left where they left it: every
+Apollo descent stage with its flag (and the rovers of 15, 16 and 17), Luna 9,
+Lunokhod 1, the Chang'e landers and Yutus, Chandrayaan-3, SLIM, the Vikings,
+Pathfinder, Spirit, Opportunity, Curiosity, Perseverance, Zhurong, InSight, the
+Veneras, Huygens; on the Earth its 42 largest cities, lit at night. The Earth's
+plants and animals are those of the biome you stand in — spruce and moose in
+the taiga, kapok trees and jaguars in the rainforest, saguaro and dromedaries
+in the desert, 50 species in all, with their Latin names.
+
+**Worlds with life of their own.** A made-up world's life is rolled from its
+seed and weighted by how habitable it is: in its star's habitable zone
+(Kopparapu et al. 2013), at a temperature where water is liquid, with water to
+hand, and of a mass that holds an atmosphere. It may have microbes; plants
+coloured for its star (green under a G star, yellow-orange under a K, near
+black under an M dwarf, as Kiang et al. 2007 worked out); animals that wander
+about; or — rarely — a civilisation, whose towns of domes, towers and spires
+stand on its continents. There is free oxygen in its air only if something
+makes it. **Discoveries** — each site, species, life form and town you come
+across — go in the captain's log.
+
+### Inside a giant
+
+There is no landing on a gas giant, but you can go in. Below the cloud tops
+the air thickens and heats on its adiabat (Jupiter's 425 K and 22 bar at
+150 km down, as the Galileo probe measured), and the ship goes down through
+the decks real descents found — on Jupiter ammonia ice at 0.7 bar, ammonium
+hydrosulphide at 2, water at 5, where the lightning is — until the hull can
+take no more, at 1,000 bar. The decks wear the planet's own map, so the belts
+and zones are where they are seen from outside; they drift on the zonal winds
+and wind round the Great Red Spot (Neptune's dark spot, Saturn's polar
+vortex). Between them is fog that darkens as the sunlight fails, lit from
+inside by lightning, and the winds carry the ship along and shake it.
+
+### Mission control and the fleet
+
+From the hangar (or `K`), send craft to the target — the selected world, or
+the nearest:
+
+- a **probe** falls through the air on its parachute, reading pressure,
+  temperature and make-up all the way down, to the ground or until it is
+  crushed (past 120 bar in a giant); with no air it is an impactor;
+- an **orbiter** circles on a polar orbit and maps the world: the atmosphere
+  first, then the layers inside from its gravity field, then the ground;
+- a **lander** sets down below the ship or at a real site, reads the air and
+  the soil and runs the life experiments (on Mars, Viking's ambiguous result);
+- a **rover** drives off a lander, or is dropped on its own, and stops every
+  60 m to sample the rock (a lake-bed mudstone, haematite blueberries,
+  anorthosite, a nickel-iron meteorite…);
+- a **station**, ISS-sized, goes into orbit; a **base** is built on the ground
+  beside the landed ship.
+
+Each reports as it goes. **View** any of them and the camera goes to it; a
+rover you can drive. Their labels show in the view.
+
+### The instruments
+
+The lab's **science survey** carries the **atmosphere reader** — every gas down
+to parts per million, with the pressure, temperature, scale height and clouds,
+or that there is no air at all (Mercury and the Moon have only an exosphere of a
+few atoms) — a **cutaway** of the world's layers, the **chemistry of its
+ground**, its **habitability** and what is known of **life** there. Real bodies
+use measured values: the Galileo probe, Venera, Viking and Curiosity, Huygens,
+Cassini's flights through Enceladus's plumes, Juno, MESSENGER, New Horizons.
+Life is confirmed only on the Earth; elsewhere the survey lists the real
+candidate biosignatures — Mars's methane and Perseverance's leopard spots,
+Venus's disputed phosphine, the salt, hydrogen and phosphates from Europa's and
+Enceladus's oceans — none of them confirmed. On the ground, `R` scans where you
+stand: the air there, the ground under your feet, and what lives round you.
 
 The clock says what it is actually doing. If the integrator cannot keep up
 with the speed you asked for — a moon on a two-day orbit needs thousands of
@@ -433,6 +535,17 @@ real waves are invisible), and neutron-star mergers a kilonova.
   hole rather than behind it and are not lensed.
 - A hand-built body's shape is drawn and its strength tested against its own
   weight, but gravity treats it as a point mass like everything else.
+- The ground close up is generated: its large features are the real ones (from
+  each world's map), its relief is scaled to the measured spread of elevations,
+  and what is finer than the map is fractal. The Earth's mountains come from a
+  coarse mask, not a real elevation model, so Everest is not its true height.
+- Landed craft and the ship ride with their world as it turns, but nothing on
+  the ground feels the simulation's gravity or tides; craft in orbit keep a
+  circular orbit round their world rather than being integrated.
+- Probe descents and rover drives are shown faster than real time (a Galileo
+  descent takes a couple of minutes, not an hour) so they can be watched.
+- A made-up world's life is a seeded roll weighted by habitability, not a
+  model of evolution.
 
 ## Layout
 
@@ -440,8 +553,10 @@ real waves are invisible), and neutron-star mergers a kilonova.
 src/physics/   integrator, forces, collisions, stars, presets — no DOM, fully tested
 src/pixel/     the map renderer: surface maps (worlds.ts paints the real ones, built in a worker), sprites, rings, particles, lensing, bursts
 src/pixel/data/earth.ts     generated from Natural Earth by tools/fetch-earth.py
-src/three/     the 3D view (three.js, loaded on demand), its flying controls, the ship (hull.ts), its consoles (panels.ts, survey.ts) and its scope
+src/three/     the 3D view (three.js, loaded on demand), its flying controls, the ship (hull.ts), its consoles (panels.ts, survey.ts) and its scope;
+               the ground (terrain.ts, built in terrainworker.ts; ground.ts draws it with its sky and what stands on it), giant
+               interiors (giant.ts), the craft (fleet.ts, craftmesh.ts), what the instruments read (science.ts) and real sites (sites.ts)
 src/physics/data/moons.ts   generated from JPL by tools/fetch-moons.py
 src/ui/        input and tools, HUD, the body builder, the belt histogram
-tests/         physics.test.ts (vitest), browser.mjs (Playwright smoke test)
+tests/         physics.test.ts and landing.test.ts (vitest), browser.mjs (Playwright smoke test, landing included)
 ```

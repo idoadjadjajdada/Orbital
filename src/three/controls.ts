@@ -120,6 +120,8 @@ export class Controls3D {
   private hold = { up: false, down: false, boost: false, jump: false };
   /** boost latched on by clicking the left stick, until the stick is let go */
   private padBoost = false;
+  /** a jump pressed and let go between two frames still jumps */
+  private jumpTap = false;
   /** what was used last, for the glyphs */
   private dev: Dev = matchMedia('(pointer: coarse)').matches ? 'touch' : 'kb';
   readonly root: HTMLElement;
@@ -385,6 +387,7 @@ export class Controls3D {
     if (e.code === 'KeyK' && !e.repeat && v.mode !== 'eva' && v.mode !== 'scope') { v.panels.show('mission'); return; }
     if (['Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyC', 'KeyF', 'KeyG', 'KeyL', 'KeyR'].includes(e.code)) e.preventDefault();
     this.keys.add(e.code);
+    if (e.code === 'Space' && !e.repeat && (v.mode === 'walk' || v.mode === 'surface')) this.jumpTap = true;
     if (e.code === 'Equal' || e.code === 'NumpadAdd') this.zoom(2);
     if (e.code === 'Minus' || e.code === 'NumpadSubtract') this.zoom(0.5);
     if (e.repeat) return;
@@ -520,12 +523,14 @@ export class Controls3D {
   /** on foot: forward and sideways (−1–1), running, jumping */
   walkInput() {
     const k = this.keys, p = this.app().pad;
-    if (this.v.nav.open || this.v.panels.open || this.v.asleep) return { f: 0, s: 0, run: false, jump: false };
+    if (this.v.nav.open || this.v.panels.open || this.v.asleep) { this.jumpTap = false; return { f: 0, s: 0, run: false, jump: false }; }
     let f = (k.has('KeyW') ? 1 : 0) - (k.has('KeyS') ? 1 : 0) - this.stick.y - p.ls[1];
     let s = (k.has('KeyD') ? 1 : 0) - (k.has('KeyA') ? 1 : 0) + this.stick.x + p.ls[0];
     const l = Math.hypot(f, s);
     if (l > 1) { f /= l; s /= l; }
-    return { f, s, run: k.has('ShiftLeft') || k.has('ShiftRight') || this.padBoost, jump: k.has('Space') || this.hold.jump || p.on(BTN.X) };
+    const tap = this.jumpTap;
+    this.jumpTap = false;
+    return { f, s, run: k.has('ShiftLeft') || k.has('ShiftRight') || this.padBoost, jump: tap || k.has('Space') || this.hold.jump || p.on(BTN.X) };
   }
 
   hud(r: ReturnType<View3D['readout']>) {

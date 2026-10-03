@@ -789,6 +789,21 @@ export class View3D {
     this.app.onToast(`${c.name} ${kind === 'base' ? 'is being built beside the ship' : `launched toward ${b.name}${site ? `, for ${site}` : ''}`}`);
   }
 
+  /** fly to a few kilometres over a named site on a world, ready to land */
+  goToSite(b: Body, name: string) {
+    const why = this.goBlock();
+    if (why) { this.app.onToast(why); return; }
+    const n = this.fleet.siteFor(b, name);
+    if (!n) return;
+    const over = () => {
+      const h = Math.max(0, this.fleet.heightAt(b, n, 50)), r = b.r * AU_M + h + 3000;
+      const p = new THREE.Vector3(n[0] * r, n[1] * r, n[2] * r).applyQuaternion(bodyQuat(b));
+      return [b.x + p.x / AU_M, b.y + p.y / AU_M, b.z + p.z / AU_M] as V3;
+    };
+    this.travel = { b: null, at: over, stop: 20 / AU_M, name };
+    this.app.onToast(`Flying to ${name}: L lands when you are there`);
+  }
+
   /** a rover off a landed lander */
   roverFrom(id: number) {
     const L = this.fleet.byId(id);
@@ -803,7 +818,8 @@ export class View3D {
     if (!c) return;
     const back = this.mode === 'craft' ? this.craftView?.back ?? 'pilot' : this.mode;
     const dist = c.kind === 'station' ? 160 : c.kind === 'base' ? 110 : c.kind === 'orbiter' ? 30 : c.kind === 'lander' ? 16 : c.kind === 'rover' ? 10 : 14;
-    this.craftView = { id, back, yaw: 0, pitch: 0.35, dist };
+    // from orbit, looking down past it to the world
+    this.craftView = { id, back, yaw: 0, pitch: c.state === 'orbit' || c.state === 'cruise' ? 0.75 : 0.35, dist };
     this.mode = 'craft';
     this.panels.close();
     this.app.onToast(`${c.name}${c.kind === 'rover' && c.state === 'surface' ? ': WASD (or the stick) drives it' : ''} · F or Esc to come back`);
@@ -1337,7 +1353,7 @@ export class View3D {
     h.drawScreen('log', ["CAPTAIN'S LOG", `${fmtLength(L.metres / AU_M)} flown`, `${L.firsts.length} worlds`, `${L.jumps} transits`]);
     h.drawScreen('survey', sv && t ? [`SURVEY · ${t.name.toUpperCase()}`, sv.kind, ...sv.rows.filter(([k]) => /gravity|emperature/.test(k)).map(([k, x]) => `${k.replace(' (est.)', '').replace('Mean t', 'T').replace('Surface g', 'G')}: ${x}`), sv.land.ok ? 'LANDABLE' : 'NO LANDING'] : ['SURVEY', 'no target']);
     h.drawScreen('power', ['POWER', POWER[sh.power].name.toUpperCase(), wrm]);
-    h.drawScreen('bay', ['LANDING SURVEY', t ? t.name : '—', sv ? (sv.land.ok ? 'LANDABLE' : 'NO LANDING') : '', 'LANDER 1', 'NOT FLIGHT-READY']);
+    h.drawScreen('bay', ['LANDING SURVEY', t ? t.name : '—', sv ? (sv.land.ok ? 'LANDABLE' : 'NO LANDING') : '', 'MISSION CONTROL', `${this.fleet.crafts.length} CRAFT OUT`]);
     // the globe wears the target's surface
     const want = t && !['star', 'wd', 'ns', 'bh'].includes(t.cls) && !t.look.craft && !t.look.wormhole ? t : null;
     const m = want ? maps.want(want.look, 256) : null;
@@ -1836,8 +1852,18 @@ export class View3D {
       .slice(0, 14);
     const v = new THREE.Vector3(), dir = new THREE.Vector3();
     const inv = this.ship.quat.clone().invert(), eye = this.localEye, hull = this.ship.hull;
+    // near a world's ground, what is below its horizon is hidden by it
+    const gb = this.ground.body, up = new THREE.Vector3();
+    let dip = -2;
+    if (gb) {
+      up.set(P[0] - gb.x, P[1] - gb.y, P[2] - gb.z);
+      const r = up.length();
+      up.normalize();
+      dip = -Math.sqrt(Math.max(0, 1 - (gb.r / r) ** 2)) - 0.01;
+    }
     for (const { b } of cands) {
       v.set((b.x - P[0]) * AU_M, (b.y - P[1]) * AU_M, (b.z - P[2]) * AU_M);
+      if (gb && b !== gb && dir.copy(v).normalize().dot(up) < dip) continue;
       // inside, only what can be seen through a window
       if (eye && !hull.seesOut(eye, dir.copy(v).normalize().applyQuaternion(inv))) continue;
       v.project(cam);

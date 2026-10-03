@@ -134,6 +134,8 @@ export class Panels {
     else if (a === 'crover') v.roverFrom(Number(id));
     else if (a === 'cdrop') { const c = v.fleet.byId(Number(id)); if (c) { v.fleet.remove(c); v.app.onToast(`${c.name} decommissioned`); } }
     else if (a === 'mission') { this.show('mission'); return; }
+    else if (a === 'site') { /* handled above */ }
+    else if (a === 'gosite') { const t = v.missionTarget(); if (t) { v.goToSite(t, id); this.close(); return; } }
     this.t = 0;
     this.refresh();
   }
@@ -256,6 +258,8 @@ export class Panels {
       h += `<div class="phero"><div><div class="pbig">${esc(b.name)}</div><div class="pdim">target · ${fmtLength(d / AU_M)} from the ship${b === v.app.selected ? ' · selected' : ' · nearest'}</div></div></div>`;
       h += `<div class="plaunch">${KINDS.map(k => { const why = v.launchBlock(k.k); return `<button data-act="launch" data-id="${k.k}"${why ? ` disabled title="${esc(why)}"` : ''}><b>${k.name}</b><span>${why ? esc(why) : esc(k.about)}</span></button>`; }).join('')}</div>`;
       h += `<div class="prow"><div class="pdim">Landers and rovers set down at</div><button data-act="site">${esc(site)} ▸</button></div>`;
+      const real = v.ground.siteListFor(b);
+      if (real.length) h += `<div class="psub">Where people have landed</div>` + real.map(x => `<div class="prow tight"><div><div class="pnm">${esc(x.name)}${x.year ? ` <span class="pdim">· ${x.year}</span>` : ''}</div><div class="pdim">${esc(x.about)}</div></div><span class="pbtns"><button data-act="gosite" data-id="${esc(x.name)}"${v.goBlock() ? ` disabled title="${esc(v.goBlock())}"` : ''}>Fly there</button></span></div>`).join('');
     } else h += '<p class="pdim">No target. Select a world, or fly near one.</p>';
     h += `<div class="psub">The fleet</div>`;
     if (!f.crafts.length) h += '<p class="pdim">Nothing launched yet.</p>';
