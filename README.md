@@ -109,8 +109,10 @@ can use; `H` shows every control for every place.
 
 | | Keyboard and mouse | Controller (Xbox layout) |
 |---|---|---|
-| **At the helm** | click to capture the mouse and steer · `W` `A` `S` `D` fly · `Space` `C` up, down · `Q` `E` roll · `Shift` boost · wheel or `+` `−` throttle · click selects · `T` fly to it · `O` overdrive · `J` wormhole · `M` nav map · `Z` chase view or cockpit · `F` leave the helm | left stick flies, right stick steers, `LT` `RT` down, up, `LB` `RB` roll, `L3` boost, `R3` camera · `A` selects (again: fly there) · `X` overdrive · `Y` wormhole · `B` leave the helm · d-pad ◀ ▶ targets, ▲ ▼ throttle · View nav map |
-| **On foot** | `W` `A` `S` `D` walk · mouse look · `Shift` run · `Space` jump · `F` or click use · `M` nav map | left stick walks, right stick looks, `L3` run, `X` jump, `A` use, View nav map |
+| **At the helm** | click to capture the mouse and steer · `W` `A` `S` `D` fly · `Space` `C` up, down · `Q` `E` roll · `Shift` boost · wheel or `+` `−` throttle · click selects · `T` fly to it · `O` overdrive · `J` wormhole · `M` nav map · `Z` chase view or cockpit · `L` land or lift off · `K` mission control · `F` leave the helm | left stick flies, right stick steers, `LT` `RT` down, up, `LB` `RB` roll, `L3` boost, `R3` camera · `A` selects (again: fly there) · `X` overdrive · `Y` wormhole · `B` leave the helm · d-pad ◀ ▶ targets, ▲ ▼ throttle · View nav map |
+| **On foot** | `W` `A` `S` `D` walk · mouse look · `Shift` run · `Space` jump · `F` or click use · `K` mission control · `M` nav map | left stick walks, right stick looks, `L3` run, `X` jump, `A` use, View nav map |
+| **On the ground** | `W` `A` `S` `D` walk · mouse look · `Shift` run · `Space` jump · `F` use (the ladder, a craft, a site) · `R` scan · `G` call the ship · `K` mission control | left stick walks, `X` jump, `A` use, `Y` scan, `B` call the ship |
+| **Craft** | `W` `A` `S` `D` drive or fly · `Space` `C` up, down · mouse look · `F` use (step out, dock) · `R` scan · `L` land or lift off · `Esc` back to the ship | left stick, `A` use, `Y` scan, `X` land, `B` back |
 | **Outside** | `W` `A` `S` `D` `Space` `C` thrusters · `Q` `E` roll · `Shift` boost · wheel thrust level · `F` board (at the airlock) · `G` call the ship · `M` nav map | left stick and triggers thrust, bumpers roll, `A` board or select, `X` call the ship |
 | **Telescope** | mouse aim · wheel zoom · click select · `T` track the target · `F` or `Esc` step back | right stick aims, triggers zoom, `A` select, `X` track, `B` step back |
 
@@ -149,10 +151,9 @@ seconds.
   balanced, engines (overdrive spools faster and runs closer to worlds; the
   wormhole drive recharges slowly) or wormhole (a 15-second recharge, a slower,
   lower overdrive). A hatch leads down to…
-- The **hangar**, the belly pod on the lower deck: a lander parked over the bay
-  doors, the **landing survey** of nearby worlds, fuel, suits. The lander is
-  not flight-ready yet — landing is a later update — but its doors and legs
-  are in place.
+- The **hangar**, the belly pod on the lower deck: **Lander 1** parked over the
+  bay doors (fly it out yourself), the **landing survey** of nearby worlds,
+  fuel, suits.
 
 Signs over the doors say where they go, and labels for worlds show through the
 windows, not the walls. Leave the helm and the ship flies on by itself: the
@@ -162,6 +163,59 @@ nothing to do, it holds station.
 **Outside** you are in a suit with thrusters: a few metres a second, more
 with the throttle. The ship holds station while you are out; `G` calls it to
 you, and the airlock's hatch is marked so you can find your way back.
+
+**Landing.** Close to a solid world the ground is built round you from its
+real surface map: the Himalaya kilometres up, Olympus Mons towering over the
+Tharsis plains, the Moon's maria low and smooth, seas held flat at sea level,
+craters at every scale on airless worlds, finer detail the closer you look.
+Within about 40 km, `L` sets the ship down on its legs (it levels itself low
+down, and lands by hand too if you come down slowly); `L` or a push on the
+stick lifts off. The hull is rated to 700 K, 50 bar and 2.5 g, so on Venus the
+ship stops in the clouds. Down, the airlock opens onto a ladder and the ground:
+walk about in the world's own gravity (a jump on the Moon hangs for seconds),
+swim in its seas, scan (`R`) the soil, the air and anything living, and `G`
+calls the ship down beside you if you wander. Under an atmosphere there is a
+sky — blue on the Earth, butterscotch on Mars, orange haze on Titan — that
+reddens at sunset, hazes the distance, and fades the stars by day.
+
+**Giants** have no ground: the ship can dive below the cloud tops, through
+deck after deck of cloud streaming past on the winds — ammonia ice, ammonium
+hydrosulphide, then water, where the lightning is — darker, denser and hotter
+all the way, redder and stormier in the Great Red Spot, until the hull's
+limit (about 120 km down in Jupiter). Probes go deeper, until they are crushed.
+
+**What is down there.** The real landing sites are where they are: the six
+Apollo descent stages with their flags and rovers, Lunokhod and the Chang'e and
+Chandrayaan landers, Viking, Pathfinder, Spirit, Opportunity, Curiosity on
+Mount Sharp, Perseverance and Ingenuity in Jezero, the Veneras on Venus,
+Huygens on Titan — each a model on the ground with its story, and labelled as
+you come near. The Earth has its cities (buildings round you, lit at night),
+its forests and grasslands and the plants and animals of each, and launch
+sites; Everest, Olympus Mons, Tycho, Sputnik Planitia and other features are
+marked. Living worlds elsewhere — habitable ones, with liquid water possible
+— grow their own life, from microbial mats to forests and grazing animals,
+coloured for their star (dark purples under a red dwarf), sized for their
+gravity; scanning on the ground discovers their species one by one.
+
+**Mission control** (`K`, or the hangar console) sends craft to the selected
+world (or the one below): **probes** that fall through an atmosphere reporting
+pressure, temperature and gases until they land or are crushed (on an airless
+world, an impactor that leaves a crater); **orbiters** that circle it for real
+in the simulation, mapping it and reading its air; **landers** that run their
+instruments on the ground; **rovers** you drive (`WASD`) and scan with;
+**stations** in orbit, ISS-style; and **bases** on the ground beside the ship.
+Each keeps a log of its telemetry; View watches it, Drive takes its controls,
+`Esc` brings you back. **Lander 1** is yours to fly: out of the bay doors,
+thrust against gravity with a hover hold, `L` brings it straight down, step
+out and walk, board again, and dock (`F`) back with the ship.
+
+**The science survey** in the lab has four tabs: an overview, the
+**atmosphere reader** (every gas to the parts per billion — measured for real
+worlds, reckoned from mass, temperature and Jeans escape for the rest — the
+pressure, temperature, scale height, cloud decks, and a probe's descent
+profile), the **interior** (a cut through the world, layer by layer, and what
+the surface and the whole body are made of), and **life** (habitability, the
+signs an instrument would see, and the species found so far).
 
 **Drives.** The ordinary drive tops out at 5% of light speed — a minute from a
 world to its moons. **Overdrive** (`O`) spools up over three seconds towards
@@ -440,8 +494,11 @@ real waves are invisible), and neutron-star mergers a kilonova.
 src/physics/   integrator, forces, collisions, stars, presets — no DOM, fully tested
 src/pixel/     the map renderer: surface maps (worlds.ts paints the real ones, built in a worker), sprites, rings, particles, lensing, bursts
 src/pixel/data/earth.ts     generated from Natural Earth by tools/fetch-earth.py
-src/three/     the 3D view (three.js, loaded on demand), its flying controls, the ship (hull.ts), its consoles (panels.ts, survey.ts) and its scope
+src/three/     the 3D view (three.js, loaded on demand), its flying controls, the ship (hull.ts), its consoles (panels.ts, survey.ts) and its scope;
+               terrain.ts, ground.ts and landing.ts for the ground, the sky and landing; giant.ts inside giants;
+               crafts.ts and craftmesh.ts for what mission control sends out; science.ts (atmospheres, interiors),
+               life.ts (biospheres and species), sites.ts (real landing sites, cities, features), discovery.ts, flora.ts
 src/physics/data/moons.ts   generated from JPL by tools/fetch-moons.py
 src/ui/        input and tools, HUD, the body builder, the belt histogram
-tests/         physics.test.ts (vitest), browser.mjs (Playwright smoke test)
+tests/         physics, terrain, science and life tests (vitest), browser.mjs (Playwright smoke test)
 ```

@@ -87,7 +87,7 @@ export class Ship {
   readonly mouthOut: THREE.Group;
   readonly tunnel: THREE.Mesh;
   readonly sun = new THREE.DirectionalLight(0xffffff, 2.2);
-  private ambient = new THREE.AmbientLight(0x404858, 1.4);
+  readonly ambient = new THREE.AmbientLight(0x404858, 1.4);
   private streaks: THREE.LineSegments;
   private seeds: Float32Array;
 

@@ -11,6 +11,16 @@ import { Ship, POWER, CRUISE, OD_MAX, C_MS, JUMP_CHARGE, MOUTH_R, MOUTH_AHEAD, E
 import { HELM_EYE, CHASE_EYE, SCOPE_EYE, HATCH_OUT, HATCH_IN, COUCH_EYE, DECK_Y, LADDER, type StationId } from './hull';
 import { Panels, sleepWarp, SLEEP_HOURS } from './panels';
 import { survey } from './survey';
+import { Landing } from './landing';
+import { Fleet } from './crafts';
+import { Life3D } from './flora';
+import { frameOf as frameOfB, toWorld as toWorldF } from './ground';
+import { Science, type Finding } from './discovery';
+import { sitesOn } from './sites';
+import { dirOf, latLon as latLonOf } from './terrain';
+import { gravity as gravityOf, giant as isGiant } from './landing';
+import { airAt } from './science';
+import type { SurfaceMap as SMap } from '../pixel/surface';
 import { mouthMesh, tickMouth } from './wormhole';
 import { Radar, fmtTime } from './radar';
 import { NavMap } from './navmap';
@@ -193,7 +203,7 @@ void main() {
 }`;
 
 
-export type Mode = 'pilot' | 'walk' | 'eva' | 'scope';
+export type Mode = 'pilot' | 'walk' | 'eva' | 'scope' | 'ground' | 'craft';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const YR = 365.25 * 86400;
@@ -206,11 +216,21 @@ export class View3D {
   readonly scene = new THREE.Scene();
   camera: THREE.PerspectiveCamera;
   private objs = new Map<Body, Obj>();
+  /** the ground, the sky, landing and walking on worlds */
+  landing!: Landing;
+  /** what has been sent out */
+  fleet!: Fleet;
+  /** what the instruments know */
+  science!: Science;
+  /** plants, animals, cities and real sites on the ground */
+  life3d!: Life3D;
   private markers: THREE.Points;
   private parts: THREE.Points;
   private sky: THREE.Points;
   private glowTex: THREE.Texture;
   private sphere = new THREE.SphereGeometry(1, 48, 24);
+  /** a finer sphere for the world whose ground you are near, so its edge meets the terrain */
+  private sphereHi = new THREE.SphereGeometry(1, 360, 180);
   private labels: HTMLElement;
   private labelEls = new Map<Body | string, HTMLElement>();
   controls: Controls3D;
@@ -231,7 +251,7 @@ export class View3D {
   /** the consoles' panels */
   panels: Panels;
   /** the captain's log: what this voyage has done */
-  logbook = { start: performance.now(), metres: 0, top: 0, jumps: 0, walks: 0, sleeps: 0, coffees: 0, firsts: [] as { name: string; note: string }[] };
+  logbook = { start: performance.now(), metres: 0, top: 0, jumps: 0, walks: 0, sleeps: 0, coffees: 0, landings: 0, found: 0, firsts: [] as { name: string; note: string }[] };
   /** asleep in the quarters: seconds so far, how long, the clock to go back to, and when it began (sim years) */
   private sleep: { t: number; dur: number; warp: number; from: number } | null = null;
   /** the lab's globe: whose surface it wears */
@@ -271,7 +291,7 @@ export class View3D {
     this.glowTex = glowTexture();
     this.sky = starField();
     this.scene.add(this.sky);
-    this.markers = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ size: 3, sizeAttenuation: false, vertexColors: true, depthWrite: false }));
+    this.markers = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ size: 3, sizeAttenuation: false, vertexColors: true, depthWrite: false, transparent: true }));
     this.markers.frustumCulled = false;
     this.scene.add(this.markers);
     this.parts = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ size: 2, sizeAttenuation: false, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
@@ -282,6 +302,11 @@ export class View3D {
     this.labels.hidden = true;
     document.body.appendChild(this.labels);
     this.ship = new Ship(this.scene, this.glowTex);
+    this.landing = new Landing(this);
+    this.science = new Science(() => this.stars(), () => this.app.world.time);
+    this.fleet = new Fleet(this);
+    this.life3d = new Life3D(this);
+    this.onScan = () => this.scanOnFoot();
     this.scene.add(this.camera);
     this.base = this.ship.nav;
     this.controls = new Controls3D(this);
@@ -446,7 +471,7 @@ export class View3D {
   // ---------------------------------------------------------------- commands
   /** why the ship cannot fly somewhere now, or '' */
   goBlock() {
-    if (this.mode === 'eva') return 'Board the ship first: it holds station while you are outside';
+    if (this.mode === 'eva' || this.mode === 'ground') return 'Board the ship first: it holds station while you are outside';
     if (this.ship.worm) return 'Not during a wormhole transit';
     return '';
   }
@@ -454,7 +479,8 @@ export class View3D {
   /** why the wormhole drive cannot open a way now, or '' */
   jumpBlock() {
     const sh = this.ship;
-    if (this.mode === 'eva') return 'Board the ship first: it holds station while you are outside';
+    if (this.mode === 'eva' || this.mode === 'ground') return 'Board the ship first: it holds station while you are outside';
+    if (this.landing.landed) return 'Lift off first (L)';
     if (sh.worm) return 'A transit is under way';
     if (sh.charge < 1) return `The wormhole drive is recharging: ${Math.ceil((1 - sh.charge) * sh.refill())} s`;
     return '';
@@ -464,6 +490,8 @@ export class View3D {
   goTo(b: Body) {
     const why = this.goBlock();
     if (why) { this.app.onToast(why); return; }
+    if (this.landing.landed) { this.landing.landed = null; this.ship.hull.setLadder(false); }
+    this.landing.auto = null;
     this.travel = { b, stop: b.look.wormhole ? 0 : this.stopFor(b), name: b.name };
   }
 
@@ -485,6 +513,7 @@ export class View3D {
 
   /** the ship comes to you, outside */
   callShip() {
+    if (this.mode === 'ground') { this.callShipDown(); return; }
     if (this.mode !== 'eva') return;
     if (relM(this.suit.nav, this.ship.nav).length() < 45) { this.app.onToast('The ship is right here: the airlock is marked'); return; }
     this.travel = { b: null, at: () => posOf(this.suit.nav), stop: 30 / AU_M, name: 'you' };
@@ -537,12 +566,12 @@ export class View3D {
       case 'bunk': this.goToSleep(); break;
       case 'samples': {
         const n = this.logbook.firsts.length;
-        toast(n ? `${Math.min(12, n)} vial${n > 1 ? 's' : ''} of orbital scans, one per world. Real samples will need the lander.` : 'Twelve empty vials. Each world you fly close to fills one with scans; real samples will need the lander.');
+        toast(n ? `${Math.min(12, n)} vial${n > 1 ? 's' : ''}, one per world visited. Scans on the ground (R) go into the science log.` : 'Twelve empty vials. Each world you fly close to fills one.');
         break;
       }
       case 'down': this.climb(1); break;
       case 'up': this.climb(0); break;
-      case 'lander': toast('Lander 1: tanks full, hull sound, but no descent software, and the bay doors and legs are still being fitted. Not yet.'); break;
+      case 'lander': this.fleet.launchShuttle(); break;
     }
   }
 
@@ -607,9 +636,96 @@ export class View3D {
     return this.nearest(this.shipPos()).b;
   }
 
+  /** the ship comes down beside you, on the ground */
+  private callShipDown() {
+    const L = this.landing, w = L.walker!;
+    if (L.landed && L.landed.b === w.b) {
+      const S = this.shipPos(), p = L.at(w.b, w.n, 0);
+      const d = Math.hypot(S[0] - p[0], S[1] - p[1], S[2] - p[2]) * AU_M;
+      if (d < 150) { this.app.onToast('The ship is right here: board at the foot of its ladder'); return; }
+      L.takeOff();
+    }
+    const why = L.shipBlock(w.b);
+    if (why) { this.app.onToast(`The ship cannot come down here: ${why}`); return; }
+    // to a spot fifty metres off, then straight down
+    const spot: V3 = [...w.n];
+    const R = w.b.r * AU_M;
+    const tn = new THREE.Vector3(1, 0, 0).cross(new THREE.Vector3(...spot)).normalize();
+    for (let k = 0; k < 3; k++) spot[k] += tn.getComponent(k) * 50 / R;
+    const l = Math.hypot(...spot);
+    for (let k = 0; k < 3; k++) spot[k] /= l;
+    this.landAt = { b: w.b, n: spot };
+    this.travel = { b: null, at: () => L.at(w.b, spot, 250), stop: 20 / AU_M, name: 'you' };
+    this.app.onToast('The ship is on its way to you');
+  }
+  /** a spot the ship lands on once it gets there */
+  private landAt: { b: Body; n: V3 } | null = null;
+
+  /** land, or lift off */
+  landToggle() {
+    if (this.mode !== 'pilot' && this.mode !== 'walk') { if (this.mode === 'craft') this.craftLand?.(); return; }
+    this.landing.toggle();
+  }
+  /** set by the craft in hand: its own landing */
+  craftLand: (() => void) | null = null;
+
+  /** mission control: what has been sent out, and what to send */
+  openMission() {
+    if (this.mode === 'eva') { this.app.onToast('Mission control is on the ship'); return; }
+    this.panels.show('mission');
+  }
+
+  /** look round with the instruments: the ground, the air, and anything alive */
+  scan() {
+    if (this.mode !== 'ground' && this.mode !== 'craft') { this.app.onToast('Scans are made on the ground, on foot or from a rover'); return; }
+    this.onScan?.();
+  }
+  onScan: (() => void) | null = null;
+
+  /** from a craft's controls back to wherever you were on the ship */
+  backToShip() {
+    if (this.mode !== 'craft') return;
+    this.onLeaveCraft?.();
+  }
+  onLeaveCraft: (() => void) | null = null;
+
+  /** the air (or its absence) at a height over a world, in a line */
+  envLine(b: Body, h: number) {
+    const a = this.science.atmosphere(b);
+    if (!a.exists) return `${(gravityOf(b) / 9.81).toFixed(2)} g · vacuum`;
+    const s = airAt(a, b, h);
+    const p = s.bar < 0.01 ? `${(s.bar * 1e5).toPrecision(2)} Pa` : `${s.bar.toPrecision(3)} bar`;
+    const breath = a.gases.some(g => g.formula === 'O₂' && g.frac > 0.15) && s.bar > 0.5 && s.bar < 3 && s.K > 250 && s.K < 320 ? ' · breathable' : '';
+    return `${p} · ${Math.round(s.K)} K · ${a.gases.slice(0, 2).map(g => `${g.formula} ${(g.frac * 100).toFixed(0)}%`).join(' ')}${breath}`;
+  }
+
+  /** a scan on foot, where you stand */
+  scanOnFoot() {
+    const w = this.landing.walker;
+    if (this.mode !== 'ground' || !w) { this.app.onToast('Scans are made on the ground'); return; }
+    this.showFindings(this.science.scan(w.b, w.n, w.h, 'Suit scanner', Math.floor(performance.now())));
+  }
+
+  /** findings, as toasts: new species first */
+  showFindings(fs: Finding[]) {
+    const news = fs.filter(f => f.species);
+    for (const f of (news.length ? news : fs).slice(0, 3)) this.app.onToast(f.text);
+    if (news.length) this.logbook.found += news.length;
+  }
+
+  /** the map a world wears in this view, for its ground */
+  mapOf(b: Body): SMap | null { return this.objs.get(b)?.map ?? null; }
+
   /** out of the airlock, in a suit; the ship stops and holds station */
   stepOut() {
     const sh = this.ship;
+    if (this.landing.landed) {
+      this.landing.stepOut();
+      this.mode = 'ground';
+      this.logbook.walks++;
+      this.app.onToast(`On ${this.landing.landed.b.name}. G calls the ship if you wander; the ladder takes you back aboard`);
+      return;
+    }
     if (sh.worm) { this.app.onToast('Not in the middle of a wormhole transit'); return; }
     this.travel = null;
     sh.od = false;
@@ -625,6 +741,7 @@ export class View3D {
 
   /** back in through the airlock */
   board() {
+    this.landing.walker = null;
     this.mode = 'walk';
     this.foot.deck = 0;
     this.foot.p.copy(HATCH_IN);
@@ -658,26 +775,43 @@ export class View3D {
     if (this.mode === 'pilot') { if (!this.ship.worm || this.ship.worm.phase === 'charge') rot(this.ship.quat); }
     else if (this.mode === 'eva') rot(this.suit.quat);
     else if (this.mode === 'scope') { const k = this.scope.fov / 70; yaw *= k; pitch *= k; roll = 0; rot(this.scope.quat); this.scope.track = false; }
+    else if (this.mode === 'ground') {
+      const w = this.landing.walker;
+      if (w) { w.yaw -= yaw; w.pitch = Math.max(-1.45, Math.min(1.45, w.pitch + pitch)); }
+    } else if (this.mode === 'craft') this.onCraftTurn?.(yaw, pitch);
     else {
       this.foot.yaw += yaw;
       this.foot.pitch = Math.max(-1.45, Math.min(1.45, this.foot.pitch + pitch));
     }
   }
 
+  onCraftTurn: ((yaw: number, pitch: number) => void) | null = null;
+  /** the craft in hand, each frame */
+  onCraftStep: ((dt: number) => void) | null = null;
+
   // ---------------------------------------------------------------- frame
   frame(dtReal: number) {
     if (!this.active) return;
     this.adapt(dtReal);
     const app = this.app, sh = this.ship;
-    if (!sh.worm || sh.worm.phase !== 'tunnel') this.pickAnchor(sh.nav);
+    const L = this.landing;
+    if (!L.landed && (!sh.worm || sh.worm.phase !== 'tunnel')) this.pickAnchor(sh.nav);
     if (this.mode === 'eva') this.pickAnchor(this.suit.nav);
     this.controls.update(dtReal);
     this.panels.tick(dtReal);
     this.sleepStep(dtReal);
     sh.update(dtReal);
-    if (sh.worm) this.wormStep(dtReal); else this.fly(dtReal);
+    L.survey(this.where());
+    // a landed ship lifts off when the pilot asks it to move
+    if (L.landed && this.mode === 'pilot' && this.controls.moving()) L.takeOff();
+    if (L.landed) L.pinShip();
+    else if (sh.worm) this.wormStep(dtReal);
+    else this.fly(dtReal);
     if (this.mode === 'walk') this.walk(dtReal);
     if (this.mode === 'eva') this.spacewalk(dtReal);
+    if (this.mode === 'ground' && L.walker) L.walk(dtReal);
+    this.onCraftStep?.(dtReal);
+    this.fleet.update(dtReal);
     this.place();
     const P = this.where();
     const cam = this.camera;
@@ -702,6 +836,7 @@ export class View3D {
       }
       const glowy = b.cls === 'star' || b.cls === 'wd' || b.cls === 'ns' || b.look.white || b.look.wormhole;
       if (angPx < 0.6 && !glowy && !b.feed) continue;
+      if (b.look.craft && this.fleet.owns(b)) continue;
       seen.add(b);
       let o = this.objs.get(b);
       if (!o) { o = this.build(b); this.objs.set(b, o); this.scene.add(o.group); }
@@ -715,6 +850,28 @@ export class View3D {
     }
     setPoints(this.markers, mk, mc);
     this.sky.visible = !tunnel;
+    // close to a world's ground: its terrain and sky, its own sphere tucked under the terrain
+    const gb = L.ground.ready ? L.ground.body : null;
+    for (const [b, o] of this.objs) {
+      if (o.kind !== 'world') continue;
+      const mesh = o.group.children[0] as THREE.Mesh;
+      const inGiant = b === L.giantBody;
+      const hi = b === gb || inGiant;
+      if (b === gb && L.ground.src) o.group.scale.setScalar(Math.max(1, L.ground.src.R - L.ground.src.relief));
+      if (mesh.geometry !== (hi ? this.sphereHi : this.sphere)) mesh.geometry = hi ? this.sphereHi : this.sphere;
+      // below a giant's cloud tops its sphere is all round you: the weather draws it instead
+      mesh.visible = !(inGiant && L.giantAlt < 0);
+      if (o.clouds) o.clouds.visible = !hi || L.agl > 30000;
+      // inside a giant, its rings are somewhere far above the murk
+      const rings = o.group.getObjectByName('rings');
+      if (rings) rings.visible = !(b === L.giantBody && L.giantAlt < 0);
+    }
+    const day = tunnel ? 0 : L.draw(P);
+    this.fleet.draw(P, L.ground.body ? null : null);
+    (this.sky.material as THREE.PointsMaterial).opacity = 1 - Math.min(1, day * 1.6) * 0.98;
+    this.life3d.update(P, dtReal, 1 - L.sunUp);
+    (this.markers.material as THREE.PointsMaterial).opacity = 1 - 0.97 * day;
+    (this.parts.material as THREE.PointsMaterial).opacity = 1 - 0.9 * L.sky.inside;
 
     // particles: gas and debris
     const pp: number[] = [], pc: number[] = [];
@@ -736,11 +893,16 @@ export class View3D {
     this.mouths();
     this.cabin(dtReal);
     sh.draw(dtReal, cam, sh.nav.vel, sun, sh.hull.group.position, this.mode === 'pilot', tunnel);
+    // on (or over) a world: the night falls on the hull and on everything standing about, and the sky lights the shade
+    if (L.body && L.agl < 2e5 || L.giantBody) {
+      sh.sun.intensity *= L.sunUp;
+      sh.ambient.intensity = 0.25 + 1.15 * Math.max(L.sunUp * L.sky.strength, 0.08);
+    } else sh.ambient.intensity = 1.4;
     if (this.mode === 'scope') { cam.fov = this.scope.fov; cam.updateProjectionMatrix(); }
     else if (this.mode !== 'pilot' && cam.fov !== 75) { cam.fov = 75; cam.updateProjectionMatrix(); }
     // the map covers the view: leave the last frame up rather than draw what nobody can see
     if (!this.nav.open) this.renderer.render(this.scene, cam);
-    this.drawLabels(P, tunnel || this.nav.open);
+    this.drawLabels(P, tunnel || this.nav.open || L.sky.inside > 0.6);
     this.radar.draw();
     this.nav.draw(dtReal);
     this.controls.hud(this.readout());
@@ -754,6 +916,12 @@ export class View3D {
       this.base = this.suit.nav;
       this.eye.set(0, 0, 0);
       cam.quaternion.copy(this.suit.quat);
+    } else if (this.mode === 'ground' && this.landing.walker) {
+      this.base = this.landing.walkerView(cam);
+      this.eye.set(0, 0, 0);
+    } else if (this.mode === 'craft' && this.fleet.current) {
+      this.base = this.fleet.view(cam);
+      this.eye.set(0, 0, 0);
     } else {
       this.base = sh.nav;
       if (this.mode === 'pilot') {
@@ -815,7 +983,20 @@ export class View3D {
     } else if (this.mode === 'eva') {
       const loc = relM(this.suit.nav, sh.nav).applyQuaternion(sh.quat.clone().invert());
       if (loc.distanceTo(HATCH_OUT) < 7) { this.prompt = { label: 'Board the ship', act: () => this.board() }; sh.boardable = true; }
-    }
+    } else if (this.mode === 'ground') {
+      const L = this.landing, w = L.walker;
+      if (L.atLadder()) { this.prompt = { label: 'Climb the ladder and board', act: () => this.board() }; sh.boardable = true; }
+      else if (w) {
+        const c = this.fleet.near(w.b, w.n, w.b.r * AU_M);
+        if (c?.kind === 'shuttle') this.prompt = { label: 'Board Lander 1', act: () => this.fleet.board(c) };
+        else if (c?.kind === 'rover') this.prompt = { label: `Drive ${c.name}`, act: () => this.fleet.take(c, true) };
+        else if (c) this.prompt = { label: `${c.name}: ${this.fleet.status(c)}`, act: () => this.app.onToast(c.log[0]?.text ?? c.name) };
+        else {
+          const site = this.science.nearSite(w.b, w.n, 40);
+          if (site) this.prompt = { label: site.name, act: () => this.app.onToast(site.desc) };
+        }
+      }
+    } else if (this.mode === 'craft') this.prompt = this.fleet.prompt();
 
     // the console, a few times a second
     this.screenT -= dt;
@@ -879,7 +1060,7 @@ export class View3D {
     h.drawScreen('log', ["CAPTAIN'S LOG", `${fmtLength(L.metres / AU_M)} flown`, `${L.firsts.length} worlds`, `${L.jumps} transits`]);
     h.drawScreen('survey', sv && t ? [`SURVEY · ${t.name.toUpperCase()}`, sv.kind, ...sv.rows.filter(([k]) => /gravity|emperature/.test(k)).map(([k, x]) => `${k.replace(' (est.)', '').replace('Mean t', 'T').replace('Surface g', 'G')}: ${x}`), sv.land.ok ? 'LANDABLE' : 'NO LANDING'] : ['SURVEY', 'no target']);
     h.drawScreen('power', ['POWER', POWER[sh.power].name.toUpperCase(), wrm]);
-    h.drawScreen('bay', ['LANDING SURVEY', t ? t.name : '—', sv ? (sv.land.ok ? 'LANDABLE' : 'NO LANDING') : '', 'LANDER 1', 'NOT FLIGHT-READY']);
+    h.drawScreen('bay', ['LANDING SURVEY', t ? t.name : '—', sv ? (sv.land.ok ? 'LANDABLE' : 'NO LANDING') : '', 'LANDER 1', this.fleet.shuttle ? 'OUT' : 'READY']);
     // the globe wears the target's surface
     const want = t && !['star', 'wd', 'ns', 'bh'].includes(t.cls) && !t.look.craft && !t.look.wormhole ? t : null;
     const m = want ? maps.want(want.look, 256) : null;
@@ -934,8 +1115,23 @@ export class View3D {
       const out = this.app.world.bodies.find(q => q.id === near.b!.partnerId && q.alive);
       if (out) { this.throughNatural(near.b, out); return; }
     }
-    this.clear(n, SHIP_CLEAR);
+    // near a world's ground: its terrain, the legs and landing; anywhere else, just never inside anything
+    const nb = near.b;
+    if (this.landing.ground.src && nb === this.landing.ground.body) {
+      this.landing.shipStep(dt);
+      // called down to a walker: once over the spot, land
+      const la = this.landAt;
+      if (la && !this.travel && nb === la.b) { this.landing.auto = 'land'; this.landAt = null; }
+    } else if (nb && isGiant(nb)) {
+      // into a giant, as deep as the hull will take
+      const floor = this.landing.giantFloor(nb);
+      const before = this.landing.over(nb, posOf(n)).r - nb.r * AU_M;
+      this.clear(n, floor);
+      if (before < floor + 500 && !this.deepWarned) { this.deepWarned = true; this.app.onToast(`Hull limit: ${Math.round(-floor / 1000)} km down. The pressure and heat below would crush the ship — send a probe deeper`); }
+      if (before > floor + 20000) this.deepWarned = false;
+    } else this.clear(n, SHIP_CLEAR);
   }
+  private deepWarned = false;
 
   /** never inside anything: keep a mover `gap` m above the nearest surface */
   private clear(m: Mover, gap: number) {
@@ -1048,11 +1244,21 @@ export class View3D {
 
   /** outside: a suit with thrusters, gentle and slow unless you open the throttle */
   private spacewalk(dt: number) {
-    const s = this.suit.nav, v = s.vel, sh = this.ship;
+    const s = this.suit.nav, v = s.vel, sh = this.ship, L = this.landing;
     const want = this.controls.thrust(4 * this.controls.throttle, this.suit.quat);
     for (let k = 0; k < 3; k++) v[k] += (want[k] - v[k]) * Math.min(1, dt * 1.5);
     for (let k = 0; k < 3; k++) s.off[k] += (v[k] * dt) / AU_M;
-    this.clear(s, 2);
+    // down to the ground: standing on it
+    const gb = L.ground.body;
+    if (gb && L.ground.src) {
+      const p = posOf(s), o = L.over(gb, p);
+      if (o.r - gb.r * AU_M - L.ground.heightAt(o.n) < 1.8) {
+        L.touchDown(gb, p, new THREE.Vector3(0, 0, -1).applyQuaternion(this.suit.quat));
+        this.mode = 'ground';
+        this.app.onToast(`Feet on ${gb.name}`);
+        return;
+      }
+    } else this.clear(s, 2);
     // and not through the hull
     const inv = sh.quat.clone().invert();
     const loc = relM(s, sh.nav).applyQuaternion(inv);
@@ -1070,7 +1276,10 @@ export class View3D {
    * most the overdrive allows here
    */
   speed() {
-    const { alt } = this.nearest(posOf(this.ship.nav));
+    let { alt } = this.nearest(posOf(this.ship.nav));
+    const L = this.landing;
+    if (L.shipBody && isFinite(L.shipAgl)) alt = Math.min(alt, Math.max(1, L.shipAgl - 6));
+    if (L.giantBody && L.giantAlt < 2e4) alt = Math.max(alt, 8000);
     const cap = this.ship.cap(alt);
     if (this.ship.odLevel > 0) return cap * Math.min(1, this.controls.throttle);
     return Math.min(cap, Math.max(1, Math.min(isFinite(alt) ? alt : 1e9, 1e16)) * 0.5 * this.controls.throttle);
@@ -1102,7 +1311,7 @@ export class View3D {
       if (!sh.worm) tgt += ` · ~${fmtTime(this.eta(d))}`;
     }
     const w = sh.worm;
-    const drive = w ? (w.phase === 'charge' ? `wormhole opening · ${Math.max(0, JUMP_CHARGE - w.t).toFixed(1)} s`
+    let drive = w ? (w.phase === 'charge' ? `wormhole opening · ${Math.max(0, JUMP_CHARGE - w.t).toFixed(1)} s`
       : w.phase === 'enter' ? `into the wormhole` : w.phase === 'tunnel' ? `in the throat · ${w.to.name} in ${Math.max(0, w.dur - w.t).toFixed(0)} s` : `out of the wormhole`)
       : this.travel ? `autopilot → ${this.travel.name}${sh.odLevel > 0 ? ` · overdrive ${(sh.odLevel * 100).toFixed(0)}%` : ''}`
       : sh.odLevel > 0 ? `overdrive ${(sh.odLevel * 100).toFixed(0)}%` : 'cruise drive';
@@ -1110,15 +1319,32 @@ export class View3D {
     if (this.mode === 'pilot') where = `At the helm · ${sh.view === 'chase' ? 'chase view' : 'cockpit'}`;
     else if (this.mode === 'walk') where = this.sleep ? 'Asleep in the quarters' : this.foot.seat ? 'On the couch' : `On foot · ${this.room()}`;
     else if (this.mode === 'scope') where = `Telescope · ×${(70 / this.scope.fov).toFixed(this.scope.fov > 7 ? 1 : 0)}${this.scope.track ? ' · tracking' : ''}`;
-    else {
+    else if (this.mode === 'ground' && this.landing.walker) {
+      const wk = this.landing.walker, [la, lo] = latLonOf(wk.n);
+      where = `On ${wk.b.name} · ${Math.abs(la).toFixed(2)}°${la >= 0 ? 'N' : 'S'} ${Math.abs(lo).toFixed(2)}°${lo >= 0 ? 'E' : 'W'}`;
+      speed = `${(gravityOf(wk.b) / 9.81).toFixed(2)} g`;
+      drive = this.envLine(wk.b, wk.h);
+    } else if (this.mode === 'craft' && this.fleet.current) {
+      const c = this.fleet.current;
+      where = `${this.fleet.icon(c)} ${c.name}${this.fleet.driving ? '' : ' · watching'}`;
+      speed = c.nav ? fmtV(Math.hypot(...c.nav.vel)) : c.state === 'descent' ? `${c.vdown.toFixed(0)} m/s down` : '';
+      drive = this.fleet.status(c);
+    } else {
       const d = relM(this.suit.nav, sh.nav).length();
       where = `Spacewalk · ${d < 1000 ? `${d.toFixed(0)} m` : fmtLength(d / AU_M)} from the ship`;
       const rv = Math.hypot(this.suit.nav.vel[0] - sh.nav.vel[0], this.suit.nav.vel[1] - sh.nav.vel[1], this.suit.nav.vel[2] - sh.nav.vel[2]);
       speed = `${fmtV(rv)} suit`;
     }
+    // near the ground: how high above it, and what the air is doing
+    const Lg = this.landing;
+    let near = b ? `${b.name} · ${fmtLength(Math.max(0, alt) / AU_M)} up` : '';
+    if (Lg.landed && (this.mode === 'pilot' || this.mode === 'walk')) near = `Landed on ${Lg.landed.b.name} · ${this.envLine(Lg.landed.b, 0)}`;
+    else if (this.mode === 'ground' && Lg.walker) near = Lg.sunUp > 0.02 ? `Daylight · ${Lg.sky.strength > 0.05 ? 'under a sky' : 'black sky, no air'}` : 'Night';
+    else if (Lg.body && isFinite(Lg.agl) && this.mode !== 'ground') near = `${Lg.body.name} · ${Lg.agl < 1000 ? `${Lg.agl.toFixed(0)} m` : `${(Lg.agl / 1000).toFixed(Lg.agl < 1e4 ? 1 : 0)} km`} above the ground${Lg.auto === 'land' ? ' · landing' : Lg.auto === 'takeoff' ? ' · lifting off' : ''}`;
+    else if (Lg.giantBody && this.mode !== 'ground') near = `${Lg.giantBody.name} · ${this.envLine(Lg.giantBody, Lg.giantAlt)}`;
     return {
       mode: this.mode, where, speed, drive, target: tgt,
-      near: b ? `${b.name} · ${fmtLength(Math.max(0, alt) / AU_M)} up` : '',
+      near,
       riding: sh.nav.anchor?.name ?? '', throttle: this.controls.throttle, charge: sh.charge, flash: sh.flash,
       prompt: this.prompt?.label ?? '', tunnel: w?.phase === 'tunnel', od: sh.od, view: sh.view,
     };
@@ -1330,10 +1556,12 @@ export class View3D {
       .slice(0, 14);
     const v = new THREE.Vector3(), dir = new THREE.Vector3();
     const inv = this.ship.quat.clone().invert(), eye = this.localEye, hull = this.ship.hull;
+    const Lb = this.landing.body, upG = Lb && this.landing.agl < 2e4 ? new THREE.Vector3(...toWorldF(frameOfB(Lb), this.landing.n)) : null;
     for (const { b } of cands) {
       v.set((b.x - P[0]) * AU_M, (b.y - P[1]) * AU_M, (b.z - P[2]) * AU_M);
-      // inside, only what can be seen through a window
+      // inside, only what can be seen through a window; on the ground, only what is above the horizon
       if (eye && !hull.seesOut(eye, dir.copy(v).normalize().applyQuaternion(inv))) continue;
+      if (upG && b !== this.landing.body && dir.copy(v).normalize().dot(upG) < -0.01) continue;
       v.project(cam);
       if (v.z > 1 || v.z < -1 || Math.abs(v.x) > 1.05 || Math.abs(v.y) > 1.05) continue;
       want.add(b);
@@ -1343,6 +1571,30 @@ export class View3D {
       el.style.left = `${((v.x + 1) / 2) * W + 8}px`;
       el.style.top = `${((1 - v.y) / 2) * H}px`;
       el.classList.toggle('sel', b === this.app.selected);
+    }
+    // craft that have been sent out, and the real sites on the world below
+    const pins = this.fleet.labels();
+    const gb = this.landing.body;
+    if (gb && gb.look.real && this.landing.agl < 5e5) {
+      const R = gb.r * AU_M;
+      for (const st of sitesOn(gb.look.real)) {
+        const n = dirOf(st.lat, st.lon);
+        const p = this.fleet.at(gb, n, st.model === 'none' ? 0 : 3);
+        const d = Math.hypot(p[0] - P[0], p[1] - P[1], p[2] - P[2]) * AU_M;
+        if (d > Math.max(3e4, this.landing.agl * 6) || (st.kind === 'city' && d > 2e5)) continue;
+        void R;
+        pins.push({ key: `site:${st.name}`, name: `${st.kind === 'feature' ? '⛰' : st.kind === 'city' ? '🏙' : '📍'} ${st.name}`, p });
+      }
+    }
+    for (const pin of pins) {
+      v.set((pin.p[0] - P[0]) * AU_M, (pin.p[1] - P[1]) * AU_M, (pin.p[2] - P[2]) * AU_M).project(cam);
+      if (v.z > 1 || v.z < -1 || Math.abs(v.x) > 1.05 || Math.abs(v.y) > 1.05) continue;
+      want.add(pin.key);
+      let el = this.labelEls.get(pin.key);
+      if (!el) { el = document.createElement('div'); el.className = 'lbl pin'; this.labels.appendChild(el); this.labelEls.set(pin.key, el); }
+      if (el.textContent !== pin.name) el.textContent = pin.name;
+      el.style.left = `${((v.x + 1) / 2) * W + 8}px`;
+      el.style.top = `${((1 - v.y) / 2) * H}px`;
     }
     // outside, where to get back in
     if (this.mode === 'eva') {
@@ -1437,7 +1689,7 @@ function starField() {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  const p = new THREE.Points(g, new THREE.PointsMaterial({ size: 1.5, sizeAttenuation: false, vertexColors: true, depthWrite: false }));
+  const p = new THREE.Points(g, new THREE.PointsMaterial({ size: 1.5, sizeAttenuation: false, vertexColors: true, depthWrite: false, transparent: true }));
   p.frustumCulled = false;
   return p;
 }

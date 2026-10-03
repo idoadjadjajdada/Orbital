@@ -116,6 +116,8 @@ export class Hull {
   readonly lander = new THREE.Group();
   readonly bayDoors: THREE.Mesh[] = [];
   readonly legs: THREE.Group[] = [];
+  /** the ladder from the airlock to the ground */
+  private ladder: THREE.Group;
   private t = 0;
 
   constructor(glow: THREE.Texture) {
@@ -229,16 +231,33 @@ export class Hull {
     for (const sx of [1, -1]) for (const z of [6.2, 16.4]) {
       const leg = new THREE.Group();
       leg.position.set(sx * (5.5 + T + 0.2), -1.5, z);
-      const strut = new THREE.Mesh(new THREE.BoxGeometry(0.3, 3.2, 0.3), M.steel);
-      strut.position.y = -1.6;
-      const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.65, 0.18, 10), M.dark);
-      pad.position.set(0, -3.25, 0);
-      pad.rotation.z = Math.PI / 2;
+      const strut = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1, 0.3), M.steel);
+      strut.name = 'strut';
+      const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.75, 0.18, 12), M.dark);
+      pad.name = 'pad';
       leg.add(strut, pad);
       g.add(leg);
       this.legs.push(leg);
     }
     this.solids.push(new THREE.Box3(new THREE.Vector3(-6.5, Y1 - 0.6, 5.6), new THREE.Vector3(6.5, -1.4, 17)));
+    // the boarding ladder, down from the airlock to the ground when the ship has landed
+    this.ladder = new THREE.Group();
+    const lad = new THREE.Group();
+    for (const s of [-1, 1]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.08, 7.2, 0.08), M.stripe);
+      rail.position.set(0, -3.6, s * 0.4);
+      lad.add(rail);
+    }
+    for (let y = -0.4; y > -7; y -= 0.4) {
+      const rung = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.8), M.steel);
+      rung.position.set(0, y, 0);
+      lad.add(rung);
+    }
+    lad.rotation.z = -0.16;
+    lad.position.set(-8.95, 0.35, 0);
+    this.ladder.add(lad);
+    this.ladder.visible = false;
+    g.add(this.ladder);
 
     // ---- the bridge
     // helm chair
@@ -513,7 +532,7 @@ export class Hull {
     this.lander.position.set(0.6, y1, 12.5);
     g.add(this.lander);
     this.block(-1.9, 3.1, 9.7, 15.3);
-    this.station('lander', new THREE.Vector3(0.6, y1 + 1.6, 12.5), 'Look over the lander', 3.6);
+    this.station('lander', new THREE.Vector3(0.6, y1 + 1.6, 12.5), 'Fly Lander 1', 3.6);
     // the ladder up through the hatch
     for (const s of [-1, 1]) this.box(lx + s * 0.25 - 0.03, lx + s * 0.25 + 0.03, y1, -0.25, lz - 0.45, lz - 0.39, M.steel, false);
     for (let y = y1 + 0.35; y < -0.4; y += 0.32) this.box(lx - 0.25, lx + 0.25, y, y + 0.04, lz - 0.44, lz - 0.4, M.steel, false);
@@ -562,10 +581,11 @@ export class Hull {
     this.sign('HANGAR ▼', -4.49, 1.9, 9.0, Math.PI / 2);
     this.sign('HANGAR · DECK 2', 0.6, y1 + 3.6, 4.51, 0, 2.4);
     this.sign('▲ ENGINEERING', -5.49, y1 + 2.9, 9.0, Math.PI / 2);
-    this.sign('LANDER 1 · NOT FLIGHT-READY', 0.6, y1 + 3.0, 17.99, Math.PI, 2.6);
+    this.sign('LANDER 1 · CLEARED TO FLY', 0.6, y1 + 3.0, 17.99, Math.PI, 2.6);
 
     // a few hundred boxes cost a draw each: the ones that never move are merged, one mesh a material
     this.merge(new Set<THREE.Object3D>([...this.coreRings, this.wormRing, this.holoRing, this.globe, ...this.vials, ...this.bayDoors]));
+    this.setLegs(0);
     g.traverse(o => { o.frustumCulled = false; });
   }
 
@@ -1000,10 +1020,23 @@ export class Hull {
     b.position.x = 2.12 + 3.0 * open;
   }
 
-  /** for the landing to come: swing the legs down (0 stowed – 1 deployed) */
+  /** the landing legs: 0 stowed against the belly pod – 1 down, the feet 6.6 m below the ship's middle */
   setLegs(out: number) {
-    for (const l of this.legs) l.rotation.z = Math.sign(l.position.x) * out * 0.5;
+    if (out === this.legsOut) return;
+    this.legsOut = out;
+    for (const l of this.legs) {
+      const L = 3.2 + 1.85 * out;
+      const strut = l.getObjectByName('strut')!, pad = l.getObjectByName('pad')!;
+      strut.scale.y = L;
+      strut.position.y = -L / 2;
+      pad.position.y = -L - 0.05;
+      l.rotation.z = Math.sign(l.position.x) * out * 0.08;
+    }
   }
+  private legsOut = -1;
+
+  /** the boarding ladder, out when the ship stands on the ground */
+  setLadder(on: boolean) { this.ladder.visible = on; }
 }
 
 /** part of a non-indexed geometry, as its own geometry */

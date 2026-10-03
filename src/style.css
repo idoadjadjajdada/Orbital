@@ -394,3 +394,27 @@ body.clean .hud:not(#showUi), body.clean #ui3 .top3, body.clean #ui3 .radar3, bo
 .cheat { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--dim); margin: 6px 0; }
 .cheat span { color: var(--text); }
 .cheat input { width: 100%; }
+/* console panels: tabs, gas bars, the interior cut, mission control */
+.panel3 .ptabs { display: flex; gap: 5px; margin: 2px 0 8px; flex-wrap: wrap; }
+.panel3 .pgas { display: grid; grid-template-columns: 52px 1fr 90px 64px; align-items: center; gap: 8px; padding: 4px 2px; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.panel3 .pgas b { color: var(--acc); font-weight: 600; }
+.panel3 .pgas span:first-child:not(.pbar) { color: var(--text); }
+.panel3 .pgas em { font-style: normal; text-align: right; color: var(--text); font-variant-numeric: tabular-nums; }
+.panel3 .pbar { display: block; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.06); overflow: hidden; }
+.panel3 .pbar i { display: block; height: 100%; background: linear-gradient(90deg, #5fd0ff, #9fe8c8); }
+.panel3 .pdot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: -1px; margin-right: 6px; border: 1px solid rgba(255, 255, 255, 0.2); }
+.panel3 .pcutw { display: flex; gap: 14px; align-items: center; }
+.panel3 .pcutw > div { flex: 1; min-width: 0; }
+.panel3 .pcut { flex: none; filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.5)); }
+.panel3 .pkinds { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 6px; }
+.panel3 .pkind { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; padding: 8px 10px !important; }
+.panel3 .pkind span { color: var(--dim); font-size: 11px; line-height: 1.3; }
+.panel3 .plog { margin: 0 0 6px; padding: 6px 10px; background: rgba(255, 255, 255, 0.03); border-radius: 8px; font: 11.5px ui-monospace, Menlo, monospace; color: #bfefff; max-height: 180px; overflow-y: auto; }
+.panel3 .plog div { padding: 2px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+.panel3 .pcraft .pbtns button { padding: 4px 7px; font-size: 11.5px; }
+#labels3 .lbl.pin { color: #9fe8c8; font-size: 11px; }
+@media (max-width: 560px) {
+  .panel3 .pcutw { flex-direction: column; }
+  .panel3 .pgas { grid-template-columns: 46px 1fr 60px 58px; }
+  .panel3 .pcraft { flex-wrap: wrap; }
+}

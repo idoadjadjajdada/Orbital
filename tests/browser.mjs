@@ -242,6 +242,40 @@ try {
   await page.evaluate(() => window.orbital.v3.use('bunk'));
   await page.waitForFunction(() => !window.orbital.v3.asleep, null, { timeout: 15000 });
   ok('a night in the bunk passes hours and puts the clock back', await page.evaluate(t => { const a = window.orbital; return (a.world.time - t) * 365.25 * 24 > 2 && Math.abs(a.warp * 31557600 - 1) < 1e-6 && a.v3.logbook.sleeps === 1; }, t0));
+  // landing: down on the Moon on the ship's legs, out onto the ground, a scan
+  await page.evaluate(() => {
+    const v = window.orbital.v3, a = window.orbital, M = a.world.sources.find(b => b.name === 'Moon');
+    a.select(M);
+    v.use('helm');
+    const p = v.landing.at(M, [0.6, 0.6, 0.53], 3000);
+    v.ship.nav.anchor = M; v.ship.nav.off = [p[0] - M.x, p[1] - M.y, p[2] - M.z]; v.ship.nav.vel = [0, 0, 0]; v.travel = null;
+  });
+  ok('terrain is built under the ship near the Moon', await page.waitForFunction(() => window.orbital.v3.landing.ground.ready && isFinite(window.orbital.v3.landing.shipAgl), null, { timeout: 30000 }).then(() => true, () => false));
+  await page.evaluate(() => { const v = window.orbital.v3, L = v.landing, M = L.ground.body, n = L.over(M, v.shipPos()).n, p = L.at(M, n, 40); v.ship.nav.off = [p[0] - M.x, p[1] - M.y, p[2] - M.z]; });
+  await page.keyboard.press('KeyL');
+  ok('L lands the ship on the Moon', await page.waitForFunction(() => !!window.orbital.v3.landing.landed, null, { timeout: 60000 }).then(() => true, () => false));
+  await page.evaluate(() => { const v = window.orbital.v3; v.leaveHelm(); v.stepOut(); });
+  ok('the airlock opens onto the ground', await page.evaluate(() => window.orbital.v3.mode === 'ground' && /On Moon/.test(window.orbital.v3.readout().where)));
+  await page.keyboard.press('KeyR');
+  ok('R scans the soil and the air', await page.evaluate(() => window.orbital.v3.science.log.some(l => /soil/.test(l.text)) && window.orbital.v3.science.log.some(l => /exosphere|vacuum/.test(l.text))));
+  await page.keyboard.press('KeyK');
+  ok('K opens mission control', await page.evaluate(() => !document.querySelector('.panel3').hidden && /Mission control/.test(document.querySelector('.panel3').textContent)));
+  await page.click('.panel3 [data-act="deploy"][data-id="orbiter"]');
+  ok('an orbiter launches for the Moon and goes into a real orbit', await page.evaluate(() => { const c = window.orbital.v3.fleet.crafts[0]; c.t = c.dur; return !!c; }) && await page.waitForFunction(() => { const c = window.orbital.v3.fleet.crafts[0]; return c.state === 'orbit' && c.body?.alive && window.orbital.world.bodies.includes(c.body); }, null, { timeout: 10000 }).then(() => true, () => false));
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => { const v = window.orbital.v3; v.board(); v.landing.takeOff(); });
+  // into Jupiter, as deep as the hull allows
+  await page.evaluate(() => {
+    const v = window.orbital.v3, a = window.orbital;
+    a.loadPreset('solar');
+    const J = a.world.sources.find(b => b.name === 'Jupiter');
+    v.use('helm');
+    const p = v.landing.at(J, [1, 0, 0], -30000);
+    v.ship.nav.anchor = J; v.ship.nav.off = [p[0] - J.x, p[1] - J.y, p[2] - J.z]; v.ship.nav.vel = [0, 0, 0];
+  });
+  ok('inside Jupiter: cloud decks round the ship, and a hull limit below', await page.waitForFunction(() => { const L = window.orbital.v3.landing; return L.giantBody?.name === 'Jupiter' && L.sky.inside > 0.5 && L.giantFloor(L.giantBody) < -30000; }, null, { timeout: 45000 }).then(() => true, () => false),
+    await page.evaluate(() => { const v = window.orbital.v3, L = v.landing; return JSON.stringify({ g: L.giantBody?.name, alt: L.giantAlt, inside: L.sky.inside, mode: v.mode, anchor: v.ship.nav.anchor?.name }); }));
+  await page.evaluate(() => { const a = window.orbital; a.loadPreset('earth'); a.v3.enter(); });
   await page.evaluate(() => window.orbital.v3.use('helm'));
   // a controller, faked through the Gamepad API
   await page.evaluate(() => {
