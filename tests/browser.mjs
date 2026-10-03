@@ -314,6 +314,22 @@ try {
   await page.evaluate(() => window.orbital.v3.use('helm'));
   await page.keyboard.press('KeyL');
   ok('L again lifts off', await page.waitForFunction(() => !window.orbital.v3.landing, null, { timeout: 60000 }).then(() => true, () => false));
+  // Lander 1, flown by hand: out of the bay, down, out and back in, and home to dock
+  await page.waitForFunction(() => { const v = window.orbital.v3, o = v.overGround(); return o && o.alt > 300; }, null, { timeout: 60000 }).catch(() => {});
+  await page.evaluate(() => { const v = window.orbital.v3; v.leaveHelm(); v.use('lander'); });
+  ok('Lander 1 launches from the hangar with you at its controls', await page.evaluate(() => window.orbital.v3.mode === 'shuttle' && window.orbital.v3.shuttle.state === 'flying'));
+  await page.keyboard.press('KeyL');
+  ok('L brings Lander 1 down on its legs', await page.waitForFunction(() => window.orbital.v3.shuttle.state === 'landed', null, { timeout: 120000 }).then(() => true, () => false));
+  await page.keyboard.press('KeyF');
+  ok('F steps out of it onto the ground', await page.evaluate(() => window.orbital.v3.mode === 'surface'));
+  ok('beside it you can board again', await until(page, () => window.orbital.v3.prompt?.label === 'Board Lander 1'));
+  await page.keyboard.press('KeyF');
+  await page.keyboard.press('KeyL');
+  await page.evaluate(() => { const v = window.orbital.v3, s = v.shuttle, S = v.shipPos(), a = s.nav.anchor; s.nav.off = [S[0] - (a?.x ?? 0) + 3e-10, S[1] - (a?.y ?? 0), S[2] - (a?.z ?? 0)]; });
+  ok('back by the ship it can dock', await until(page, () => window.orbital.v3.prompt?.label === 'Dock with the ship'));
+  await page.keyboard.press('KeyF');
+  ok('docked, you are in the hangar', await page.evaluate(() => window.orbital.v3.mode === 'walk' && window.orbital.v3.foot.deck === 1 && window.orbital.v3.shuttle.state === 'docked'));
+  await page.evaluate(() => window.orbital.v3.use('helm'));
   // into a giant, and a probe after you
   await page.evaluate(() => { const a = window.orbital; a.loadPreset('jupiter'); a.select(a.world.sources.find(b => b.name === 'Jupiter')); });
   await page.keyboard.press('KeyV'); await page.keyboard.press('KeyV');

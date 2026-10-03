@@ -114,6 +114,7 @@ can use; `H` shows every control for every place.
 | **Outside** | `W` `A` `S` `D` `Space` `C` thrusters · `Q` `E` roll · `Shift` boost · wheel thrust level · `F` board (at the airlock) · `G` call the ship · `M` nav map | left stick and triggers thrust, bumpers roll, `A` board or select, `X` call the ship |
 | **Telescope** | mouse aim · wheel zoom · click select · `T` track the target · `F` or `Esc` step back | right stick aims, triggers zoom, `A` select, `X` track, `B` step back |
 | **On the ground** | `W` `A` `S` `D` walk · mouse look · `Shift` run · `Space` jump · `F` board (at the ladder) · `R` scan · `G` call the ship down · `K` mission control | left stick walks, right stick looks, `X` jump, `A` board, `Y` scan, `B` call the ship |
+| **Flying Lander 1** | mouse steers · `W` `A` `S` `D` thrust · `Space` `C` up, down · `Shift` boost · `L` come down or lift off · `F` step out, board, dock · `M` nav map | left stick thrusts, right stick steers, `LT` `RT` down, up, `X` land or lift off, `A` step out or dock |
 | **Watching a craft** | mouse round it · wheel closer, further · `W` `A` `S` `D` drive (a rover) · `[` `]` other craft · `F` or `Esc` back | left stick drives, right stick looks, d-pad ◀ ▶ other craft, ▲ ▼ closer, `B` back |
 
 At the helm, `L` (or `X` near the ground) lands and lifts off, and `K` anywhere
@@ -154,10 +155,11 @@ seconds.
   balanced, engines (overdrive spools faster and runs closer to worlds; the
   wormhole drive recharges slowly) or wormhole (a 15-second recharge, a slower,
   lower overdrive). A hatch leads down to…
-- The **hangar**, the belly pod on the lower deck: a lander parked over the bay
-  doors, the **landing survey** of nearby worlds, fuel, suits, and **Mission
-  control**, where the probes, orbiters, landers, rovers, stations and bases go
-  out from (the bay doors open as each one leaves).
+- The **hangar**, the belly pod on the lower deck: **Lander 1** parked over the
+  bay doors (fly it out yourself), the **landing survey** of nearby worlds,
+  fuel, suits, and **Mission control**, where the probes, orbiters, landers,
+  rovers, stations and bases go out from (the bay doors open as each one
+  leaves).
 
 Signs over the doors say where they go, and labels for worlds show through the
 windows, not the walls. Leave the helm and the ship flies on by itself: the
@@ -273,6 +275,15 @@ the nearest:
 
 Each reports as it goes. **View** any of them and the camera goes to it; a
 rover you can drive. Their labels show in the view.
+
+**Lander 1** is the ship's own crewed lander, and you fly it. Walk down to the
+hangar and use it: it drops out of the bay doors with you at the controls —
+`W` `A` `S` `D` and `Space` `C` thrust against the gravity of whatever is
+nearest, the mouse steers, and when you let go it holds a hover. Low down it
+levels itself; `L` brings it straight down onto its legs (gently, slowing as
+the ground comes up). `F` steps out onto the ground; walk back to it and `F`
+boards again; `L` (or a push on the stick) lifts off. Fly back within a
+hundred metres of the ship and `F` docks it in the hangar.
 
 ### The instruments
 

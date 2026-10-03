@@ -529,7 +529,7 @@ export class Hull {
     this.lander.position.set(0.6, y1, 12.5);
     g.add(this.lander);
     this.block(-1.9, 3.1, 9.7, 15.3);
-    this.station('lander', new THREE.Vector3(0.6, y1 + 1.6, 12.5), 'Look over the lander', 3.6);
+    this.station('lander', new THREE.Vector3(0.6, y1 + 1.6, 12.5), 'Fly Lander 1', 3.6);
     // the ladder up through the hatch
     for (const s of [-1, 1]) this.box(lx + s * 0.25 - 0.03, lx + s * 0.25 + 0.03, y1, -0.25, lz - 0.45, lz - 0.39, M.steel, false);
     for (let y = y1 + 0.35; y < -0.4; y += 0.32) this.box(lx - 0.25, lx + 0.25, y, y + 0.04, lz - 0.44, lz - 0.4, M.steel, false);

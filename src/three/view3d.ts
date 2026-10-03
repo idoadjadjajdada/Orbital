@@ -18,6 +18,7 @@ import { Ground, bodyQuat, latLonOf, arc } from './ground';
 import { tangent } from './terrain';
 import { gravity } from './science';
 import { Fleet, type CraftKind } from './fleet';
+import { Shuttle } from './shuttle';
 import { Giant, HULL_BAR } from './giant';
 
 /**
@@ -198,7 +199,7 @@ void main() {
 }`;
 
 
-export type Mode = 'pilot' | 'walk' | 'eva' | 'scope' | 'surface' | 'craft';
+export type Mode = 'pilot' | 'walk' | 'eva' | 'scope' | 'surface' | 'craft' | 'shuttle';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const YR = 365.25 * 86400;
@@ -233,6 +234,8 @@ export class View3D {
   ground: Ground;
   /** the craft the ship has sent out */
   fleet: Fleet;
+  /** Lander 1, the crewed lander in the hangar, flown by hand */
+  shuttle: Shuttle;
   /** inside a giant planet's clouds */
   giant: Giant;
   private crushToast = 0;
@@ -320,6 +323,7 @@ export class View3D {
     this.labels.hidden = true;
     document.body.appendChild(this.labels);
     this.ship = new Ship(this.scene, this.glowTex);
+    this.shuttle = new Shuttle(this);
     this.scene.add(this.camera);
     this.base = this.ship.nav;
     this.controls = new Controls3D(this);
@@ -502,6 +506,7 @@ export class View3D {
   // ---------------------------------------------------------------- commands
   /** why the ship cannot fly somewhere now, or '' */
   goBlock() {
+    if (this.mode === 'shuttle') return 'You are flying Lander 1: dock with the ship first (fly within 100 m, F)';
     if (this.mode === 'eva' || this.mode === 'surface') return 'Board the ship first: it holds station while you are outside';
     if (this.landing) return this.landing.phase === 'landed' ? 'Lift off first (L)' : 'Not while landing';
     if (this.ship.worm) return 'Not during a wormhole transit';
@@ -511,6 +516,7 @@ export class View3D {
   /** why the wormhole drive cannot open a way now, or '' */
   jumpBlock() {
     const sh = this.ship;
+    if (this.mode === 'shuttle') return 'You are flying Lander 1: dock with the ship first (fly within 100 m, F)';
     if (this.mode === 'eva' || this.mode === 'surface') return 'Board the ship first: it holds station while you are outside';
     if (this.landing) return 'Lift off first';
     if (sh.worm) return 'A transit is under way';
@@ -616,7 +622,7 @@ export class View3D {
       }
       case 'down': this.climb(1); break;
       case 'up': this.climb(0); break;
-      case 'lander': this.panels.show('mission'); break;
+      case 'lander': if (this.shuttle.out) toast(`Lander 1 is out: ${this.shuttle.status()}`); else this.shuttle.launch(); break;
     }
   }
 
@@ -743,6 +749,7 @@ export class View3D {
     else if (this.mode === 'eva') rot(this.suit.quat);
     else if (this.mode === 'scope') { const k = this.scope.fov / 70; yaw *= k; pitch *= k; roll = 0; rot(this.scope.quat); this.scope.track = false; }
     else if (this.mode === 'surface') { this.surf.yaw += yaw; this.surf.pitch = Math.max(-1.5, Math.min(1.5, this.surf.pitch + pitch)); }
+    else if (this.mode === 'shuttle') this.shuttle.turn(yaw, pitch);
     else if (this.mode === 'craft' && this.craftView) { this.craftView.yaw -= yaw; this.craftView.pitch = Math.max(-1.2, Math.min(1.45, this.craftView.pitch - pitch)); }
     else {
       this.foot.yaw += yaw;
@@ -1000,7 +1007,7 @@ export class View3D {
   }
 
   /** out onto the ground: on foot at `n` (body frame), facing `yaw` */
-  private toSurface(n: V3, yaw: number) {
+  toSurface(n: V3, yaw: number) {
     const b = this.ground.body;
     if (!b) return;
     const S = this.surf;
@@ -1093,6 +1100,7 @@ export class View3D {
     if (this.mode === 'walk') this.walk(dtReal);
     if (this.mode === 'eva') this.spacewalk(dtReal);
     if (this.mode === 'surface') this.surfaceStep(dtReal);
+    this.shuttle.step(dtReal, this.mode === 'shuttle');
     this.place();
     const P = this.where();
     const cam = this.camera;
@@ -1104,6 +1112,7 @@ export class View3D {
     // the ground and sky of the world under you, and the craft out there
     this.groundFrame(dtReal, P, stars, tunnel);
     this.fleet.frame(dtReal, P, cam.fov);
+    this.shuttle.draw(P);
     this.bayT = Math.max(0, this.bayT - dtReal);
     sh.hull.setBay(Math.min(1, this.bayT, 4 - this.bayT));
     const seen = new Set<Body>();
@@ -1215,6 +1224,9 @@ export class View3D {
       this.base = this.surf.nav;
       this.eye.set(0, 0, 0);
       this.surfQuat(cam.quaternion);
+    } else if (this.mode === 'shuttle' && this.shuttle.out) {
+      this.base = this.shuttle.view(cam);
+      this.eye.set(0, 0, 0);
     } else if (this.mode === 'craft' && this.craftView && this.placeCraft()) {
       // placed
     } else {
@@ -1284,8 +1296,10 @@ export class View3D {
     } else if (this.mode === 'surface') {
       const foot = this.ladderFoot();
       if (foot && this.ground.spec && arc(foot, this.surf.n) * this.ground.spec.R < 4.5) { this.prompt = { label: 'Climb the ladder and board', act: () => this.board() }; sh.boardable = true; }
+      else if (this.shuttle.near(this.surf.b, this.surf.n)) this.prompt = { label: 'Board Lander 1', act: () => this.shuttle.board() };
       else this.prompt = { label: 'Scan here', act: () => this.panels.show('scan') };
-    } else if (this.mode === 'pilot') {
+    } else if (this.mode === 'shuttle') this.prompt = this.shuttle.prompt();
+    else if (this.mode === 'pilot') {
       const L = this.landing;
       if (L?.phase === 'landed') this.prompt = { label: 'Lift off', act: () => this.landOrLift() };
       else if (!L && !this.landBlock()) this.prompt = { label: `Land on ${this.ground.body?.name ?? 'the ground'}`, act: () => this.landOrLift() };
@@ -1606,6 +1620,10 @@ export class View3D {
     if (this.mode === 'pilot') where = `At the helm · ${sh.view === 'chase' ? 'chase view' : 'cockpit'}`;
     else if (this.mode === 'walk') where = this.sleep ? 'Asleep in the quarters' : this.foot.seat ? 'On the couch' : `On foot · ${this.room()}`;
     else if (this.mode === 'scope') where = `Telescope · ×${(70 / this.scope.fov).toFixed(this.scope.fov > 7 ? 1 : 0)}${this.scope.track ? ' · tracking' : ''}`;
+    else if (this.mode === 'shuttle') {
+      where = `🚀 Lander 1 · ${this.shuttle.status()}`;
+      speed = `${Math.hypot(...this.shuttle.nav.vel).toFixed(1)} m/s`;
+    }
     else if (this.mode === 'craft') {
       const c = this.craftView ? this.fleet.byId(this.craftView.id) : null;
       where = c ? `${c.name} · ${c.b.name} · ${c.status}` : 'Craft';
