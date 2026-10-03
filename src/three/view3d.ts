@@ -111,17 +111,52 @@ uniform vec3 atmo;
 uniform float hasAtmo;
 uniform float bump;
 uniform float detail;
+uniform float time;
+uniform float gas;
+uniform vec4 vortex;
 varying vec3 vObj;
 varying vec3 vWorldN;
 varying vec3 vWorldP;
 varying vec3 vEast;
 varying vec3 vNorth;
 ${MAP_UV}
+/**
+ * a giant's weather, moved on by k seconds: the belts and zones slide past each other on their
+ * alternating jets, and a great oval storm (vortex: centre lon, lat, half-sizes, degrees) turns
+ * on itself, fastest near its rim
+ */
+vec2 weather(vec2 uv, float k) {
+  float lat = (uv.y - 0.5) * 3.14159265;
+  float jet = 0.65 * sin(lat * 7.3 + 0.4) + 0.35 * sin(lat * 15.0 + 1.3);
+  uv.x += jet * k * 0.00022 * gas;
+  if (vortex.z > 0.0) {
+    vec2 c = vortex.xy;
+    vec2 d = vec2(mod(uv.x * 360.0 - c.x + 180.0, 360.0) - 180.0, (uv.y - 0.5) * 180.0 - c.y);
+    vec2 e = vec2(d.x * cos(radians(c.y)) / vortex.z, d.y / vortex.w);
+    float r = length(e);
+    // an anticyclone: anticlockwise in the south, clockwise in the north, still at its heart and outside it
+    float w = 0.045 * sign(-c.y) * smoothstep(0.0, 0.45, r) * (1.0 - smoothstep(0.8, 1.25, r));
+    float a = -w * k, ca = cos(a), sa = sin(a);
+    e = vec2(ca * e.x - sa * e.y, sa * e.x + ca * e.y);
+    uv = vec2((c.x + e.x * vortex.z / cos(radians(c.y))) / 360.0, (c.y + e.y * vortex.w) / 180.0 + 0.5);
+  }
+  return uv;
+}
 void main() {
   #include <logdepthbuf_fragment>
   vec3 n = normalize(vObj);
   vec2 uv = mapUV(n);
-  vec4 tex = texture2D(map, uv);
+  vec4 tex;
+  if (gas > 0.0) {
+    // eddies wandering along the belts
+    vec3 q = n * vec3(5.0, 5.0, 22.0);
+    vec2 wob = vec2(vnoise3(q + vec3(time * 0.03, 0.0, 0.0)), vnoise3(q + vec3(7.3, time * 0.025, 0.0))) - 0.5;
+    vec2 uw = uv + wob * vec2(0.0035, 0.0012) * gas;
+    // two looks, each carried a little way along the flow and faded into the other before the shear shows
+    float P = 48.0, p1 = fract(time / P), p2 = fract(time / P + 0.5);
+    vec4 t1 = texture2D(map, weather(uw, (p1 - 0.5) * P)), t2 = texture2D(map, weather(uw, (p2 - 0.5) * P));
+    tex = mix(t1, t2, abs(2.0 * p1 - 1.0));
+  } else tex = texture2D(map, uv);
   vec4 ax = texture2D(aux, uv);
   // relief: the slope of the height map tilts the surface
   float h = ax.r;
@@ -133,6 +168,8 @@ void main() {
   vec3 N0 = normalize(vWorldN);
   vec3 N = normalize(N0 - bump * (normalize(vEast) * g.x + normalize(vNorth) * g.y));
   vec3 col = tex.rgb * (1.0 + detail * (fine - 0.5) * 0.25);
+  // a giant's cloud tops close up: fine streaks drawn out along the latitudes, drifting
+  if (gas > 0.0) col *= 1.0 + (vnoise3(n * vec3(260.0, 260.0, 1400.0) + vec3(time * 0.04, 0.0, 0.0)) - 0.5) * 0.14 + (vnoise3(n * vec3(900.0, 900.0, 4000.0)) - 0.5) * 0.06;
   vec3 V = normalize(-vWorldP);
   if (lit > 0.5) {
     float dl = dot(N, lightDir), dl0 = dot(N0, lightDir);
@@ -144,6 +181,13 @@ void main() {
     c += ax.b * pow(max(dot(N0, H), 0.0), 90.0) * 0.55 * term * lightCol;
     col = c;
   } else col *= 0.45;
+  // lightning in a giant's belts, seen on its night side
+  if (gas > 0.0 && lit > 0.5) {
+    vec3 cell = floor(n * vec3(30.0, 30.0, 60.0));
+    float f = hash3(cell + floor(time * 2.5) * 13.7);
+    float night = smoothstep(0.0, -0.15, dot(N0, lightDir));
+    col += night * step(0.9975, f) * (1.0 - fract(time * 2.5)) * vec3(0.75, 0.85, 1.0) * 0.9 * gas;
+  }
   col += tex.a * vec3(1.0, 0.45, 0.12);
   col = max(col, heat * vec3(1.0, 0.35, 0.08) * 0.8);
   // the sky seen edge-on, brightest on the day side and reddening at the terminator
@@ -178,6 +222,12 @@ void main() {
   gl_FragColor = vec4(lightCol * lit, c * 0.95);
 }`;
 
+/**
+ * a ring: its profile of optical depth, and in it the ring's weather — clumps and wakes carried round
+ * at the orbital speed of their radius (the inner edge lapping the outer, Kepler's law; two looks
+ * faded into each other so the shear never builds), and on Saturn the spokes: dark wedges across the
+ * B ring that turn with the planet's magnetic field and come and go in hours
+ */
 const RING_FRAG = /* glsl */ `
 #include <common>
 #include <logdepthbuf_pars_fragment>
@@ -186,9 +236,22 @@ uniform float rIn;
 uniform float rOut;
 uniform vec3 col;
 uniform vec3 lightCol;
+uniform float time;
+uniform float spokes;
 varying vec3 vObj;
 varying vec3 vWorldN;
 varying vec3 vWorldP;
+float hash3(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float vnoise3(vec3 x) {
+  vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(hash3(i), hash3(i + vec3(1, 0, 0)), f.x), mix(hash3(i + vec3(0, 1, 0)), hash3(i + vec3(1, 1, 0)), f.x), f.y),
+             mix(mix(hash3(i + vec3(0, 0, 1)), hash3(i + vec3(1, 0, 1)), f.x), mix(hash3(i + vec3(0, 1, 1)), hash3(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+vec2 turn(vec2 p, float a) { float c = cos(a), s = sin(a); return vec2(c * p.x - s * p.y, s * p.x + c * p.y); }
+float clumps(vec2 p, float r, float k) {
+  vec2 q = turn(p, -0.03 * pow(r, -1.5) * k);
+  return vnoise3(vec3(q * 34.0, r * 420.0)) * 0.6 + vnoise3(vec3(q * 110.0, r * 1500.0)) * 0.4;
+}
 void main() {
   #include <logdepthbuf_fragment>
   float r = length(vObj.xy);
@@ -196,9 +259,21 @@ void main() {
   if (t < 0.0 || t > 1.0) discard;
   float a = texture2D(prof, vec2(t, 0.5)).r;
   if (a < 0.01) discard;
-  gl_FragColor = vec4(col * (0.25 + 0.75 * lightCol), a);
+  float P = 40.0, p1 = fract(time / P), p2 = fract(time / P + 0.5);
+  float cl = mix(clumps(vObj.xy, r, (p1 - 0.5) * P), clumps(vObj.xy, r, (p2 - 0.5) * P), abs(2.0 * p1 - 1.0));
+  a = clamp(a * (0.78 + 0.45 * cl), 0.0, 1.0);
+  vec3 c = col * (0.25 + 0.75 * lightCol) * (0.9 + 0.2 * cl);
+  if (spokes > 0.0 && r > 1.53 && r < 1.95) {
+    vec2 d = normalize(turn(vObj.xy, -time * 0.012));
+    float s = vnoise3(vec3(d * 13.0, time * 0.004)) * 0.6 + vnoise3(vec3(turn(d, 0.7) * 29.0, r * 4.0 + time * 0.006)) * 0.4;
+    float inB = smoothstep(1.53, 1.65, r) * (1.0 - smoothstep(1.8, 1.95, r));
+    c *= 1.0 - 0.28 * spokes * inB * smoothstep(0.64, 0.86, s);
+  }
+  gl_FragColor = vec4(c, a);
 }`;
 
+/** the great storms that turn on themselves (lon E, lat, half-sizes °, as the painters place them): Jupiter's Great Red Spot, Neptune's Great Dark Spot */
+const VORTEX: Record<string, [number, number, number, number]> = { Jupiter: [60, -22, 8.5, 6], Neptune: [30, -22, 9, 5.8] };
 
 export type Mode = 'pilot' | 'walk' | 'eva' | 'scope' | 'surface' | 'craft' | 'shuttle';
 
@@ -1723,6 +1798,7 @@ export class View3D {
           map: { value: o.tex }, aux: { value: o.aux }, texel: { value: new THREE.Vector2(1 / o.map.w, 1 / o.map.h) },
           lightDir: { value: new THREE.Vector3(1, 0, 0) }, lightCol: { value: new THREE.Vector3(1, 1, 1) }, lit: { value: 0 }, heat: { value: 0 },
           atmo: { value: new THREE.Vector3() }, hasAtmo: { value: 0 }, bump: { value: o.map.gas ? 0.01 : 0.05 }, detail: { value: o.map.gas ? 0 : 1 },
+          time: { value: 0 }, gas: { value: o.map.gas ? 1 : 0 }, vortex: { value: new THREE.Vector4(...(VORTEX[b.look.real ?? ''] ?? [0, 0, 0, 0])) },
         },
       });
       group.add(new THREE.Mesh(this.sphere, o.mat));
@@ -1748,7 +1824,10 @@ export class View3D {
         const c = rg.color;
         const rm = new THREE.ShaderMaterial({
           vertexShader: VERT, fragmentShader: RING_FRAG, transparent: true, side: THREE.DoubleSide, depthWrite: false,
-          uniforms: { prof: { value: pt }, rIn: { value: rg.inner }, rOut: { value: rg.outer }, col: { value: new THREE.Vector3(((c >> 16) & 255) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255) }, lightCol: { value: new THREE.Vector3(1, 1, 1) } },
+          uniforms: {
+            prof: { value: pt }, rIn: { value: rg.inner }, rOut: { value: rg.outer }, col: { value: new THREE.Vector3(((c >> 16) & 255) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255) },
+            lightCol: { value: new THREE.Vector3(1, 1, 1) }, time: o.mat.uniforms.time, spokes: { value: b.look.real === 'Saturn' ? 1 : 0 },
+          },
         });
         const ring = new THREE.Mesh(new THREE.RingGeometry(rg.inner, rg.outer, 160, 1), rm);
         ring.name = 'rings';
@@ -1835,6 +1914,9 @@ export class View3D {
     } else u.lit.value = 0;
     // a surface glows only once it is molten; a warm one (tidally heated Io) shows it at its volcanoes
     u.heat.value = Math.max(0, (b.heat - 0.55) / 0.45);
+    // the weather's clock: wrapped at a whole number of its cycles, so the shader's floats stay fine
+    u.time.value = (performance.now() / 1000) % 4800;
+    u.gas.value = o.map!.gas ? 1 : 0;
     if (b.look.atmo !== undefined) {
       const a = b.look.atmo;
       (u.atmo.value as THREE.Vector3).set(((a >> 16) & 255) / 255, ((a >> 8) & 255) / 255, (a & 255) / 255);

@@ -24,9 +24,16 @@ try {
     if (b === sun) d = [1, 0, 0];
     if (typeof az === 'string') {
       // '@lat,lon': over that point of the body's own frame
-      const [la, lo] = az.slice(1).split(',').map(x => +x * Math.PI / 180);
+      const [la, lo] = az.slice(1).replace('n', '').split(',').map(x => +x * Math.PI / 180);
       const V = v.camera.position.constructor;
-      const w = new V(Math.cos(la) * Math.cos(lo), Math.cos(la) * Math.sin(lo), Math.sin(la)).applyQuaternion(window.__bodyQuat(b));
+      const at = () => new V(Math.cos(la) * Math.cos(lo), Math.cos(la) * Math.sin(lo), Math.sin(la)).applyQuaternion(window.__bodyQuat(b));
+      // turn the body so the point is in daylight (unless asked for night with a trailing 'n')
+      if (b !== sun && !String(az).endsWith('n')) {
+        let best = 0, bd = -2;
+        for (let k = 0; k < 360; k++) { b.spinAngle = k * Math.PI / 180; const w = at(); const dd = w.x * d[0] + w.y * d[1] + w.z * d[2]; if (dd > bd) { bd = dd; best = b.spinAngle; } }
+        b.spinAngle = best;
+      }
+      const w = at();
       d = [w.x, w.y, w.z]; az = 0; el = 0;
     }
     const L = Math.hypot(...d); d = d.map(x => x / L);
@@ -51,6 +58,8 @@ try {
   await page.evaluate(() => document.querySelectorAll('.hud, #inspector, .hint, .chips, #hud3, .bar3').forEach(e => { e.style.visibility = 'hidden'; }));
   await page.screenshot({ path: out });
   console.log('saved', out);
+  // SHOT2=ms: a second picture that much later, to see what moves
+  if (process.env.SHOT2) { await page.waitForTimeout(+process.env.SHOT2); await page.screenshot({ path: out.replace(/\.png$/, '-b.png') }); }
 } finally {
   await browser.close();
   await server.close();

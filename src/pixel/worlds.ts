@@ -479,12 +479,27 @@ export function paintJupiter(o: Tx, lat: number, lon: number, n: V3, d: Detail) 
   // eddies and small ovals in the belts
   const ed = fbm(n[0] * 18 + 3, n[1] * 18, n[2] * 18, d.oct);
   if (ed > 0.68) mixTo(o, ed > 0.74 ? [0.95, 0.92, 0.86] : [0.62, 0.42, 0.3], 0.35 * ss(0.68, 0.78, ed));
-  // the Great Red Spot at 22 S, and Oval BA
-  const grs = blob(latD, lonD, n, { lat: -22, lon: 60, a: 7.5, b: 5.2 });
-  if (grs < 1.25) {
-    const swirl = fbm(n[0] * 25, n[1] * 25, n[2] * 25, 3);
-    mixTo(o, grs < 0.85 ? [0.78, 0.42, 0.3] : [0.94, 0.88, 0.8], (grs < 0.85 ? ss(0.85, 0.5, grs) * 0.9 + 0.1 * swirl : ss(1.25, 1.0, grs) * 0.7));
-    o.h += 0.04 * Math.max(0, 1 - grs);
+  // the Great Red Spot at 22 S: a brick-red core wound with spiral arms, a calmer heart, a pale collar of
+  // cloud round it, and the turbulent wake it leaves to the west (the shader turns it on itself)
+  {
+    const dx = (dlon(lonD, 60) * Math.cos(22 * D)) / 8.5, dy = (latD + 22) / 6;
+    const r = Math.hypot(dx, dy);
+    if (r < 1.5) {
+      const th = Math.atan2(dy, dx);
+      const tw = fbm(n[0] * 30, n[1] * 30, n[2] * 30, 4);
+      const arm = 0.5 + 0.5 * Math.sin(2 * th + 11 * r + 5 * (tw - 0.5));
+      const core = ss(1.0, 0.45, r);
+      mixTo(o, [0.95, 0.9, 0.82], ss(1.45, 1.12, r) * ss(0.85, 1.05, r) * 0.85);
+      mixTo(o, arm > 0.5 ? [0.76, 0.36, 0.22] : [0.86, 0.5, 0.34], core * (0.72 + 0.2 * arm));
+      mixTo(o, [0.84, 0.56, 0.4], ss(0.3, 0.05, r) * 0.55);
+      o.h += 0.05 * Math.max(0, 1 - r);
+    }
+    const w = dlon(lonD, 60);
+    if (w < -8 && w > -45 && latD > -26 && latD < -13) {
+      const f = fbm(n[0] * 26 + 5, n[1] * 26, n[2] * 26, 5), g = ridged(n[0] * 18, n[1] * 18, n[2] * 18, 3);
+      const k = ss(-45, -25, w) * ss(-8, -14, w) * Math.sin(((latD + 26) / 13) * Math.PI);
+      mixTo(o, f > 0.5 ? [0.96, 0.92, 0.86] : [0.6, 0.42, 0.3], k * Math.abs(f - 0.5) * 1.6 + k * 0.25 * g);
+    }
   }
   const ba = blob(latD, lonD, n, { lat: -33.5, lon: 105, a: 3, b: 2 });
   if (ba < 1) mixTo(o, [0.92, 0.82, 0.74], ss(1, 0.4, ba) * 0.85);
