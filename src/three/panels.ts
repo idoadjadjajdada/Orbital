@@ -132,6 +132,7 @@ export class Panels {
     else if (a === 'cview') { this.close(); v.viewCraft(Number(id)); return; }
     else if (a === 'clog') { this.show('craft', Number(id)); return; }
     else if (a === 'crover') v.roverFrom(Number(id));
+    else if (a === 'cvisit') { v.visit(Number(id)); this.close(); return; }
     else if (a === 'cdrop') { const c = v.fleet.byId(Number(id)); if (c) { v.fleet.remove(c); v.app.onToast(`${c.name} decommissioned`); } }
     else if (a === 'mission') { this.show('mission'); return; }
     else if (a === 'site') { /* handled above */ }
@@ -268,7 +269,8 @@ export class Panels {
       const lander = c.kind === 'lander' && c.state === 'surface' && !f.crafts.some(x => x.parent === c.id);
       h += `<div class="prow"><div><div class="pnm">${esc(c.name)} <span class="pdim">· ${esc(c.b.name)} · ${esc(c.status)}</span></div><div class="pdim">${esc(last)}</div></div><span class="pbtns">`
         + `${c.state !== 'lost' ? `<button data-act="cview" data-id="${c.id}">${c.kind === 'rover' && c.state === 'surface' ? 'Drive' : 'View'}</button>` : ''}`
-        + `<button data-act="clog" data-id="${c.id}">Data</button>${lander ? `<button data-act="crover" data-id="${c.id}">Rover</button>` : ''}</span></div>`;
+        + `<button data-act="clog" data-id="${c.id}">Data</button>${lander ? `<button data-act="crover" data-id="${c.id}">Rover</button>` : ''}`
+        + `${c.hab && (c.kind === 'station' ? c.state === 'orbit' : c.build >= 1) ? `<button data-act="cvisit" data-id="${c.id}"${v.goBlock() ? ` disabled title="${esc(v.goBlock())}"` : ''}>${c.kind === 'station' ? 'Dock' : 'Visit'}</button>` : ''}</span></div>`;
     }
     return h;
   }

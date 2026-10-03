@@ -1095,7 +1095,7 @@ function canvasTex(cv: HTMLCanvasElement) {
 }
 
 /** a tileable grey texture for a kind of surface, two metres square, that the material's colour tints */
-function plating(kind: 'hull' | 'wall' | 'floor' | 'ceil') {
+export function plating(kind: 'hull' | 'wall' | 'floor' | 'ceil') {
   const N = 256, cv = document.createElement('canvas');
   cv.width = cv.height = N;
   const c = cv.getContext('2d')!;

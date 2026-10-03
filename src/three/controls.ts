@@ -40,6 +40,7 @@ const BINDS: Record<Mode, Bind[]> = {
     { k: ['Mouse'], p: ['RS'], t: 'Look' },
     { k: ['Shift'], p: ['L3'], t: 'Run' },
     { k: ['Space'], p: ['X'], t: 'Jump' },
+    { k: ['Space', 'C'], p: ['RT', 'LT'], t: 'Up · down (floating in a station)' },
     { k: ['F', 'Click'], p: ['A'], t: 'Use', bar: true },
     { k: ['K'], p: [], t: 'Mission control' },
     { k: ['M'], p: ['View'], t: 'Nav map', bar: true },
@@ -518,6 +519,13 @@ export class Controls3D {
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q), right = new THREE.Vector3(1, 0, 0).applyQuaternion(q), up = new THREE.Vector3(0, 1, 0).applyQuaternion(q);
     const v = fwd.multiplyScalar(f).add(right.multiplyScalar(s)).add(up.multiplyScalar(u)).multiplyScalar(speed * boost);
     return [v.x, v.y, v.z];
+  }
+
+  /** floating: up and down (−1–1), from Space and C, the held buttons or the triggers */
+  vertical() {
+    const k = this.keys, p = this.app().pad;
+    if (this.v.nav.open || this.v.panels.open) return 0;
+    return Math.max(-1, Math.min(1, (k.has('Space') || this.hold.up || this.hold.jump ? 1 : 0) - (k.has('KeyC') || this.hold.down ? 1 : 0) + p.rt - p.lt));
   }
 
   /** on foot: forward and sideways (−1–1), running, jumping */

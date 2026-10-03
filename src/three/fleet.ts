@@ -5,7 +5,8 @@ import type { V3 } from '../pixel/sprites';
 import { groundSpec, groundAt, tangent, type GroundSpec, type GroundSample } from './terrain';
 import { atmosphere, composition, interior, life, gravity, airAt, giantPressure, giantTemp, cloudDecks, rng, type Atmosphere } from './science';
 import { bodyQuat, dirOf, latLonOf, arc } from './ground';
-import { probeMesh, orbiterMesh, landerMesh, roverMesh, stationMesh, baseMesh } from './craftmesh';
+import { probeMesh, orbiterMesh, landerMesh, roverMesh } from './craftmesh';
+import { Habitat } from './habitat';
 import { sitesOn } from './sites';
 
 /**
@@ -59,6 +60,8 @@ export interface Craft {
   odo: number; cover: number; build: number;
   status: string;
   mesh: THREE.Object3D;
+  /** a base's or station's inside, to walk (or float) in */
+  hab?: Habitat;
   /** the craft it came from (a rover off a lander) */
   parent?: number;
   /** the controls, while you drive it: forward and turn (−1–1); whether you have it (no autopilot then), and its speed, m/s */
@@ -142,6 +145,8 @@ export class Fleet {
       log: [], profile: [], odo: 0, cover: 0, build: 0, status: 'on its way', mesh: this.model(kind), drive: { f: 0, s: 0 }, manual: false, speed: 0,
       parent: parent?.id,
     };
+    if (kind === 'base' || kind === 'station') c.hab = new Habitat(kind, c.id);
+    if (c.hab) c.mesh.add(c.hab.group);
     const dist = shipAt.length() - R;
     // a short hop from close by, longer from far off: a few seconds to half a minute
     c.cruiseT = Math.max(2.5, Math.min(30, 3 + 4 * Math.log10(Math.max(1, dist / 1e5))));
@@ -186,7 +191,7 @@ export class Fleet {
 
   private model(k: CraftKind): THREE.Object3D {
     const g = new THREE.Group();
-    g.add(k === 'probe' ? probeMesh(true) : k === 'orbiter' ? orbiterMesh() : k === 'lander' ? landerMesh() : k === 'rover' ? roverMesh() : k === 'station' ? stationMesh() : baseMesh(nextId));
+    g.add(k === 'probe' ? probeMesh(true) : k === 'orbiter' ? orbiterMesh() : k === 'lander' ? landerMesh() : k === 'rover' ? roverMesh() : new THREE.Group());
     g.traverse(o => { o.frustumCulled = false; });
     return g;
   }
@@ -218,6 +223,15 @@ export class Fleet {
     return new THREE.Vector3(c.n[0] * r, c.n[1] * r, c.n[2] * r).applyQuaternion(bodyQuat(c.b));
   }
 
+  /** which way a craft faces, sandbox axes: along its orbit, its top away from the world (a station's) or toward it; on the ground, standing on it */
+  quat(c: Craft, up = this.up(c)) {
+    if (c.state === 'orbit' || c.state === 'cruise') {
+      const fwd = c.orbit && c.state === 'orbit' ? new THREE.Vector3(-Math.sin(c.orbit.ph), Math.cos(c.orbit.ph), 0).applyQuaternion(c.orbit.plane) : this.arrival(c).sub(c.from).normalize();
+      return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), fwd, c.kind === 'station' ? up : up.clone().negate()));
+    }
+    return bodyQuat(c.b).multiply(this.attitude(c));
+  }
+
   /** where a craft is in the sandbox, AU */
   pos(c: Craft): V3 {
     const p = this.local(c);
@@ -228,7 +242,8 @@ export class Fleet {
   up(c: Craft) { return this.local(c).normalize(); }
 
   // ---------------------------------------------------------------- each frame
-  frame(dt: number, P: V3, camFov: number) {
+  /** move every craft on by dt seconds (before anything rides with them) */
+  step(dt: number) {
     for (const c of this.crafts) {
       if (!c.b.alive && c.state !== 'lost') { c.state = 'lost'; c.status = `${c.b.name} is gone`; this.note(c, `Lost: ${c.b.name} no longer exists`, true); }
       c.t += dt; c.age += dt;
@@ -236,6 +251,12 @@ export class Fleet {
       else if (c.state === 'orbit') this.orbitStep(c, dt);
       else if (c.state === 'descent') this.descend(c, dt);
       else if (c.state === 'surface') this.surface(c, dt);
+    }
+  }
+
+  /** draw every craft where it is, from the viewer at P (AU) */
+  frame(_dt: number, P: V3, camFov: number) {
+    for (const c of this.crafts) {
       // drawn where it is, from the viewer
       const m = c.mesh;
       if (c.state === 'lost' && c.kind !== 'base') { m.visible = false; continue; }
@@ -246,15 +267,10 @@ export class Fleet {
       m.visible = d < 2e5 * (c.kind === 'station' ? 20 : 1) || d / Math.tan(camFov * Math.PI / 360) < 4e6;
       m.position.copy(rel);
       const up = p.clone().normalize();
-      if (c.state === 'orbit' || c.state === 'cruise') {
-        // flying along its orbit (or its path), its top to the world
-        const fwd = c.orbit && c.state === 'orbit' ? new THREE.Vector3(-Math.sin(c.orbit.ph), Math.cos(c.orbit.ph), 0).applyQuaternion(c.orbit.plane) : this.arrival(c).sub(c.from).normalize();
-        m.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), fwd, up.clone().negate()));
-      } else {
-        // standing on the ground, its nose along its heading (a rover's, on the slope it is on)
-        m.quaternion.copy(bodyQuat(c.b)).multiply(this.attitude(c));
-        if (c.kind === 'rover') m.traverse(o => { if (o.name === 'wheel') o.rotation.x = -c.odo / 0.26; });
-      }
+      m.quaternion.copy(this.quat(c, up));
+      if (c.kind === 'rover' && c.state === 'surface') m.traverse(o => { if (o.name === 'wheel') o.rotation.x = -c.odo / 0.26; });
+      // a habitat's lights, only when someone is close
+      c.hab?.setLights(d < 400);
       const chute = m.getObjectByName('chute');
       if (chute) chute.visible = c.state === 'descent' && this.air(c.b).bar > 0.005 && c.vz < 200;
       if (c.kind === 'base') m.scale.setScalar(0.05 + 0.95 * c.build);
