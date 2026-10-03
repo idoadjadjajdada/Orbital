@@ -116,6 +116,9 @@ export class Hull {
   readonly lander = new THREE.Group();
   readonly bayDoors: THREE.Mesh[] = [];
   readonly legs: THREE.Group[] = [];
+  /** the ladder from the airlock to the ground */
+  readonly ladder = new THREE.Group();
+  private rungs: THREE.Mesh[] = [];
   private t = 0;
 
   constructor(glow: THREE.Texture) {
@@ -226,18 +229,31 @@ export class Hull {
     for (const [x0, x1, z0, z1] of [[-2.45, 3.65, 8.95, 9.05], [-2.45, 3.65, 15.95, 16.05], [-2.45, -2.35, 8.95, 16.05], [3.55, 3.65, 8.95, 16.05], [0.56, 0.64, 9, 16]]) {
       this.box(x0, x1, under - 0.02, under, z0, z1, M.trim, false);
     }
-    for (const sx of [1, -1]) for (const z of [6.2, 16.4]) {
+    // four on the belly pod's sides, two under the bridge: each a sleeve and a strut that telescopes out of it to reach the ground
+    for (const [x, y, z] of [[5.5 + T + 0.2, -1.5, 6.2], [5.5 + T + 0.2, -1.5, 16.4], [-(5.5 + T + 0.2), -1.5, 6.2], [-(5.5 + T + 0.2), -1.5, 16.4], [3.2, -0.35, -19], [-3.2, -0.35, -19]]) {
       const leg = new THREE.Group();
-      leg.position.set(sx * (5.5 + T + 0.2), -1.5, z);
-      const strut = new THREE.Mesh(new THREE.BoxGeometry(0.3, 3.2, 0.3), M.steel);
-      strut.position.y = -1.6;
+      leg.position.set(x, y, z);
+      const sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.42, 1.6, 0.42), M.dark);
+      sleeve.position.y = -0.8;
+      const strut = new THREE.Mesh(new THREE.BoxGeometry(0.28, 1, 0.28), M.steel);
+      strut.name = 'strut';
       const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.65, 0.18, 10), M.dark);
-      pad.position.set(0, -3.25, 0);
-      pad.rotation.z = Math.PI / 2;
-      leg.add(strut, pad);
+      pad.name = 'pad';
+      leg.add(sleeve, strut, pad);
       g.add(leg);
       this.legs.push(leg);
     }
+    this.setLegs(0);
+    // the boarding ladder, down from the airlock to the ground once landed
+    this.ladder.position.set(-8.6 - T - 0.6, 0.6, 0);
+    for (const s of [-1, 1]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1, 0.06), M.steel);
+      rail.position.set(0, -0.5, s * 0.3);
+      rail.name = 'rail';
+      this.ladder.add(rail);
+    }
+    this.ladder.visible = false;
+    g.add(this.ladder);
     this.solids.push(new THREE.Box3(new THREE.Vector3(-6.5, Y1 - 0.6, 5.6), new THREE.Vector3(6.5, -1.4, 17)));
 
     // ---- the bridge
@@ -562,7 +578,7 @@ export class Hull {
     this.sign('HANGAR ▼', -4.49, 1.9, 9.0, Math.PI / 2);
     this.sign('HANGAR · DECK 2', 0.6, y1 + 3.6, 4.51, 0, 2.4);
     this.sign('▲ ENGINEERING', -5.49, y1 + 2.9, 9.0, Math.PI / 2);
-    this.sign('LANDER 1 · NOT FLIGHT-READY', 0.6, y1 + 3.0, 17.99, Math.PI, 2.6);
+    this.sign('LANDER 1', 0.6, y1 + 3.0, 17.99, Math.PI, 2.6);
 
     // a few hundred boxes cost a draw each: the ones that never move are merged, one mesh a material
     this.merge(new Set<THREE.Object3D>([...this.coreRings, this.wormRing, this.holoRing, this.globe, ...this.vials, ...this.bayDoors]));
@@ -1000,9 +1016,40 @@ export class Hull {
     b.position.x = 2.12 + 3.0 * open;
   }
 
-  /** for the landing to come: swing the legs down (0 stowed – 1 deployed) */
-  setLegs(out: number) {
-    for (const l of this.legs) l.rotation.z = Math.sign(l.position.x) * out * 0.5;
+  /**
+   * the landing legs: `out` swings them down (0 stowed – 1 deployed), and
+   * `reach` (m, straight down from each leg's hip, in the ship's frame) is how
+   * far each strut telescopes to find the ground
+   */
+  setLegs(out: number, reach?: number[]) {
+    this.legs.forEach((l, k) => {
+      const bridge = l.position.z < 0;
+      const ang = bridge ? 0 : Math.sign(l.position.x) * out * 0.35;
+      l.rotation.z = ang;
+      const stowed = bridge ? 0.3 : 3.2;
+      const want = reach?.[k] !== undefined ? Math.max(1.2, reach[k] / Math.cos(ang)) : stowed + (6 - stowed) * out;
+      const len = stowed + (want - stowed) * Math.min(1, out);
+      const strut = l.getObjectByName('strut')!, pad = l.getObjectByName('pad')!;
+      strut.scale.y = len;
+      strut.position.y = -len / 2;
+      pad.position.y = -len - 0.05;
+      pad.visible = out > 0.05 || !bridge;
+    });
+  }
+
+  /** the boarding ladder: down to `drop` m below the airlock's sill, or stowed */
+  setLadder(drop: number | null) {
+    this.ladder.visible = drop !== null;
+    if (drop === null) return;
+    const len = Math.max(1, drop);
+    for (const r of this.ladder.children) if (r.name === 'rail') { r.scale.y = len; r.position.y = -len / 2; }
+    const want = Math.floor(len / 0.32);
+    while (this.rungs.length < want) {
+      const r = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.6), this.mat.steel);
+      this.ladder.add(r);
+      this.rungs.push(r);
+    }
+    this.rungs.forEach((r, k) => { r.visible = k < want; r.position.y = -0.3 - k * 0.32; });
   }
 }
 

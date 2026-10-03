@@ -681,6 +681,8 @@ export class Ground {
 
   /** the sites on this world (for Mission Control) */
   siteList() { return this.sites.filter(s => s.kind !== 'city'); }
+  /** the sites on any world */
+  siteListFor(b: Body) { return sitesOn(b.look.real).filter(s => s.kind !== 'city'); }
   townList() { return this.towns; }
   /** everything found so far */
   get discoveries() { return [...this.found]; }

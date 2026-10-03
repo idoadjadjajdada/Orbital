@@ -456,14 +456,27 @@ export function life(b: Body, stars: Body[]): Life {
 /** pressure (bar) at a depth (km) below the 1-bar level of a giant, from its scale height and an adiabat */
 export function giantPressure(a: Atmosphere, depthKm: number) {
   if (depthKm <= 0) return a.bar * Math.exp(depthKm / Math.max(a.H, 1));
-  // the scale height grows with temperature going down: P ∝ (1 + z/z0)^(γ/(γ−1)) on a dry adiabat
-  const z0 = a.H * 1.4 / 0.4 * 0.4;
+  // the temperature climbs at the dry lapse rate Γ = g/cp, so T = T0 (1 + z/z0) with z0 = T0/Γ = 3.5 H for a
+  // diatomic gas, and P ∝ T^(γ/(γ−1)) = T^3.5. For Jupiter: 425 K and 22 bar at 150 km, as Galileo measured
+  const z0 = a.H * 3.5;
   return a.bar * Math.pow(1 + depthKm / z0, 3.5);
 }
+/**
+ * pressure (bar) and temperature (K) at a height z (km) over a solid world's
+ * datum: an exponential atmosphere with a troposphere cooling at the dry
+ * lapse rate, down to a cold upper atmosphere
+ */
+export function airAt(a: Atmosphere, gSurf: number, zKm: number) {
+  if (a.bar <= 0 || a.H <= 0) return { bar: 0, T: a.T };
+  const mu = a.gases.reduce((s, x) => s + x.x * (MU[x.f] ?? 29), 0) || 29;
+  const lapse = (gSurf * mu / 1000) / (3.5 * 8.314) * 1000;
+  return { bar: a.bar * Math.exp(-zKm / a.H), T: Math.max(a.T * 0.55, a.T - lapse * Math.max(0, zKm)) };
+}
+
 /** temperature (K) at that depth, on the dry adiabat */
 export function giantTemp(a: Atmosphere, depthKm: number) {
   if (depthKm <= 0) return a.T;
-  const z0 = a.H * 1.4 / 0.4 * 0.4;
+  const z0 = a.H * 3.5;
   return a.T * (1 + depthKm / z0);
 }
 /** the cloud decks a descent passes through: depth below 1 bar (km), what they are, colour */
@@ -472,7 +485,7 @@ export function cloudDecks(b: Body, a: Atmosphere): { depth: number; what: strin
   const at = (bar: number) => {
     // invert giantPressure for bar ≥ 1, the scale height for less
     if (bar < 1) return a.H * Math.log(bar);
-    const z0 = a.H * 1.4 / 0.4 * 0.4;
+    const z0 = a.H * 3.5;
     return z0 * (Math.pow(bar, 1 / 3.5) - 1);
   };
   if (b.look.real === 'Uranus' || b.look.real === 'Neptune' || st === 'icegiant') return [{ depth: at(1.2), what: 'methane ice', color: 0xd0f0f8 }, { depth: at(4), what: 'hydrogen sulphide ice', color: 0xa0c0c8 }, { depth: at(40), what: 'water and ammonia', color: 0x7090a0 }];

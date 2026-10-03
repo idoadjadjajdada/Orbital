@@ -14,6 +14,10 @@ import { survey } from './survey';
 import { mouthMesh, tickMouth } from './wormhole';
 import { Radar, fmtTime } from './radar';
 import { NavMap } from './navmap';
+import { Ground, bodyQuat, latLonOf, arc } from './ground';
+import { tangent } from './terrain';
+import { gravity } from './science';
+import { Fleet, type CraftKind } from './fleet';
 
 /**
  * The sandbox seen from inside it, at true scale. The scene is laid out in
@@ -193,12 +197,19 @@ void main() {
 }`;
 
 
-export type Mode = 'pilot' | 'walk' | 'eva' | 'scope';
+export type Mode = 'pilot' | 'walk' | 'eva' | 'scope' | 'surface' | 'craft';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const YR = 365.25 * 86400;
 /** the closest the ship comes to a surface, m: it is 55 m long */
 const SHIP_CLEAR = 60;
+/** landed, the ship's origin (its main deck) stands this high over the ground, m */
+const LAND_H = 7.2;
+/** the hips of the six legs and the airlock's sill, ship coordinates, for finding the ground under each */
+const LEG_HIPS = [[5.95, -1.5, 6.2], [5.95, -1.5, 16.4], [-5.95, -1.5, 6.2], [-5.95, -1.5, 16.4], [3.2, -0.35, -19], [-3.2, -0.35, -19]];
+const LADDER_TOP = new THREE.Vector3(-9.45, 0.6, 0);
+/** a world's landing range, m above the ground: below this the ship can set down */
+const LAND_RANGE = 8000;
 
 export class View3D {
   readonly canvas: HTMLCanvasElement;
@@ -217,7 +228,24 @@ export class View3D {
   ship: Ship;
   radar: Radar;
   nav: NavMap;
+  /** the ground and sky of the world you are near */
+  ground: Ground;
+  /** the craft the ship has sent out */
+  fleet: Fleet;
+  /** watching (or driving) one of them: which, the mode to go back to, and the camera round it */
+  craftView: { id: number; back: Mode; yaw: number; pitch: number; dist: number } | null = null;
+  /** the bay doors, open for a launch: seconds left */
+  private bayT = 0;
   active = false;
+  /**
+   * the ship on (or coming down to, or lifting off) a world's ground: where
+   * it is over the ground (unit direction and height above the ground, m, in
+   * the body's turning frame), its attitude in that frame, how far each leg
+   * reaches and how far the ladder drops
+   */
+  landing: { b: Body; n: V3; alt: number; q: THREE.Quaternion; phase: 'down' | 'landed' | 'up'; legs: number; reach: number[]; ladder: number } | null = null;
+  /** on foot on a world: where (unit, body frame), which way you face, your jump */
+  surf = { nav: { anchor: null, off: [0, 0, 0], vel: [0, 0, 0] } as Mover, b: null as Body | null, n: [0, 0, 1] as V3, yaw: 0, pitch: 0, y: 0, vy: 0, speed: 0 };
   /** overdrive switched on by the autopilot, to switch off on arrival */
   private autoOd = false;
 
@@ -231,7 +259,7 @@ export class View3D {
   /** the consoles' panels */
   panels: Panels;
   /** the captain's log: what this voyage has done */
-  logbook = { start: performance.now(), metres: 0, top: 0, jumps: 0, walks: 0, sleeps: 0, coffees: 0, firsts: [] as { name: string; note: string }[] };
+  logbook = { start: performance.now(), metres: 0, top: 0, jumps: 0, walks: 0, sleeps: 0, coffees: 0, landings: 0, firsts: [] as { name: string; note: string }[], landed: [] as string[], walkedOn: [] as string[], finds: [] as { what: string; note: string; where: string }[] };
   /** asleep in the quarters: seconds so far, how long, the clock to go back to, and when it began (sim years) */
   private sleep: { t: number; dur: number; warp: number; from: number } | null = null;
   /** the lab's globe: whose surface it wears */
@@ -248,7 +276,7 @@ export class View3D {
   /** what you can do right now where you are looking, if anything */
   prompt: { label: string; act: () => void } | null = null;
   /** the ship flying itself somewhere: to a body, or to a point (the suit), and how close to stop */
-  travel: { b: Body | null; at?: () => V3; stop: number; name: string } | null = null;
+  travel: { b: Body | null; at?: () => V3; stop: number; name: string; land?: boolean } | null = null;
   /** worlds the ship has been to, for the shelf in the commons */
   private visited: Body[] = [];
   private trophyKey = '';
@@ -270,7 +298,12 @@ export class View3D {
     this.camera.up.set(0, 0, 1);
     this.glowTex = glowTexture();
     this.sky = starField();
+    this.sky.renderOrder = -2;
     this.scene.add(this.sky);
+    this.ground = new Ground(this.scene);
+    this.ground.onFind = (what, note) => this.found(what, note);
+    this.fleet = new Fleet(this.scene, () => this.stars());
+    this.fleet.onNews = m => this.app.onToast(m);
     this.markers = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ size: 3, sizeAttenuation: false, vertexColors: true, depthWrite: false }));
     this.markers.frustumCulled = false;
     this.scene.add(this.markers);
@@ -359,6 +392,9 @@ export class View3D {
     this.mode = 'pilot';
     this.foot.seat = null;
     this.res.last = 0;
+    this.landing = null;
+    sh.hull.setLegs(0);
+    sh.hull.setLadder(null);
     if (b) {
       const d = Math.max(b.r * 4, 2e-7);
       sh.nav.off = [d * 0.8, -d * 0.55, d * 0.25];
@@ -424,7 +460,20 @@ export class View3D {
       const d = (Math.hypot(b.x - p[0], b.y - p[1], b.z - p[2]) - this.visR(b)) * AU_M;
       if (d < alt) { alt = d; best = b; }
     }
+    // over a world's ground, the height above the ground itself, not its sphere
+    if (best && best === this.ground.body && alt < 50 * (this.ground.spec?.relief ?? 0)) alt -= this.groundUnder(best, p);
     return { b: best, alt };
+  }
+
+  /** the height of the ground (m above the datum, never below sea level) under a point, cached for the frame */
+  private gCache = { f: -1, p: [0, 0, 0] as V3, h: 0 };
+  private groundUnder(b: Body, p: V3) {
+    const c = this.gCache;
+    if (c.f === this.frameNo && Math.abs(c.p[0] - p[0]) + Math.abs(c.p[1] - p[1]) + Math.abs(c.p[2] - p[2]) < 20 / AU_M) return c.h;
+    const v = new THREE.Vector3((p[0] - b.x) * AU_M, (p[1] - b.y) * AU_M, (p[2] - b.z) * AU_M).applyQuaternion(bodyQuat(b).invert()).normalize();
+    const h = this.ground.heightAt([v.x, v.y, v.z], 5);
+    c.f = this.frameNo; c.p = [...p]; c.h = this.ground.last_sample.sea ? 0 : h;
+    return c.h;
   }
 
   /** ride with whatever pulls hardest where a mover is */
@@ -446,7 +495,8 @@ export class View3D {
   // ---------------------------------------------------------------- commands
   /** why the ship cannot fly somewhere now, or '' */
   goBlock() {
-    if (this.mode === 'eva') return 'Board the ship first: it holds station while you are outside';
+    if (this.mode === 'eva' || this.mode === 'surface') return 'Board the ship first: it holds station while you are outside';
+    if (this.landing) return this.landing.phase === 'landed' ? 'Lift off first (L)' : 'Not while landing';
     if (this.ship.worm) return 'Not during a wormhole transit';
     return '';
   }
@@ -454,7 +504,8 @@ export class View3D {
   /** why the wormhole drive cannot open a way now, or '' */
   jumpBlock() {
     const sh = this.ship;
-    if (this.mode === 'eva') return 'Board the ship first: it holds station while you are outside';
+    if (this.mode === 'eva' || this.mode === 'surface') return 'Board the ship first: it holds station while you are outside';
+    if (this.landing) return 'Lift off first';
     if (sh.worm) return 'A transit is under way';
     if (sh.charge < 1) return `The wormhole drive is recharging: ${Math.ceil((1 - sh.charge) * sh.refill())} s`;
     return '';
@@ -485,6 +536,22 @@ export class View3D {
 
   /** the ship comes to you, outside */
   callShip() {
+    if (this.mode === 'surface') {
+      const L = this.landing;
+      if (L?.phase === 'landed') { const d = relM(this.surf.nav, this.ship.nav).length(); this.app.onToast(`The ship is landed ${d < 1000 ? `${d.toFixed(0)} m` : `${(d / 1000).toFixed(1)} km`} away: walk back to its ladder`); return; }
+      if (L) { this.app.onToast('The ship is busy landing'); return; }
+      // it comes down beside you
+      this.travel = {
+        b: null, stop: 5 / AU_M, name: 'you', land: true,
+        at: () => {
+          const S = this.surf, [e] = tangent(S.n), qb = bodyQuat(S.b!), up = new THREE.Vector3(...S.n).applyQuaternion(qb), east = new THREE.Vector3(...e).applyQuaternion(qb);
+          const p = posOf(S.nav);
+          return [p[0] + (up.x * 250 + east.x * 45) / AU_M, p[1] + (up.y * 250 + east.y * 45) / AU_M, p[2] + (up.z * 250 + east.z * 45) / AU_M];
+        },
+      };
+      this.app.onToast('The ship is on its way to land beside you');
+      return;
+    }
     if (this.mode !== 'eva') return;
     if (relM(this.suit.nav, this.ship.nav).length() < 45) { this.app.onToast('The ship is right here: the airlock is marked'); return; }
     this.travel = { b: null, at: () => posOf(this.suit.nav), stop: 30 / AU_M, name: 'you' };
@@ -542,7 +609,7 @@ export class View3D {
       }
       case 'down': this.climb(1); break;
       case 'up': this.climb(0); break;
-      case 'lander': toast('Lander 1: tanks full, hull sound, but no descent software, and the bay doors and legs are still being fitted. Not yet.'); break;
+      case 'lander': this.panels.show('mission'); break;
     }
   }
 
@@ -611,6 +678,15 @@ export class View3D {
   stepOut() {
     const sh = this.ship;
     if (sh.worm) { this.app.onToast('Not in the middle of a wormhole transit'); return; }
+    if (this.landing) {
+      if (this.landing.phase !== 'landed') { this.app.onToast('Wait until the ship has landed'); return; }
+      const foot = this.ladderFoot()!;
+      // facing away from the ship, out from the airlock
+      const [e, nn] = tangent(foot), out = new THREE.Vector3(-1, 0, 0).applyQuaternion(this.landing.q);
+      this.logbook.walks++;
+      this.toSurface(foot, Math.atan2(-out.dot(new THREE.Vector3(...e)), out.dot(new THREE.Vector3(...nn))));
+      return;
+    }
     this.travel = null;
     sh.od = false;
     this.autoOd = false;
@@ -625,6 +701,7 @@ export class View3D {
 
   /** back in through the airlock */
   board() {
+    this.surf.b = null;
     this.mode = 'walk';
     this.foot.deck = 0;
     this.foot.p.copy(HATCH_IN);
@@ -658,10 +735,322 @@ export class View3D {
     if (this.mode === 'pilot') { if (!this.ship.worm || this.ship.worm.phase === 'charge') rot(this.ship.quat); }
     else if (this.mode === 'eva') rot(this.suit.quat);
     else if (this.mode === 'scope') { const k = this.scope.fov / 70; yaw *= k; pitch *= k; roll = 0; rot(this.scope.quat); this.scope.track = false; }
+    else if (this.mode === 'surface') { this.surf.yaw += yaw; this.surf.pitch = Math.max(-1.5, Math.min(1.5, this.surf.pitch + pitch)); }
+    else if (this.mode === 'craft' && this.craftView) { this.craftView.yaw -= yaw; this.craftView.pitch = Math.max(-1.2, Math.min(1.45, this.craftView.pitch - pitch)); }
     else {
       this.foot.yaw += yaw;
       this.foot.pitch = Math.max(-1.45, Math.min(1.45, this.foot.pitch + pitch));
     }
+  }
+
+
+
+  // ---------------------------------------------------------------- the fleet
+  /** what Mission Control aims at: the selection, if it is a world, or the nearest world */
+  missionTarget(): Body | null {
+    const ok = (b: Body) => b.alive && !b.look.craft && !b.look.wormhole && !['star', 'wd', 'ns', 'bh', 'debris', 'gasp'].includes(b.cls);
+    const sel = this.app.selected;
+    if (sel && ok(sel)) return sel;
+    const P = this.shipPos();
+    let best: Body | null = null, d = Infinity;
+    for (const b of this.app.visual) {
+      if (!ok(b) || !b.source) continue;
+      const x = Math.hypot(b.x - P[0], b.y - P[1], b.z - P[2]) - b.r;
+      if (x < d) { d = x; best = b; }
+    }
+    return best;
+  }
+
+  /** why a craft cannot be launched now, or '' */
+  launchBlock(kind: CraftKind) {
+    if (this.ship.worm) return 'Not during a wormhole transit';
+    const b = this.missionTarget();
+    if (!b) return 'No target';
+    const P = this.shipPos();
+    const alt = (Math.hypot(b.x - P[0], b.y - P[1], b.z - P[2]) - b.r) * AU_M;
+    return this.fleet.why(kind, b, alt, this.landing?.phase === 'landed' && this.landing.b === b);
+  }
+
+  /** send a craft to the target, at a named site or below the ship */
+  launch(kind: CraftKind, site?: string) {
+    const why = this.launchBlock(kind);
+    if (why) { this.app.onToast(why); return; }
+    const b = this.missionTarget()!, P = this.shipPos();
+    const at = new THREE.Vector3((P[0] - b.x) * AU_M, (P[1] - b.y) * AU_M, (P[2] - b.z) * AU_M);
+    const c = this.fleet.launch(kind, b, at, site ? this.fleet.siteFor(b, site) : null);
+    this.bayT = 4;
+    this.app.onToast(`${c.name} ${kind === 'base' ? 'is being built beside the ship' : `launched toward ${b.name}${site ? `, for ${site}` : ''}`}`);
+  }
+
+  /** a rover off a landed lander */
+  roverFrom(id: number) {
+    const L = this.fleet.byId(id);
+    if (!L || L.state !== 'surface') return;
+    const c = this.fleet.launch('rover', L.b, new THREE.Vector3(), null, L);
+    this.app.onToast(`${c.name} rolls off ${L.name}`);
+  }
+
+  /** watch a craft (drive it, if it is a rover on the ground) */
+  viewCraft(id: number) {
+    const c = this.fleet.byId(id);
+    if (!c) return;
+    const back = this.mode === 'craft' ? this.craftView?.back ?? 'pilot' : this.mode;
+    const dist = c.kind === 'station' ? 160 : c.kind === 'base' ? 110 : c.kind === 'orbiter' ? 30 : c.kind === 'lander' ? 16 : c.kind === 'rover' ? 10 : 14;
+    this.craftView = { id, back, yaw: 0, pitch: 0.35, dist };
+    this.mode = 'craft';
+    this.panels.close();
+    this.app.onToast(`${c.name}${c.kind === 'rover' && c.state === 'surface' ? ': WASD (or the stick) drives it' : ''} · F or Esc to come back`);
+  }
+
+  leaveCraft() {
+    const v = this.craftView;
+    if (v) { const c = this.fleet.byId(v.id); if (c) c.drive = { f: 0, s: 0 }; }
+    this.mode = v?.back ?? 'pilot';
+    this.craftView = null;
+  }
+
+  /** the next (or previous) craft to watch */
+  cycleCraft(dir: number) {
+    const list = this.fleet.crafts.filter(c => c.state !== 'lost');
+    if (!list.length) return;
+    const k = list.findIndex(c => c.id === this.craftView?.id);
+    this.viewCraft(list[(k + dir + list.length) % list.length].id);
+  }
+
+  /** the camera on a craft: round it at a distance, its local up up */
+  private placeCraft() {
+    const v = this.craftView!, c = this.fleet.byId(v.id);
+    if (!c) { this.leaveCraft(); return false; }
+    if (c.kind === 'rover') { const inp = this.controls.walkInput(); c.drive = { f: inp.f, s: -inp.s }; }
+    const loc = this.fleet.local(c), U = loc.clone().normalize();
+    // a horizontal reference: the craft's heading on the ground, or its way along the orbit
+    let fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(c.mesh.quaternion);
+    fwd.addScaledVector(U, -fwd.dot(U));
+    if (fwd.lengthSq() < 1e-8) fwd = new THREE.Vector3(...tangent([U.x, U.y, U.z])[1]);
+    fwd.normalize();
+    const off = fwd.clone().negate().applyAxisAngle(U, v.yaw);
+    const side = new THREE.Vector3().crossVectors(off, U).normalize();
+    off.applyAxisAngle(side, -v.pitch).multiplyScalar(v.dist);
+    const at = loc.clone().add(off);
+    // never under the ground
+    if (c.state === 'surface' || c.state === 'descent') {
+      const n = at.clone().normalize(), qb = bodyQuat(c.b).invert(), nb = n.clone().applyQuaternion(qb);
+      const gr = c.b.r * AU_M + this.fleet.heightAt(c.b, [nb.x, nb.y, nb.z], 1) + 1.5;
+      if (at.length() < gr) at.setLength(gr);
+    }
+    const m: Mover = { anchor: c.b, off: [at.x / AU_M, at.y / AU_M, at.z / AU_M], vel: [0, 0, 0] };
+    this.base = m;
+    this.eye.set(0, 0, 0);
+    this.camera.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(at, loc, U));
+    return true;
+  }
+
+  // ---------------------------------------------------------------- landing and the ground
+  /** a first: something found on a world, into the captain's log */
+  found(what: string, note: string) {
+    const b = this.ground.body;
+    this.logbook.finds.push({ what, note, where: b?.name ?? '' });
+    this.app.onToast(`Found: ${what}`);
+  }
+
+  /** the ship's position over the ground of the world it is near: unit direction (body frame), height over the ground (m), the world */
+  overGround(m: Mover = this.ship.nav): { b: Body; n: V3; alt: number; h: number; q: THREE.Quaternion } | null {
+    const b = this.ground.body;
+    if (!b || !this.ground.spec) return null;
+    const p = posOf(m), q = bodyQuat(b);
+    const v = new THREE.Vector3((p[0] - b.x) * AU_M, (p[1] - b.y) * AU_M, (p[2] - b.z) * AU_M).applyQuaternion(q.clone().invert());
+    const r = v.length();
+    const n: V3 = [v.x / r, v.y / r, v.z / r];
+    const h = this.ground.heightAt(n, 2);
+    return { b, n, alt: r - this.ground.spec.R - Math.max(h, this.ground.last_sample.sea ? 0 : h), h, q };
+  }
+
+  /** why the ship cannot land here now, or '' */
+  landBlock() {
+    if (this.landing) return this.landing.phase === 'landed' ? '' : 'Already under way';
+    if (this.mode === 'eva') return 'Board the ship first';
+    if (this.ship.worm) return 'Not during a wormhole transit';
+    const g = this.ground, o = this.overGround();
+    if (!o || !g.ready) {
+      const { b } = this.nearest(this.shipPos());
+      if (b && ['gas', 'icegiant', 'hotjupiter', 'browndwarf'].includes(b.look.style)) return `${b.name} has no surface to land on: fly down into its clouds instead`;
+      return 'Nothing to land on here: fly down close to a world';
+    }
+    if (o.alt > LAND_RANGE) return `Too high to land: come within ${LAND_RANGE / 1000} km of the ground (now ${(o.alt / 1000).toFixed(1)} km)`;
+    this.ground.heightAt(o.n, 2);
+    if (this.ground.last_sample.sea) return 'Over the sea: find dry land';
+    const T = g.atmo?.T ?? 0;
+    if (T > 1500) return `The ground is molten: ${Math.round(T)} K`;
+    if (gravity(o.b) > 40) return `Gravity too strong: ${(gravity(o.b) / 9.81).toFixed(1)} g`;
+    return '';
+  }
+
+  /** set down on the ground below, or lift off if landed */
+  landOrLift() {
+    if (this.landing?.phase === 'landed') { this.liftOff(); return; }
+    const why = this.landBlock();
+    if (why) { this.app.onToast(why); return; }
+    const o = this.overGround()!, sh = this.ship;
+    this.travel = null;
+    sh.od = false; this.autoOd = false;
+    sh.nav.vel = [0, 0, 0];
+    const q = o.q.clone().invert().multiply(sh.quat);
+    this.landing = { b: o.b, n: o.n, alt: o.alt, q, phase: 'down', legs: 0, reach: [], ladder: 0 };
+    sh.nav.anchor = o.b;
+    this.app.onToast(`Landing on ${o.b.name}`);
+  }
+
+  liftOff() {
+    const L = this.landing;
+    if (!L) return;
+    if (this.mode === 'surface') { this.app.onToast('Board the ship first'); return; }
+    L.phase = 'up';
+    this.app.onToast('Lifting off');
+  }
+
+  /** the ship coming down, standing, or going up: kept in the world's turning frame so the ground turns with it */
+  private landStep(dt: number) {
+    const L = this.landing!, sh = this.ship, b = L.b;
+    if (!b.alive || this.ground.body !== b) { this.landing = null; sh.hull.setLegs(0); sh.hull.setLadder(null); return; }
+    const spec = this.ground.spec!, qb = bodyQuat(b);
+    // level the ship on the ground's slope, keeping its heading
+    const up = this.ground.normalAt(L.n, L.phase === 'up' ? 1 : 12);
+    const U = new THREE.Vector3(...up);
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(L.q);
+    fwd.addScaledVector(U, -fwd.dot(U));
+    if (fwd.lengthSq() < 1e-6) fwd.copy(new THREE.Vector3(...tangent(L.n)[1]));
+    fwd.normalize();
+    // the basis: right = forward × up, up, back
+    const level = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3().crossVectors(fwd, U).normalize(), U, fwd.clone().negate()));
+    if (L.phase !== 'up') L.q.slerp(level, Math.min(1, dt * 1.5));
+    const hG = this.ground.heightAt(L.n, 0.5), sea = this.ground.last_sample.sea;
+    const ground = sea ? 0 : hG;
+    sh.thrust = L.phase === 'landed' ? 0 : 0.5;
+    if (L.phase === 'down') {
+      // a fast drop, slowing to a walking pace for the last stretch
+      const v = Math.max(1.2, Math.min(400, (L.alt - LAND_H) * 0.6));
+      L.alt = Math.max(LAND_H, L.alt - v * dt);
+      L.legs = Math.min(1, L.legs + (L.alt < 600 ? dt / 2.5 : 0));
+      if (L.alt <= LAND_H + 0.01 && L.legs >= 1) {
+        L.phase = 'landed';
+        this.logbook.landings++;
+        this.app.onToast(`Landed on ${b.name}. The airlock's ladder is down: step outside from the commons`);
+        if (!this.logbook.landed.includes(b.name)) this.logbook.landed.push(b.name);
+      }
+    } else if (L.phase === 'up') {
+      L.ladder = Math.max(0, L.ladder - dt);
+      L.legs = Math.max(0, L.legs - dt / 2);
+      L.alt += Math.max(3, L.alt * 0.8) * dt;
+      if (L.alt > 400) {
+        this.landing = null;
+        sh.hull.setLegs(0);
+        sh.hull.setLadder(null);
+        this.app.onToast('Clear of the ground');
+        return;
+      }
+    } else L.ladder = Math.min(1, L.ladder + dt / 2);
+    // where the ship is, from the world's frame
+    const r = spec.R + ground + L.alt;
+    const p = new THREE.Vector3(L.n[0] * r, L.n[1] * r, L.n[2] * r).applyQuaternion(qb);
+    sh.nav.anchor = b;
+    sh.nav.off = [p.x / AU_M, p.y / AU_M, p.z / AU_M];
+    sh.nav.vel = [0, 0, 0];
+    sh.quat.copy(qb).multiply(L.q);
+    // each leg telescopes down to the ground under it; the ladder to the ground under the hatch
+    if (L.legs > 0 && L.alt < 60) {
+      const R0 = spec.R + ground + L.alt;
+      const centre = new THREE.Vector3(L.n[0] * R0, L.n[1] * R0, L.n[2] * R0);
+      const under = (hip: THREE.Vector3) => {
+        const w = hip.clone().applyQuaternion(L.q).add(centre);
+        const len = w.length(), nn: V3 = [w.x / len, w.y / len, w.z / len];
+        const hg = this.ground.heightAt(nn, 0.5);
+        // straight down in the ship's frame, near enough: the drop along the local vertical
+        return len - (spec.R + (this.ground.last_sample.sea ? 0 : hg));
+      };
+      L.reach = LEG_HIPS.map(h => Math.max(0.5, under(new THREE.Vector3(h[0], h[1], h[2])) - 0.15));
+      sh.hull.setLegs(L.legs, L.reach.map(x => x * L.legs + (1 - L.legs) * 2));
+      if (L.phase !== 'down' || L.ladder > 0) sh.hull.setLadder(L.ladder > 0 ? under(LADDER_TOP) * L.ladder : null);
+    } else {
+      sh.hull.setLegs(L.legs);
+      sh.hull.setLadder(null);
+    }
+  }
+
+  /** out onto the ground: on foot at `n` (body frame), facing `yaw` */
+  private toSurface(n: V3, yaw: number) {
+    const b = this.ground.body;
+    if (!b) return;
+    const S = this.surf;
+    S.b = b; S.n = n; S.yaw = yaw; S.pitch = 0; S.y = 0; S.vy = 0;
+    S.nav = { anchor: b, off: [0, 0, 0], vel: [0, 0, 0] };
+    this.mode = 'surface';
+    this.foot.seat = null;
+    this.placeSurf();
+    if (!this.logbook.walkedOn.includes(b.name)) {
+      this.logbook.walkedOn.push(b.name);
+      const g = gravity(b);
+      this.app.onToast(`On the surface of ${b.name}: ${(g / 9.81).toFixed(g < 1 ? 3 : 2)} g${this.ground.atmo && this.ground.atmo.bar > 0.01 ? `, ${this.ground.atmo.bar.toPrecision(3)} bar of ${this.ground.atmo.gases[0]?.name ?? 'air'}` : ', no air: suit sealed'}`);
+    }
+  }
+
+  /** the walker's mover, from where they stand */
+  private placeSurf() {
+    const S = this.surf, b = S.b!, spec = this.ground.spec;
+    if (!spec) return;
+    const h = this.ground.heightAt(S.n, 0.3), g0 = this.ground.last_sample.sea ? 0 : h;
+    const r = spec.R + g0 + S.y + 1.7;
+    const p = new THREE.Vector3(S.n[0] * r, S.n[1] * r, S.n[2] * r).applyQuaternion(bodyQuat(b));
+    S.nav.anchor = b;
+    S.nav.off = [p.x / AU_M, p.y / AU_M, p.z / AU_M];
+  }
+
+  /** walking on a world: its own gravity, its ground underfoot */
+  private surfaceStep(dt: number) {
+    const S = this.surf, b = S.b;
+    if (!b || !b.alive || this.ground.body !== b || !this.ground.spec) { this.mode = 'eva'; this.suit.nav = { ...S.nav, vel: [0, 0, 0] }; return; }
+    const R = this.ground.spec.R, g = gravity(b);
+    const inp = this.controls.walkInput();
+    // a bounding lope in low gravity, a walk otherwise
+    const sp = (inp.run ? 6 : 2.5) * (g < 3 ? 1.3 : 1);
+    const [e, nn] = tangent(S.n);
+    const sy = Math.sin(S.yaw), cy = Math.cos(S.yaw);
+    const fwd: V3 = [-sy * e[0] + cy * nn[0], -sy * e[1] + cy * nn[1], -sy * e[2] + cy * nn[2]];
+    const right: V3 = [cy * e[0] + sy * nn[0], cy * e[1] + sy * nn[1], cy * e[2] + sy * nn[2]];
+    const air = S.y > 0.05;
+    const k = (sp * dt) / R * (air ? 0.6 : 1);
+    if (inp.f || inp.s) {
+      const m: V3 = [S.n[0] + (fwd[0] * inp.f + right[0] * inp.s) * k, S.n[1] + (fwd[1] * inp.f + right[1] * inp.s) * k, S.n[2] + (fwd[2] * inp.f + right[2] * inp.s) * k];
+      const l = Math.hypot(...m);
+      const next: V3 = [m[0] / l, m[1] / l, m[2] / l];
+      this.ground.heightAt(next, 0.5);
+      if (this.ground.last_sample.sea) { if (performance.now() - this.seaToast > 4000) { this.seaToast = performance.now(); this.app.onToast('The water’s edge: you would need a boat'); } }
+      else S.n = next;
+    }
+    S.speed = Math.hypot(inp.f, inp.s) * sp;
+    if (inp.jump && !air) S.vy = 3.4;
+    S.vy -= g * dt;
+    S.y = Math.max(0, S.y + S.vy * dt);
+    if (S.y <= 0) S.vy = 0;
+    this.placeSurf();
+  }
+  private seaToast = 0;
+
+  /** the camera on the ground: level with the local horizon, turned by your head */
+  private surfQuat(q: THREE.Quaternion) {
+    const S = this.surf, [e, nn] = tangent(S.n);
+    const up = new THREE.Vector3(...S.n), east = new THREE.Vector3(...e), north = new THREE.Vector3(...nn);
+    const basis = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(east, up, north.negate()));
+    return q.copy(bodyQuat(S.b!)).multiply(basis).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(S.pitch, S.yaw, 0, 'YXZ')));
+  }
+
+  /** the foot of the ladder, where you step off it and get back on: body frame */
+  private ladderFoot(): V3 | null {
+    const L = this.landing;
+    if (!L || L.phase !== 'landed' || !this.ground.spec) return null;
+    const qb = bodyQuat(L.b), w = LADDER_TOP.clone().add(new THREE.Vector3(-1.2, 0, 0)).applyQuaternion(this.ship.quat);
+    const p = new THREE.Vector3(...posOf(this.ship.nav).map((x, k) => (x - [L.b.x, L.b.y, L.b.z][k]) * AU_M) as V3).add(w).applyQuaternion(qb.invert());
+    const l = p.length();
+    return [p.x / l, p.y / l, p.z / l];
   }
 
   // ---------------------------------------------------------------- frame
@@ -669,15 +1058,18 @@ export class View3D {
     if (!this.active) return;
     this.adapt(dtReal);
     const app = this.app, sh = this.ship;
-    if (!sh.worm || sh.worm.phase !== 'tunnel') this.pickAnchor(sh.nav);
+    this.frameNo++;
+    if (!this.landing && (!sh.worm || sh.worm.phase !== 'tunnel')) this.pickAnchor(sh.nav);
     if (this.mode === 'eva') this.pickAnchor(this.suit.nav);
     this.controls.update(dtReal);
     this.panels.tick(dtReal);
     this.sleepStep(dtReal);
     sh.update(dtReal);
-    if (sh.worm) this.wormStep(dtReal); else this.fly(dtReal);
+    if (this.landing) this.landStep(dtReal);
+    else if (sh.worm) this.wormStep(dtReal); else this.fly(dtReal);
     if (this.mode === 'walk') this.walk(dtReal);
     if (this.mode === 'eva') this.spacewalk(dtReal);
+    if (this.mode === 'surface') this.surfaceStep(dtReal);
     this.place();
     const P = this.where();
     const cam = this.camera;
@@ -686,6 +1078,11 @@ export class View3D {
 
     // light: the star that lights each body best
     const stars = app.world.sources.filter(s => (s.cls === 'star' || s.cls === 'wd') && (s.star?.L ?? 0) > 0);
+    // the ground and sky of the world under you, and the craft out there
+    this.groundFrame(dtReal, P, stars, tunnel);
+    this.fleet.frame(dtReal, P, cam.fov);
+    this.bayT = Math.max(0, this.bayT - dtReal);
+    sh.hull.setBay(Math.min(1, this.bayT, 4 - this.bayT));
     const seen = new Set<Body>();
     const tanPx = Math.tan((cam.fov * Math.PI) / 360) / (window.innerHeight / 4);
     const mk: number[] = [], mc: number[] = [];
@@ -736,6 +1133,9 @@ export class View3D {
     this.mouths();
     this.cabin(dtReal);
     sh.draw(dtReal, cam, sh.nav.vel, sun, sh.hull.group.position, this.mode === 'pilot', tunnel);
+    // on a world, the sunlight on the ship and what stands on the ground is the sunlight through its air, and none at night
+    if (this.ground.body) { sh.sun.color.copy(this.ground.sunCol); sh.sun.intensity = 2.2 * Math.min(1, Math.max(this.ground.sunCol.r, this.ground.sunCol.g, this.ground.sunCol.b)); }
+    else sh.sun.color.setRGB(1, 1, 1);
     if (this.mode === 'scope') { cam.fov = this.scope.fov; cam.updateProjectionMatrix(); }
     else if (this.mode !== 'pilot' && cam.fov !== 75) { cam.fov = 75; cam.updateProjectionMatrix(); }
     // the map covers the view: leave the last frame up rather than draw what nobody can see
@@ -746,6 +1146,30 @@ export class View3D {
     this.controls.hud(this.readout());
   }
 
+  private frameNo = 0;
+  /** the world near enough to stand on, its ground and its sky */
+  private groundFrame(dt: number, P: V3, stars: Body[], tunnel: boolean) {
+    let b: Body | null = null, best = Infinity;
+    if (!tunnel) for (const x of this.app.visual) {
+      if (!Ground.solid(x)) continue;
+      const d = (Math.hypot(x.x - P[0], x.y - P[1], x.z - P[2]) - x.r) * AU_M;
+      if (d < best) { best = d; b = x; }
+    }
+    const rel = b ? new THREE.Vector3((b.x - P[0]) * AU_M, (b.y - P[1]) * AU_M, (b.z - P[2]) * AU_M) : new THREE.Vector3();
+    let sun: THREE.Vector3 | null = null, rgb: V3 = [1, 1, 1];
+    if (b) {
+      let f = 0;
+      for (const s of stars) {
+        const q = s.star!.L / ((s.x - b.x) ** 2 + (s.y - b.y) ** 2 + (s.z - b.z) ** 2);
+        if (q > f) { f = q; sun = new THREE.Vector3(s.x - P[0], s.y - P[1], s.z - P[2]).normalize(); rgb = starRGB(s.star!.teff); }
+      }
+    }
+    this.ground.frame(dt, b, rel, stars, sun, rgb, this.giantFog());
+  }
+
+  /** inside a giant's clouds: how deep into the fog (0–1) and its colour; null outside */
+  giantFog(): { inside: number; fog: THREE.Color } | null { return null; }
+
   /** where the viewer is and which way it looks, and where the ship is drawn from there */
   private place() {
     const sh = this.ship, sq = sh.quat, cam = this.camera, f = this.foot;
@@ -754,7 +1178,14 @@ export class View3D {
       this.base = this.suit.nav;
       this.eye.set(0, 0, 0);
       cam.quaternion.copy(this.suit.quat);
+    } else if (this.mode === 'surface') {
+      this.base = this.surf.nav;
+      this.eye.set(0, 0, 0);
+      this.surfQuat(cam.quaternion);
+    } else if (this.mode === 'craft' && this.craftView && this.placeCraft()) {
+      // placed
     } else {
+      if (this.mode === 'craft') this.mode = 'pilot';
       this.base = sh.nav;
       if (this.mode === 'pilot') {
         local = sh.view === 'cockpit' ? HELM_EYE : CHASE_EYE;
@@ -815,6 +1246,14 @@ export class View3D {
     } else if (this.mode === 'eva') {
       const loc = relM(this.suit.nav, sh.nav).applyQuaternion(sh.quat.clone().invert());
       if (loc.distanceTo(HATCH_OUT) < 7) { this.prompt = { label: 'Board the ship', act: () => this.board() }; sh.boardable = true; }
+    } else if (this.mode === 'surface') {
+      const foot = this.ladderFoot();
+      if (foot && this.ground.spec && arc(foot, this.surf.n) * this.ground.spec.R < 4.5) { this.prompt = { label: 'Climb the ladder and board', act: () => this.board() }; sh.boardable = true; }
+      else this.prompt = { label: 'Scan here', act: () => this.panels.show('scan') };
+    } else if (this.mode === 'pilot') {
+      const L = this.landing;
+      if (L?.phase === 'landed') this.prompt = { label: 'Lift off', act: () => this.landOrLift() };
+      else if (!L && !this.landBlock()) this.prompt = { label: `Land on ${this.ground.body?.name ?? 'the ground'}`, act: () => this.landOrLift() };
     }
 
     // the console, a few times a second
@@ -915,6 +1354,7 @@ export class View3D {
         this.travel = null;
         if (gap < t.stop * 0.05 + 5 / AU_M) v.fill(0);
         if (this.autoOd) { sh.od = false; this.autoOd = false; }
+        if (t.land && gap < t.stop * 0.05 + 5 / AU_M) this.landOrLift();
       }
     } else {
       this.travel = null;
@@ -944,7 +1384,7 @@ export class View3D {
     if (!b || alt >= gap) return;
     const d: V3 = [p[0] - b.x, p[1] - b.y, p[2] - b.z];
     const dl = Math.hypot(d[0], d[1], d[2]) || 1;
-    const R = this.visR(b) + gap / AU_M;
+    const R = this.visR(b) + gap / AU_M + (b === this.ground.body ? this.groundUnder(b, p) / AU_M : 0);
     const a = m.anchor;
     m.off = [b.x + (d[0] / dl) * R - (a?.x ?? 0), b.y + (d[1] / dl) * R - (a?.y ?? 0), b.z + (d[2] / dl) * R - (a?.z ?? 0)];
     const v = m.vel, vin = (v[0] * d[0] + v[1] * d[1] + v[2] * d[2]) / dl;
@@ -1053,6 +1493,13 @@ export class View3D {
     for (let k = 0; k < 3; k++) v[k] += (want[k] - v[k]) * Math.min(1, dt * 1.5);
     for (let k = 0; k < 3; k++) s.off[k] += (v[k] * dt) / AU_M;
     this.clear(s, 2);
+    // down onto the ground: on your feet
+    const o = this.overGround(s);
+    if (o && o.alt < 2.6 && !this.ground.last_sample.sea) {
+      const [e, nn] = tangent(o.n), f = new THREE.Vector3(0, 0, -1).applyQuaternion(this.suit.quat).applyQuaternion(o.q.clone().invert());
+      this.toSurface(o.n, Math.atan2(-f.dot(new THREE.Vector3(...e)), f.dot(new THREE.Vector3(...nn))));
+      return;
+    }
     // and not through the hull
     const inv = sh.quat.clone().invert();
     const loc = relM(s, sh.nav).applyQuaternion(inv);
@@ -1104,21 +1551,43 @@ export class View3D {
     const w = sh.worm;
     const drive = w ? (w.phase === 'charge' ? `wormhole opening · ${Math.max(0, JUMP_CHARGE - w.t).toFixed(1)} s`
       : w.phase === 'enter' ? `into the wormhole` : w.phase === 'tunnel' ? `in the throat · ${w.to.name} in ${Math.max(0, w.dur - w.t).toFixed(0)} s` : `out of the wormhole`)
+      : this.landing ? (this.landing.phase === 'down' ? `landing · ${this.landing.alt < 1000 ? `${Math.max(0, this.landing.alt - LAND_H).toFixed(0)} m` : `${(this.landing.alt / 1000).toFixed(1)} km`} to go` : this.landing.phase === 'up' ? 'lifting off' : `landed on ${this.landing.b.name}`)
       : this.travel ? `autopilot → ${this.travel.name}${sh.odLevel > 0 ? ` · overdrive ${(sh.odLevel * 100).toFixed(0)}%` : ''}`
       : sh.odLevel > 0 ? `overdrive ${(sh.odLevel * 100).toFixed(0)}%` : 'cruise drive';
     let where = '', speed = fmtV(v);
     if (this.mode === 'pilot') where = `At the helm · ${sh.view === 'chase' ? 'chase view' : 'cockpit'}`;
     else if (this.mode === 'walk') where = this.sleep ? 'Asleep in the quarters' : this.foot.seat ? 'On the couch' : `On foot · ${this.room()}`;
     else if (this.mode === 'scope') where = `Telescope · ×${(70 / this.scope.fov).toFixed(this.scope.fov > 7 ? 1 : 0)}${this.scope.track ? ' · tracking' : ''}`;
+    else if (this.mode === 'craft') {
+      const c = this.craftView ? this.fleet.byId(this.craftView.id) : null;
+      where = c ? `${c.name} · ${c.b.name} · ${c.status}` : 'Craft';
+      if (c?.kind === 'rover') speed = `${(Math.abs(c.drive.f) * 3).toFixed(1)} m/s · ${(c.odo / 1000).toFixed(2)} km driven`;
+      else if (c?.state === 'descent') speed = `${(c.alt / 1000).toFixed(1)} km up · falling ${c.vz.toFixed(0)} m/s`;
+      else if (c?.orbit) speed = `${((c.orbit.r - c.b.r * AU_M) / 1000).toFixed(0)} km orbit`;
+    }
+    else if (this.mode === 'surface') {
+      const S = this.surf, [la, lo] = latLonOf(S.n);
+      where = `On ${S.b?.name ?? 'the ground'} · ${Math.abs(la).toFixed(3)}°${la >= 0 ? 'N' : 'S'} ${Math.abs(lo).toFixed(3)}°${lo >= 0 ? 'E' : 'W'}`;
+      speed = `${S.speed.toFixed(1)} m/s on foot`;
+    }
     else {
       const d = relM(this.suit.nav, sh.nav).length();
       where = `Spacewalk · ${d < 1000 ? `${d.toFixed(0)} m` : fmtLength(d / AU_M)} from the ship`;
       const rv = Math.hypot(this.suit.nav.vel[0] - sh.nav.vel[0], this.suit.nav.vel[1] - sh.nav.vel[1], this.suit.nav.vel[2] - sh.nav.vel[2]);
       speed = `${fmtV(rv)} suit`;
     }
+    let near = b ? `${b.name} · ${fmtLength(Math.max(0, alt) / AU_M)} up` : '';
+    // on or over a world's ground: the conditions there
+    const G = this.ground;
+    if (G.body && G.atmo && (this.mode === 'surface' || (b === G.body && alt < 50e3))) {
+      const g = gravity(G.body) / 9.81, a = G.atmo;
+      const z = this.mode === 'surface' ? G.heightAt(this.surf.n, 1) : Math.max(0, alt);
+      const bar = a.bar > 0 && a.H > 0 ? a.bar * Math.exp(-Math.max(0, z) / (a.H * 1000)) : a.bar;
+      near = `${this.mode === 'surface' ? `${z.toFixed(0)} m elevation` : `${G.body.name} · ${fmtLength(Math.max(0, alt) / AU_M)} up`} · ${g.toFixed(g < 0.1 ? 3 : 2)} g · ${bar > 1e-4 ? `${bar.toPrecision(3)} bar` : 'vacuum'} · ${Math.round(a.T - 273.15)} °C${G.daylight < 0.2 ? ' · night' : ''}`;
+    }
     return {
       mode: this.mode, where, speed, drive, target: tgt,
-      near: b ? `${b.name} · ${fmtLength(Math.max(0, alt) / AU_M)} up` : '',
+      near,
       riding: sh.nav.anchor?.name ?? '', throttle: this.controls.throttle, charge: sh.charge, flash: sh.flash,
       prompt: this.prompt?.label ?? '', tunnel: w?.phase === 'tunnel', od: sh.od, view: sh.view,
     };
@@ -1187,7 +1656,7 @@ export class View3D {
       group.add(new THREE.Mesh(this.sphere, o.mat));
       if (o.map.cloud) {
         const cm = new THREE.ShaderMaterial({
-          vertexShader: VERT, fragmentShader: CLOUD_FRAG, transparent: true, depthWrite: false,
+          vertexShader: VERT, fragmentShader: CLOUD_FRAG, transparent: true, depthWrite: false, side: THREE.DoubleSide,
           uniforms: { aux: { value: o.aux }, lightDir: o.mat.uniforms.lightDir, lightCol: o.mat.uniforms.lightCol, drift: { value: 0 } },
         });
         o.clouds = new THREE.Mesh(this.sphere, cm);
@@ -1264,7 +1733,10 @@ export class View3D {
     const [fx, fy, fz] = bodyFrame(bodyAxis(b), spin);
     const m = new THREE.Matrix4().makeBasis(new THREE.Vector3(...fx), new THREE.Vector3(...fy), new THREE.Vector3(...fz));
     g.quaternion.setFromRotationMatrix(m);
-    g.scale.setScalar(Rm);
+    // with its ground built round you, the sphere sinks out of the way under it; the clouds come down to weather height
+    const under = this.ground.body === b && this.ground.ready && this.ground.spec ? this.ground.spec.relief * 0.8 + 50 : 0;
+    g.scale.setScalar(Rm - under);
+    if (o.clouds) o.clouds.scale.setScalar(under ? (Rm + 7000) / (Rm - under) : 1.008);
     let fresh = false;
     for (const c of b.craters) {
       if (o.seen.has(c) || o.map!.gas) continue;
@@ -1343,6 +1815,18 @@ export class View3D {
       el.style.left = `${((v.x + 1) / 2) * W + 8}px`;
       el.style.top = `${((1 - v.y) / 2) * H}px`;
       el.classList.toggle('sel', b === this.app.selected);
+    }
+    // on the ground: the sites and towns near you; the craft
+    for (const l of [...this.ground.labels(), ...this.fleet.labels(P)]) {
+      if (eye && !hull.seesOut(eye, dir.copy(l.at).normalize().applyQuaternion(inv))) continue;
+      v.copy(l.at).project(cam);
+      if (v.z > 1 || v.z < -1 || Math.abs(v.x) > 1.05 || Math.abs(v.y) > 1.05) continue;
+      want.add(l.key);
+      let el = this.labelEls.get(l.key);
+      if (!el) { el = document.createElement('div'); el.className = l.key.startsWith('craft') ? 'lbl craft' : 'lbl site'; this.labels.appendChild(el); this.labelEls.set(l.key, el); }
+      if (el.textContent !== l.text) el.textContent = l.text;
+      el.style.left = `${((v.x + 1) / 2) * W + 8}px`;
+      el.style.top = `${((1 - v.y) / 2) * H}px`;
     }
     // outside, where to get back in
     if (this.mode === 'eva') {
