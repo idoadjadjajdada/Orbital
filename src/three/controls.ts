@@ -83,6 +83,15 @@ const BINDS: Record<Mode, Bind[]> = {
     { k: ['F'], p: ['A'], t: 'Step out · dock', bar: true },
     { k: ['M'], p: ['View'], t: 'Nav map', bar: true },
   ],
+  inside: [
+    { k: ['W', 'A', 'S', 'D'], p: ['LS'], t: 'Move (float, in a station)' },
+    { k: ['Mouse'], p: ['RS'], t: 'Look' },
+    { k: ['Space', 'C'], p: ['RT', 'LT'], t: 'Up · down (floating) · jump' },
+    { k: ['Shift'], p: ['L3'], t: 'Faster' },
+    { k: ['F', 'Click'], p: ['A'], t: 'Use', bar: true },
+    { k: ['K'], p: [], t: 'Mission control' },
+    { k: ['M'], p: ['View'], t: 'Nav map', bar: true },
+  ],
   craft: [
     { k: ['W', 'A', 'S', 'D'], p: ['LS'], t: 'Drive (a rover)' },
     { k: ['Mouse'], p: ['RS'], t: 'Look round it' },
@@ -100,12 +109,13 @@ const BINDS: Record<Mode, Bind[]> = {
   ],
 };
 
-const TITLE: Record<Mode, string> = { pilot: 'At the helm', walk: 'On foot', eva: 'Spacewalk', scope: 'Telescope', surface: 'On the ground', craft: 'Watching a craft', shuttle: 'Flying Lander 1' };
+const TITLE: Record<Mode, string> = { pilot: 'At the helm', walk: 'On foot', eva: 'Spacewalk', scope: 'Telescope', surface: 'On the ground', craft: 'Watching a craft', shuttle: 'Flying Lander 1', inside: 'Inside' };
 
 /** touch: the buttons under the right thumb, held down */
 const THUMB: Record<Mode, [string, string][]> = {
   pilot: [['up', '▲'], ['down', '▼'], ['boost', 'Boost']],
   walk: [['jump', 'Jump']],
+  inside: [['up', '▲'], ['down', '▼'], ['boost', 'Faster']],
   surface: [['jump', 'Jump'], ['boost', 'Run']],
   craft: [['zin', '＋'], ['zout', '−']],
   shuttle: [['up', '▲'], ['down', '▼'], ['boost', 'Boost']],
@@ -116,6 +126,7 @@ const THUMB: Record<Mode, [string, string][]> = {
 const RAIL: Record<Mode, [string, string, string][]> = {
   pilot: [['go', '◎', 'Go to'], ['od', '⏩', 'Overdrive'], ['worm', '🌀', 'Wormhole'], ['land', '🛬', 'Land'], ['mission', '🛰', 'Craft'], ['light', '🔦', 'Light'], ['map', '🗺', 'Map'], ['view', '🎥', 'Camera'], ['leave', '🚶', 'Leave helm'], ['help', '?', 'Help']],
   walk: [['mission', '🛰', 'Craft'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
+  inside: [['use', '👆', 'Use'], ['mission', '🛰', 'Craft'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
   surface: [['scan', '🔬', 'Scan'], ['mission', '🛰', 'Craft'], ['light', '🔦', 'Lamp'], ['call', '📡', 'Call ship'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
   shuttle: [['sland', '🛬', 'Land'], ['use', '👆', 'Use'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
   craft: [['prev', '◀', 'Prev'], ['next', '▶', 'Next'], ['mission', '🛰', 'Mission'], ['leave', '↩', 'Back'], ['help', '?', 'Help']],
@@ -292,7 +303,7 @@ export class Controls3D {
   /** a tap on the view: on foot it uses what is in front of you, otherwise it selects what is under the finger */
   private tap(x: number, y: number) {
     if (this.v.panels.open || this.v.asleep) return;
-    if (this.v.mode === 'walk' || this.v.mode === 'surface' && this.v.prompt?.label.startsWith('Climb')) this.v.prompt?.act();
+    if (this.v.mode === 'walk' || this.v.mode === 'inside' || this.v.mode === 'surface' && this.v.prompt?.label.startsWith('Climb')) this.v.prompt?.act();
     else this.app().select(this.v.pick(x, y));
   }
 
@@ -315,7 +326,7 @@ export class Controls3D {
   /** the click, tap or A button: select at the helm and outside, use on foot */
   private primary() {
     const v = this.v;
-    if (v.mode === 'walk' || v.mode === 'surface' && v.prompt?.label.startsWith('Climb')) { v.prompt?.act(); return; }
+    if (v.mode === 'walk' || v.mode === 'inside' || v.mode === 'surface' && v.prompt?.label.startsWith('Climb')) { v.prompt?.act(); return; }
     this.app().select(v.pick());
   }
 
@@ -399,13 +410,14 @@ export class Controls3D {
       if (!this.sheetEl.hidden) this.sheet(false);
       else if (v.mode === 'scope') v.leaveScope();
       else if (v.mode === 'craft') v.leaveCraft();
+      else if (v.mode === 'inside' && v.visit.at?.cupola) v.prompt?.act();
       return;
     }
     if (e.code === 'KeyK' && !e.repeat && v.mode !== 'eva' && v.mode !== 'scope') { v.panels.show('mission'); return; }
     if (e.code === 'KeyN' && !e.repeat) { v.toggleLights(); return; }
     if (['Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyC', 'KeyF', 'KeyG', 'KeyL', 'KeyR'].includes(e.code)) e.preventDefault();
     this.keys.add(e.code);
-    if (e.code === 'Space' && !e.repeat && (v.mode === 'walk' || v.mode === 'surface')) this.jumpTap = true;
+    if (e.code === 'Space' && !e.repeat && (v.mode === 'walk' || v.mode === 'surface' || v.mode === 'inside')) this.jumpTap = true;
     if (e.code === 'Equal' || e.code === 'NumpadAdd') this.zoom(2);
     if (e.code === 'Minus' || e.code === 'NumpadSubtract') this.zoom(0.5);
     if (e.repeat) return;
@@ -434,6 +446,7 @@ export class Controls3D {
         if (e.code === 'BracketLeft') v.cycleCraft(-1);
         break;
       case 'walk':
+      case 'inside':
         if (e.code === 'KeyF' || e.code === 'KeyE') v.prompt?.act();
         break;
       case 'eva':
@@ -495,6 +508,7 @@ export class Controls3D {
         break;
       }
       case 'walk':
+      case 'inside':
         if (p.hit(BTN.A)) v.prompt?.act();
         break;
       case 'surface':

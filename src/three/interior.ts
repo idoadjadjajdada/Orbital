@@ -207,7 +207,7 @@ function panelTexture(seed: number, base: string, kind: 'plate' | 'grate' | 'pad
 
 /** the materials: lit by the lights inside, and a little by themselves, so nothing is ever black */
 const lit = (color: number, map: THREE.Texture | null = null, extra: THREE.MeshLambertMaterialParameters = {}) =>
-  new THREE.MeshLambertMaterial({ color, map, emissive: new THREE.Color(color).multiplyScalar(0.28), emissiveMap: map, ...extra });
+  new THREE.MeshLambertMaterial({ color, map, emissive: new THREE.Color(color).multiplyScalar(0.42), emissiveMap: map, ...extra });
 
 export const MATS = {
   screen: new THREE.MeshBasicMaterial({ color: 0x0a2a3a }),
@@ -362,20 +362,29 @@ function cupola(I: Interior) {
   const c = new THREE.Group();
   c.position.set(x, y, z);
   G.add(c);
-  // the opening in Tranquility's deck, and the short drum below it
-  add(c, cyl(0.95, 0.95, 0.7, 6, ), lit(0xc8ccd2, null, { side: THREE.BackSide }), 0, -0.35, 0);
-  // the six side windows round the drum's lower edge, and the round one at the bottom
-  const ring = add(c, cyl(1.35, 0.95, 0.5, 6, ), MATS.glass, 0, -0.95, 0);
-  ring.rotation.y = Math.PI / 6;
+  // the short drum through Tranquility's deck, then the six slanted side windows narrowing to the round one
+  // at the bottom, as the real one is: a hexagonal frustum of glass between thin frames
+  add(c, cyl(0.95, 0.95, 0.35, 6), lit(0xc8ccd2, null, { side: THREE.BackSide }), 0, -0.17, 0, 0, Math.PI / 6, 0);
+  const top = 0.95, bot = 0.48, y0 = -0.35, y1 = -1.0;
   for (let k = 0; k < 6; k++) {
-    const a = (k / 6) * Math.PI * 2;
-    add(c, box(0.08, 0.55, 0.08), MATS.grey, Math.cos(a) * 1.15, -0.95, Math.sin(a) * 1.15, 0, -a, 0.6);
+    const a0 = (k / 6) * Math.PI * 2, a1 = ((k + 1) / 6) * Math.PI * 2;
+    const g = new THREE.BufferGeometry();
+    const pts = [Math.cos(a0) * top, y0, Math.sin(a0) * top, Math.cos(a1) * top, y0, Math.sin(a1) * top, Math.cos(a1) * bot, y1, Math.sin(a1) * bot, Math.cos(a0) * bot, y1, Math.sin(a0) * bot];
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+    g.setIndex([0, 1, 2, 0, 2, 3]);
+    g.computeVertexNormals();
+    c.add(new THREE.Mesh(g, MATS.glass));
+    // the frame bar along each edge
+    const e = new THREE.Vector3(Math.cos(a0) * bot, y1, Math.sin(a0) * bot), f = new THREE.Vector3(Math.cos(a0) * top, y0, Math.sin(a0) * top);
+    const bar = add(c, box(0.03, 0.03, e.distanceTo(f)), MATS.dark);
+    bar.position.copy(e).add(f).multiplyScalar(0.5);
+    bar.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), f.clone().sub(e).normalize());
   }
-  add(c, new THREE.CircleGeometry(0.42, 24), MATS.glass, 0, -1.2, 0, -Math.PI / 2, 0, 0);
-  add(c, new THREE.RingGeometry(0.42, 1.35, 6, 1), lit(0xc8ccd2, null, { side: THREE.DoubleSide }), 0, -1.2, 0, -Math.PI / 2, 0, Math.PI / 6);
+  add(c, new THREE.CircleGeometry(bot - 0.04, 24), MATS.glass, 0, y1, 0, -Math.PI / 2, 0, 0);
+  add(c, new THREE.TorusGeometry(bot - 0.02, 0.035, 6, 6), MATS.grey, 0, y1, 0, Math.PI / 2, 0, 0);
   // the deck around the hole: a grab bar ring
   add(c, new THREE.TorusGeometry(0.9, 0.03, 6, 24), MATS.rail, 0, 0.02, 0, Math.PI / 2, 0, 0);
-  I.boxes.push(new THREE.Box3(new THREE.Vector3(x - 0.75, y - 1.15, z - 0.75), new THREE.Vector3(x + 0.75, y + 0.2, z + 0.75)));
+  I.boxes.push(new THREE.Box3(new THREE.Vector3(x - 0.7, y - 0.85, z - 0.7), new THREE.Vector3(x + 0.7, y + 0.2, z + 0.7)));
   I.regions.push({ name: 'The Cupola', box: new THREE.Box3(new THREE.Vector3(x - 1.4, y - 1.4, z - 1.4), new THREE.Vector3(x + 1.4, y, z + 1.4)) });
   I.addSpot('cupola', new THREE.Vector3(x, y - 0.4, z), 'Look out of the Cupola', 2.8);
   I.lamps.push(new THREE.Vector3(x, y - 0.2, z));

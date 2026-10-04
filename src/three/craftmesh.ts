@@ -166,8 +166,10 @@ export function stationMesh() {
   add(g, box(4, 0.6, 3.4), MAT.grey, STATION.airlock.x + 2.2, -0.5, STATION.airlock.z);
   // the cupola under Tranquility: a drum of seven windows looking down
   const cu = STATION.cupola;
-  add(g, cyl(1.2, 1.45, 0.6, 6), MAT.silver, cu.x, cu.y - 0.95 - 0.35, cu.z);
-  for (let k = 0; k < 6; k++) { const a = (k / 6) * Math.PI * 2 + Math.PI / 6; add(g, box(0.75, 0.42, 0.05), MAT.glass, cu.x + Math.cos(a) * 1.3, cu.y - 1.6, cu.z + Math.sin(a) * 1.3, 0.55, -a + Math.PI / 2, 0); }
+  // (a frame round its glass, open where the windows are, so it can be seen out of)
+  add(g, new THREE.TorusGeometry(1.0, 0.09, 6, 6), MAT.silver, cu.x, cu.y - 0.35, cu.z, Math.PI / 2, 0, 0);
+  add(g, new THREE.TorusGeometry(0.5, 0.07, 6, 6), MAT.silver, cu.x, cu.y - 1.0, cu.z, Math.PI / 2, 0, 0);
+
   // the truss, over Destiny: a long box of girders, with the rotary joints near its ends
   const T = new THREE.Group();
   T.position.set(0, 4.2, 9);
