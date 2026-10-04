@@ -478,6 +478,14 @@ try {
     tr.t = tr.Ta + tr.Tc + tr.Td + 0.1; f.step(0.01); out.push(m.state === 'surface' && m.b === moon && f.rocketAt(pad) === m);
     return out.every(Boolean);
   }));
+  // a station's inside, from Mission Control: Dock flies the ship there, Go aboard steps in
+  await page.evaluate(() => { const v = window.orbital.v3; v.toSurface(v.surf.n, 0); v.landing = null; v.mode = 'pilot'; v.panels.show('mission'); });
+  const iss = await page.evaluate(() => window.orbital.v3.fleet.crafts.find(c => c.name === 'ISS').id);
+  await page.click(`.panel3 button[data-act="cdock"][data-id="${iss}"]`);
+  ok('Dock in Mission Control flies the ship to a station to dock', await page.evaluate(() => window.orbital.v3.travel?.dock?.name === 'ISS'));
+  await page.evaluate(() => { const v = window.orbital.v3, c = v.fleet.crafts.find(x => x.name === 'ISS'); v.travel = null; const p = v.visit.worldOf(c, new v.camera.position.constructor(0, 0, 0)), a = c.b; v.ship.nav.anchor = a; v.ship.nav.off = [p[0] - a.x, p[1] - a.y, p[2] - a.z]; v.ship.nav.vel = [0, 0, 0]; v.visit.dock(c); v.panels.show('mission'); });
+  await page.click(`.panel3 button[data-act="cdock"][data-id="${iss}"]`);
+  ok('docked, Go aboard takes you inside it', await until(page, () => window.orbital.v3.mode === 'inside' && window.orbital.v3.visit.docked?.name === 'ISS'));
   ok('a rocket can be stacked on a free pad', await page.evaluate(() => { const f = window.orbital.v3.fleet, pad = f.crafts.find(c => c.name === 'Canaveral Launch Pad'); const c = f.stack('courier', pad); return typeof c !== 'string' && c.state === 'surface' && c.build === 0; }));
   clean('rocket');
   }
