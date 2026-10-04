@@ -17,7 +17,25 @@ python3 tools/bake-sun.py      # the Sun's surface from the photograph in tools/
 python3 tools/pack-models.py   # the bases, trees, ruins and rockets (GLB) in tools/data, textures cut down
 ```
 
-The project's notebook (roadmap, ideas, bugs, the model packs) is in `notes/`, an Obsidian vault: start at `notes/README.md`.
+## Working on this: start with the notes
+
+**Agents, and anyone else: read [`AGENTS.md`](AGENTS.md) first, then the notebook in [`notes/`](notes/README.md).**
+
+The owner works from a phone, and `notes/` is how they follow the project and
+tell it what they want: the roadmap, open bugs, ideas, reference pictures, the
+model packs, and every message they have sent, word for word. They read and
+write it in the notes app at
+**https://idoadjadjajdada.github.io/Orbital/notes/** (an Obsidian vault too).
+
+Keeping it up is part of every task:
+- **Their messages** go in `notes/Feedback/` word for word, with any pictures they sent.
+- **Bugs** go in `notes/Bugs.md`, both the ones they report and the ones you find.
+- **Features** go in `notes/Roadmap.md`, ideas in `notes/Ideas.md`.
+- **Reference pictures** you used go in `notes/References.md`.
+- **What you built** goes in `notes/Built.md`, ticked off where it was asked for, with the commit.
+
+Everything is committed to `main`. `AGENTS.md` has the details: the format, the
+checks to run before pushing, and how CI is watched.
 
 Runs in any current browser, iPad and iPhone Safari included: touch to throw
 and select, double-tap to follow, pinch to zoom, drag to slide the view. On a

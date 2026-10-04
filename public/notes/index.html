@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Orbital notes">
+<meta name="theme-color" content="#0b0f17">
+<title>Orbital notes</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<style>
+  :root {
+    --bg: #0b0f17; --panel: #131a26; --panel2: #1a2333; --line: #263247; --text: #e6ecf5; --dim: #8d9bb2;
+    --accent: #ffb454; --accent2: #6cc6ff; --ok: #5ed39a; --bad: #ff7a7a;
+    --r: 14px; --pad: 16px;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) { --bg: #f5f6f8; --panel: #ffffff; --panel2: #eef1f5; --line: #dde2ea; --text: #17202e; --dim: #5d6b80; --accent: #c46a00; --accent2: #0b6fb3; color-scheme: light; }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; -webkit-text-size-adjust: 100%; }
+  body { padding: env(safe-area-inset-top) env(safe-area-inset-right) calc(env(safe-area-inset-bottom) + 84px) env(safe-area-inset-left); }
+  header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px; padding: 10px var(--pad); background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 17px; margin: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  header h1 b { color: var(--accent); }
+  button, .btn { font: inherit; font-size: 15px; color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+  button.primary { background: var(--accent); color: #1a1205; border-color: transparent; font-weight: 600; }
+  button:disabled { opacity: 0.5; }
+  main { max-width: 760px; margin: 0 auto; padding: var(--pad); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin: 4px 0 20px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 14px; text-decoration: none; color: var(--text); display: block; }
+  .tile b { display: block; font-size: 16px; }
+  .tile span { color: var(--dim); font-size: 13px; }
+  .tile .n { float: right; color: var(--accent); font-weight: 700; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 4px 18px 14px; margin-bottom: 14px; }
+  .crumbs { color: var(--dim); font-size: 13px; margin: 2px 0 10px; }
+  .crumbs a { color: var(--dim); }
+  .md h1 { font-size: 24px; margin: 14px 0 8px; }
+  .md h2 { font-size: 19px; margin: 22px 0 6px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .md h3 { font-size: 16px; margin: 16px 0 4px; }
+  .md a { color: var(--accent2); }
+  .md img { max-width: 100%; border-radius: 10px; display: block; margin: 8px 0; background: var(--panel2); min-height: 40px; }
+  .md blockquote { margin: 10px 0; padding: 8px 14px; border-left: 3px solid var(--accent); background: var(--panel2); border-radius: 0 10px 10px 0; }
+  .md blockquote p { margin: 4px 0; }
+  .md code { background: var(--panel2); padding: 1px 5px; border-radius: 5px; font-size: 14px; }
+  .md pre { background: var(--panel2); padding: 10px; border-radius: 10px; overflow-x: auto; }
+  .md table { border-collapse: collapse; display: block; overflow-x: auto; font-size: 14px; }
+  .md th, .md td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+  .md ul { padding-left: 22px; }
+  .md li.task { list-style: none; margin-left: -22px; }
+  .md input[type=checkbox] { width: 20px; height: 20px; vertical-align: -4px; margin-right: 8px; accent-color: var(--ok); }
+  .md li.done { color: var(--dim); }
+  textarea, input[type=text], input[type=password], select { width: 100%; font: 15px/1.5 ui-monospace, Menlo, monospace; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+  textarea { min-height: 60vh; resize: vertical; }
+  .form textarea { min-height: 140px; font-family: inherit; font-size: 16px; }
+  .form label { display: block; margin: 14px 0 6px; color: var(--dim); font-size: 14px; }
+  .seg { display: flex; flex-wrap: wrap; gap: 6px; }
+  .seg button.on { background: var(--accent); color: #1a1205; border-color: transparent; font-weight: 600; }
+  .thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .thumbs img { width: 84px; height: 84px; object-fit: cover; border-radius: 10px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .dim { color: var(--dim); font-size: 14px; }
+  .fab { position: fixed; right: calc(18px + env(safe-area-inset-right)); bottom: calc(18px + env(safe-area-inset-bottom)); z-index: 6; background: var(--accent); color: #1a1205; border: 0; border-radius: 999px; padding: 14px 20px; font-weight: 700; font-size: 16px; box-shadow: 0 6px 24px rgba(0,0,0,0.35); }
+  .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(86px + env(safe-area-inset-bottom)); background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; z-index: 9; max-width: 90vw; }
+  .list a { display: block; padding: 12px 4px; border-bottom: 1px solid var(--line); color: var(--text); text-decoration: none; }
+  .list a span { color: var(--dim); float: right; }
+  .warn { border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--panel)); border-radius: var(--r); padding: 12px 14px; margin-bottom: 14px; font-size: 15px; }
+</style>
+</head>
+<body>
+<header>
+  <button id="home" aria-label="Home">🪐</button>
+  <h1 id="title"><b>Orbital</b> notes</h1>
+  <button id="editBtn" hidden>Edit</button>
+  <button id="settingsBtn" aria-label="Settings">⚙︎</button>
+</header>
+<main id="view"><p class="dim">Loading…</p></main>
+<button class="fab" id="addBtn">＋ Add</button>
+<script>
+/*
+ * Orbital's notebook, on a phone. It reads the `notes/` folder of the repository straight from
+ * GitHub and writes back to it: each change one commit on `main`, made with a token that stays
+ * in this browser. What it writes follows the notebook's own rules (CLAUDE.md): a message word
+ * for word in Feedback/<today>.md with its photos in attachments/, filed as a bug, a feature,
+ * an idea or a reference in the notes that collect them — so Claude, and anyone else working
+ * in the repository, sees it the same as anything said in chat.
+ */
+const OWNER = 'idoadjadjajdada', REPO = 'Orbital', BRANCH = 'main', ROOT = 'notes/';
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const $ = s => document.querySelector(s);
+const view = $('#view');
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} } };
+let token = store.get('orbital-notes-token') || '';
+
+function toast(msg, ms = 2600) {
+  const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t);
+  setTimeout(() => t.remove(), ms);
+}
+
+// ---------------------------------------------------------------- GitHub
+async function gh(path, opts = {}) {
+  const headers = { Accept: 'application/vnd.github+json', ...(opts.headers || {}) };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const r = await fetch(`https://api.github.com${path}`, { ...opts, headers, cache: 'no-store' });
+  if (!r.ok) { const e = new Error(`${r.status} ${(await r.text()).slice(0, 200)}`); e.status = r.status; throw e; }
+  return opts.raw ? r : r.json();
+}
+const b64 = s => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
+const unb64 = s => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\n/g, '')), c => c.charCodeAt(0)));
+
+/** the newest commit on main, and the notes in it */
+let head = null, files = [];
+async function refresh() {
+  const ref = await gh(`/repos/${OWNER}/${REPO}/git/ref/heads/${BRANCH}`);
+  const commit = await gh(`/repos/${OWNER}/${REPO}/git/commits/${ref.object.sha}`);
+  const tree = await gh(`/repos/${OWNER}/${REPO}/git/trees/${commit.tree.sha}?recursive=1`);
+  head = { sha: ref.object.sha, tree: commit.tree.sha };
+  files = tree.tree.filter(t => t.type === 'blob' && t.path.startsWith(ROOT)).map(t => ({ path: t.path, sha: t.sha }));
+}
+const cache = new Map();
+async function read(path) {
+  const f = files.find(x => x.path === path);
+  if (!f) return null;
+  if (cache.has(f.sha)) return cache.get(f.sha);
+  const blob = await gh(`/repos/${OWNER}/${REPO}/git/blobs/${f.sha}`);
+  const text = unb64(blob.content);
+  cache.set(f.sha, text);
+  return text;
+}
+const imgs = new Map();
+async function imageURL(path) {
+  const f = files.find(x => x.path === path);
+  if (!f) return null;
+  if (imgs.has(f.sha)) return imgs.get(f.sha);
+  const blob = await gh(`/repos/${OWNER}/${REPO}/git/blobs/${f.sha}`);
+  const bytes = Uint8Array.from(atob(blob.content.replace(/\n/g, '')), c => c.charCodeAt(0));
+  const url = URL.createObjectURL(new Blob([bytes], { type: /\.png$/i.test(path) ? 'image/png' : 'image/jpeg' }));
+  imgs.set(f.sha, url);
+  return url;
+}
+
+/**
+ * one commit on main: `change` gets the current text of each file it asks for and returns the files
+ * to write ({ path, text } or { path, base64 }). If main moved meanwhile, it is done again on top.
+ */
+async function commit(message, change) {
+  if (!token) { location.hash = '#/settings'; toast('Add your GitHub token first'); throw new Error('no token'); }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await refresh();
+    const out = await change(read);
+    const tree = [];
+    for (const f of out) {
+      const blob = await gh(`/repos/${OWNER}/${REPO}/git/blobs`, { method: 'POST', body: JSON.stringify({ content: f.base64 ?? b64(f.text), encoding: 'base64' }) });
+      tree.push({ path: f.path, mode: '100644', type: 'blob', sha: blob.sha });
+    }
+    const t = await gh(`/repos/${OWNER}/${REPO}/git/trees`, { method: 'POST', body: JSON.stringify({ base_tree: head.tree, tree }) });
+    const c = await gh(`/repos/${OWNER}/${REPO}/git/commits`, { method: 'POST', body: JSON.stringify({ message, tree: t.sha, parents: [head.sha] }) });
+    try {
+      await gh(`/repos/${OWNER}/${REPO}/git/refs/heads/${BRANCH}`, { method: 'PATCH', body: JSON.stringify({ sha: c.sha, force: false }) });
+      await refresh();
+      return;
+    } catch (e) { if (e.status !== 422) throw e; }
+  }
+  throw new Error('main kept moving: try again');
+}
+
+// ---------------------------------------------------------------- dates and names
+function today() { const d = new Date(); return { iso: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`, long: `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}` }; }
+const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'photo';
+const nice = p => p.replace(ROOT, '').replace(/\.md$/, '').replace(/^Feedback\/(\d{4})-(\d\d)-(\d\d)$/, (_, y, m, d) => `Feedback, ${+d} ${MONTHS[+m - 1]}`);
+
+// ---------------------------------------------------------------- showing a note
+function resolve(from, href) {
+  if (/^[a-z]+:/i.test(href) || href.startsWith('#')) return null;
+  const parts = from.split('/').slice(0, -1);
+  for (const s of decodeURIComponent(href).split('/')) { if (s === '..') parts.pop(); else if (s !== '.') parts.push(s); }
+  return parts.join('/');
+}
+
+async function showNote(path) {
+  const text = await read(path);
+  if (text === null) { view.innerHTML = `<p>No such note: ${esc(path)}</p>`; return; }
+  setTitle(nice(path));
+  $('#editBtn').hidden = false;
+  $('#editBtn').onclick = () => { location.hash = `#/edit/${encodeURIComponent(path)}`; };
+  const html = DOMPurify.sanitize(marked.parse(text, { gfm: true }));
+  view.innerHTML = `<div class="crumbs"><a href="#/">Notes</a> › ${esc(nice(path))}</div><div class="card md">${html}</div>`;
+  const md = view.querySelector('.md');
+  // links between notes open here; pictures come from the repository
+  md.querySelectorAll('a[href]').forEach(a => {
+    const to = resolve(path, a.getAttribute('href'));
+    if (to && to.endsWith('.md')) a.href = `#/n/${encodeURIComponent(to)}`;
+    else if (to) a.href = `https://github.com/${OWNER}/${REPO}/blob/${BRANCH}/${to}`;
+  });
+  md.querySelectorAll('img').forEach(async img => { const to = resolve(path, img.getAttribute('src')); if (to) { const u = await imageURL(to); if (u) img.src = u; } });
+  // the tick boxes tick
+  const boxes = [...md.querySelectorAll('input[type=checkbox]')];
+  boxes.forEach((b, k) => {
+    const li = b.closest('li'); li?.classList.add('task'); if (b.checked) li?.classList.add('done');
+    b.disabled = false;
+    b.onchange = async () => {
+      b.disabled = true;
+      try {
+        await commit(`notes: ${b.checked ? 'tick' : 'untick'} an item in ${nice(path)} (from the notes app)`, async rd => {
+          const src = await rd(path); let n = -1;
+          const out = src.replace(/^(\s*[-*] \[)( |x|X)(\])/gm, (m, a, c, z) => (++n === k ? `${a}${c === ' ' ? 'x' : ' '}${z}` : m));
+          return [{ path, text: out }];
+        });
+        toast(b.checked ? 'Ticked' : 'Unticked');
+      } catch (e) { b.checked = !b.checked; toast(`Not saved: ${e.message}`, 5000); }
+      b.disabled = false;
+    };
+  });
+}
+
+async function showEdit(path) {
+  const text = (await read(path)) ?? '';
+  setTitle(`Edit · ${nice(path)}`);
+  view.innerHTML = `<div class="crumbs"><a href="#/n/${encodeURIComponent(path)}">${esc(nice(path))}</a> › edit</div>
+    <textarea id="ed" spellcheck="true"></textarea>
+    <div class="row" style="margin-top:10px"><button class="primary" id="save">Save</button><button id="cancel">Cancel</button><span class="dim">Saved as one commit on main</span></div>`;
+  $('#ed').value = text;
+  $('#cancel').onclick = () => history.back();
+  $('#save').onclick = async () => {
+    $('#save').disabled = true;
+    const next = $('#ed').value;
+    try {
+      await commit(`notes: edit ${nice(path)} (from the notes app)`, async rd => {
+        const now = await rd(path);
+        if (now !== null && now !== text) throw new Error('it changed since you opened it: copy your text, go back, and edit again');
+        return [{ path, text: next.endsWith('\n') ? next : next + '\n' }];
+      });
+      toast('Saved');
+      location.hash = `#/n/${encodeURIComponent(path)}`;
+    } catch (e) { toast(`Not saved: ${e.message}`, 6000); $('#save').disabled = false; }
+  };
+}
+
+// ---------------------------------------------------------------- home
+const MAIN = [['README.md', 'Home', 'how this works'], ['Roadmap.md', 'Roadmap', 'what’s next'], ['Bugs.md', 'Bugs', 'what looks wrong'], ['Ideas.md', 'Ideas', 'anything'], ['Built.md', 'Built', 'what’s in the game'], ['References.md', 'References', 'pictures to match'], ['Assets.md', 'Assets', 'the model packs']];
+async function showHome() {
+  setTitle('<b>Orbital</b> notes', true);
+  $('#editBtn').hidden = true;
+  const counts = {};
+  for (const [f] of MAIN) { const t = await read(ROOT + f); if (t !== null) counts[f] = (t.match(/^[ \t]*[-*] \[ \][ \t]*\S/gm) || []).length; }
+  const feedback = files.filter(f => /^notes\/Feedback\/.+\.md$/.test(f.path)).map(f => f.path).sort().reverse();
+  const worlds = files.filter(f => /^notes\/Worlds\/.+\.md$/.test(f.path)).map(f => f.path).sort();
+  const other = files.filter(f => f.path.endsWith('.md') && !MAIN.some(([m]) => ROOT + m === f.path) && !feedback.includes(f.path) && !worlds.includes(f.path)).map(f => f.path);
+  const tile = (p, name, sub) => `<a class="tile" href="#/n/${encodeURIComponent(p)}">${counts[p.replace(ROOT, '')] ? `<span class="n">${counts[p.replace(ROOT, '')]}</span>` : ''}<b>${esc(name)}</b><span>${esc(sub)}</span></a>`;
+  view.innerHTML = (token ? '' : `<div class="warn">Reading only. To tick, edit and add from here, <a href="#/settings">add your GitHub token</a> (once, on this phone).</div>`)
+    + `<div class="tiles">${MAIN.filter(([f]) => files.some(x => x.path === ROOT + f)).map(([f, n, s]) => tile(ROOT + f, n, s)).join('')}</div>`
+    + `<h3>Feedback</h3><div class="card list">${feedback.map(p => `<a href="#/n/${encodeURIComponent(p)}">${esc(nice(p))}</a>`).join('') || '<p class="dim">None yet.</p>'}</div>`
+    + (worlds.length ? `<h3>Worlds</h3><div class="card list">${worlds.map(p => `<a href="#/n/${encodeURIComponent(p)}">${esc(nice(p).replace('Worlds/', ''))}</a>`).join('')}</div>` : '')
+    + (other.length ? `<h3>Other notes</h3><div class="card list">${other.map(p => `<a href="#/n/${encodeURIComponent(p)}">${esc(nice(p))}</a>`).join('')}</div>` : '')
+    + `<p class="dim">Open counts are unticked items. Everything here is the <code>notes/</code> folder of ${OWNER}/${REPO}, on ${BRANCH}.</p>`;
+}
+
+// ---------------------------------------------------------------- adding
+const KINDS = { bug: 'Bug', feature: 'Feature', idea: 'Idea', reference: 'Reference', note: 'Just a note' };
+let kind = 'bug', shots = [];
+function showAdd() {
+  setTitle('Add');
+  $('#editBtn').hidden = true;
+  shots = [];
+  view.innerHTML = `<div class="form">
+    <label>What is it?</label>
+    <div class="seg" id="kinds">${Object.entries(KINDS).map(([k, n]) => `<button data-k="${k}" class="${k === kind ? 'on' : ''}">${n}</button>`).join('')}</div>
+    <label for="msg">Say it as you would in chat (kept word for word)</label>
+    <textarea id="msg" placeholder="e.g. The rover flips over on Mars when it drives down a crater wall"></textarea>
+    <label for="where" id="whereL">Where? (world, place, coordinates, what you were doing — optional)</label>
+    <input type="text" id="where" placeholder="e.g. Mars, Jezero, driving the rover">
+    <label>Photos (optional)</label>
+    <input type="file" id="pics" accept="image/*" multiple>
+    <div class="thumbs" id="thumbs"></div>
+    <div class="row" style="margin-top:16px"><button class="primary" id="go">Add to the notes</button><span class="dim" id="state"></span></div>
+    <p class="dim">It goes in today’s Feedback word for word, its photos under it, and is filed as a ${'bug, feature, idea or reference'} where those are collected.</p>
+  </div>`;
+  view.querySelectorAll('#kinds button').forEach(b => b.onclick = () => { kind = b.dataset.k; view.querySelectorAll('#kinds button').forEach(x => x.classList.toggle('on', x === b)); });
+  $('#pics').onchange = async e => {
+    for (const f of e.target.files) shots.push(await shrink(f));
+    $('#thumbs').innerHTML = shots.map(s => `<img src="${s.url}">`).join('');
+  };
+  $('#go').onclick = add;
+}
+
+/** a photo, as the notebook keeps them: a JPEG at most 1600 px across */
+function shrink(file) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 1600 / Math.max(img.width, img.height)), c = document.createElement('canvas');
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      const url = c.toDataURL('image/jpeg', 0.85);
+      res({ url, base64: url.split(',')[1] });
+    };
+    img.onerror = rej;
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+async function add() {
+  const msg = $('#msg').value.trim(), where = $('#where').value.trim();
+  if (!msg) { toast('Write something first'); return; }
+  $('#go').disabled = true; $('#state').textContent = 'Saving…';
+  const d = today(), first = msg.split('\n')[0].replace(/\s+/g, ' ').slice(0, 80);
+  const heading = `${KINDS[kind] === 'Just a note' ? 'Note' : KINDS[kind]}: ${first}`;
+  const anchor = heading.toLowerCase().replace(/[^a-z0-9 -]/g, '').trim().replace(/\s+/g, '-');
+  const fb = `${ROOT}Feedback/${d.iso}.md`;
+  const names = shots.map((_, k) => `${d.iso}-${slug(first)}${shots.length > 1 ? `-${k + 1}` : ''}.jpg`);
+  try {
+    await commit(`notes: ${heading} (from the notes app)`, async rd => {
+      const out = [];
+      shots.forEach((s, k) => out.push({ path: `${ROOT}attachments/${names[k]}`, base64: s.base64 }));
+      // the message, word for word, in today's feedback
+      let feed = (await rd(fb)) ?? `# Feedback, ${d.long}\n\nEach message as sent, then what was done.\n`;
+      feed = feed.replace(/\s*$/, '\n') + `\n## ${heading}\nAdded in the notes app${where ? ` · ${where}` : ''}.\n\n${msg.split('\n').map(l => `> ${l}`).join('\n')}\n` + names.map(n => `\n![${first}](../attachments/${n})`).join('') + (names.length ? '\n' : '');
+      out.push({ path: fb, text: feed });
+      const link = `[message](Feedback/${d.iso}.md#${anchor})`;
+      // and filed where its kind is collected
+      if (kind === 'bug') {
+        let t = (await rd(`${ROOT}Bugs.md`)) ?? '# Bugs\n\n## Open\n';
+        if (!/^## Open/m.test(t)) t = t.replace(/\s*$/, '\n') + '\n## Open\n';
+        t = t.replace(/^- \[ \]\s*$\n?/m, '');
+        t = t.replace(/^## Open\s*\n/m, `## Open\n- [ ] ${first}${where ? ` · ${where}` : ''} (${link})\n`);
+        out.push({ path: `${ROOT}Bugs.md`, text: t });
+      } else if (kind === 'feature') {
+        let t = (await rd(`${ROOT}Roadmap.md`)) ?? '# Roadmap\n\n## Next\n';
+        const line = `- [ ] ${first} (${link})\n`;
+        t = /^## Next/m.test(t) ? t.replace(/(^## Next\s*\n(?:.*\S.*\n)*)/m, m => m + line) : t.replace(/\s*$/, '\n') + `\n## Next\n${line}`;
+        out.push({ path: `${ROOT}Roadmap.md`, text: t });
+      } else if (kind === 'idea') {
+        let t = (await rd(`${ROOT}Ideas.md`)) ?? '# Ideas\n';
+        t = t.replace(/^-\s*$\n?/m, '').replace(/\s*$/, '\n') + `- ${first} (${link})\n`;
+        out.push({ path: `${ROOT}Ideas.md`, text: t });
+      } else if (kind === 'reference') {
+        let t = (await rd(`${ROOT}References.md`)) ?? '# References\n';
+        t = t.replace(/\s*$/, '\n') + `\n## ${first}\n${names.map(n => `![${first}](attachments/${n})\n`).join('')}${msg !== first ? `${msg}\n` : ''}From the ${link}.\n`;
+        out.push({ path: `${ROOT}References.md`, text: t });
+      }
+      return out;
+    });
+    toast('Added');
+    location.hash = `#/n/${encodeURIComponent(kind === 'bug' ? ROOT + 'Bugs.md' : kind === 'feature' ? ROOT + 'Roadmap.md' : kind === 'idea' ? ROOT + 'Ideas.md' : kind === 'reference' ? ROOT + 'References.md' : fb)}`;
+  } catch (e) { $('#state').textContent = ''; $('#go').disabled = false; if (e.message !== 'no token') toast(`Not saved: ${e.message}`, 6000); }
+}
+
+// ---------------------------------------------------------------- settings
+function showSettings() {
+  setTitle('Settings');
+  $('#editBtn').hidden = true;
+  view.innerHTML = `<div class="card md">
+    <h2 style="border:0;padding-top:0">Your GitHub token</h2>
+    <p>Reading the notes needs nothing. To tick, edit and add from here, this page needs a token that lets it write to the repository. It stays in this browser on this phone, and goes only to GitHub.</p>
+    <ol>
+      <li>Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub → new fine-grained token</a> (sign in if asked).</li>
+      <li>Name it <code>Orbital notes</code>; pick an expiry.</li>
+      <li><b>Repository access</b>: <i>Only select repositories</i> → <code>${OWNER}/${REPO}</code>.</li>
+      <li><b>Permissions</b> → Repository permissions → <b>Contents</b>: <i>Read and write</i>.</li>
+      <li>Generate it, copy it, and paste it here.</li>
+    </ol>
+    <input type="password" id="tok" placeholder="github_pat_…" autocomplete="off" value="${esc(token)}">
+    <div class="row" style="margin-top:10px"><button class="primary" id="saveTok">Save</button><button id="clearTok">Forget it</button><span class="dim" id="who"></span></div>
+    <h2>On the home screen</h2>
+    <p>In Safari: Share → <b>Add to Home Screen</b>. It opens like an app.</p>
+  </div>`;
+  const who = async () => { if (!token) { $('#who').textContent = 'No token: reading only'; return; } try { const u = await gh('/user'); $('#who').textContent = `Signed in as ${u.login}`; } catch { $('#who').textContent = 'That token does not work'; } };
+  $('#saveTok').onclick = async () => { token = $('#tok').value.trim(); store.set('orbital-notes-token', token || null); await who(); toast(token ? 'Saved on this phone' : 'Cleared'); };
+  $('#clearTok').onclick = () => { token = ''; store.set('orbital-notes-token', null); $('#tok').value = ''; who(); };
+  who();
+}
+
+// ---------------------------------------------------------------- routes
+function setTitle(t, html = false) { if (html) $('#title').innerHTML = t; else $('#title').textContent = t; document.title = `${html ? 'Orbital notes' : t} · Orbital`; }
+async function route() {
+  const h = decodeURIComponent(location.hash.slice(1) || '/');
+  window.scrollTo(0, 0);
+  try {
+    if (!head) await refresh();
+    if (h.startsWith('/n/')) await showNote(h.slice(3));
+    else if (h.startsWith('/edit/')) await showEdit(h.slice(6));
+    else if (h === '/add') showAdd();
+    else if (h === '/settings') showSettings();
+    else await showHome();
+  } catch (e) {
+    view.innerHTML = `<div class="warn">Couldn’t reach GitHub: ${esc(e.message)}${e.status === 401 ? '<br>The token was refused: <a href="#/settings">check it in Settings</a>.' : e.status === 403 ? '<br>GitHub is limiting requests without a token: <a href="#/settings">add one</a>, or wait an hour.' : ''}</div>`;
+  }
+}
+$('#home').onclick = () => { location.hash = '#/'; };
+$('#settingsBtn').onclick = () => { location.hash = '#/settings'; };
+$('#addBtn').onclick = () => { location.hash = '#/add'; };
+window.addEventListener('hashchange', route);
+// back to the app after a while away: the newest notes
+// (not while something is being written: picking a photo can hide the page for a moment)
+document.addEventListener('visibilitychange', () => { const h = location.hash; if (!document.hidden && !/^#\/(add|edit|settings)/.test(h)) { head = null; route(); } });
+route();
+</script>
+</body>
+</html>

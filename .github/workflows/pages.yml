@@ -3,6 +3,8 @@ name: Test and deploy
 on:
   push:
     branches: [main]
+    # (the notebook changes on its own, from the notes app: nothing to build or test)
+    paths-ignore: ['notes/**']
   pull_request:
   workflow_dispatch:
 

@@ -12,7 +12,10 @@ The project's notebook, kept in the repo so Claude can read and edit it in any s
 - `Worlds/`: a note per planet or moon
 
 ## No computer needed
-Tell Claude in chat: a bug, a feature, a photo. Claude keeps your message word for word in `Feedback/`, saves photos to `attachments/`, and files the bug or feature in [Bugs](Bugs.md) or [Roadmap](Roadmap.md). Read it all in the **GitHub app**: the repository, then `notes`. The notes and photos show there with no syncing.
+- **The notes app:** https://idoadjadjajdada.github.io/Orbital/notes/. Read everything with photos, tick things off, edit any note, and **＋ Add** a bug, feature, idea or reference with photos. Each change is saved straight to the repository. Add it to your home screen (Share → Add to Home Screen). To make changes, it needs a GitHub token once: its ⚙︎ page says how.
+- **Or tell Claude in chat:** a bug, a feature, a photo. Claude keeps your message word for word in `Feedback/`, saves photos to `attachments/`, and files the bug or feature in [Bugs](Bugs.md) or [Roadmap](Roadmap.md).
+
+Both write the same way, so every agent working on the project sees it (the brief is `AGENTS.md` at the top of the repository).
 
 ## Working with Claude
 - "Work through [Roadmap](Roadmap.md)": items are done top to bottom and ticked off.
