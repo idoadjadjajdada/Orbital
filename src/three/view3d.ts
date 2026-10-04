@@ -515,6 +515,7 @@ export class View3D {
     this.labels.hidden = true;
     document.body.appendChild(this.labels);
     this.ship = new Ship(this.scene, this.glowTex);
+    this.ship.hull.setEnv(this.renderer);
     this.shuttle = new Shuttle(this);
     this.visit = new Visit(this);
     this.placer = new Placer(this);
@@ -1670,6 +1671,7 @@ export class View3D {
       this.eye.copy(local).applyQuaternion(sq);
     }
     this.localEye = local && local !== CHASE_EYE && this.mode !== 'scope' ? local.clone() : null;
+    sh.hull.viewFrom(!!this.localEye || this.mode === 'scope');
     // a shudder going into the throat
     const w = sh.worm;
     this.shake = w && (w.phase === 'enter' || w.phase === 'tunnel' && w.t < 0.6) ? 0.006 : w?.phase === 'tunnel' ? 0.0015 : 0;

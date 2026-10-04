@@ -76,6 +76,7 @@ export class Hull {
     dark: new THREE.MeshLambertMaterial({ color: 0x5a6274, flatShading: true, map: plating('hull') }),
     accent: new THREE.MeshLambertMaterial({ color: 0xd8643a, flatShading: true }),
     wall: new THREE.MeshLambertMaterial({ color: 0xa8b0c0, flatShading: true, map: plating('wall') }),
+    // (the deck's plates have a sheen: the lamps shine in them)
     floor: new THREE.MeshLambertMaterial({ color: 0x59606e, flatShading: true, map: plating('floor') }),
     ceil: new THREE.MeshLambertMaterial({ color: 0x7c8494, flatShading: true, map: plating('ceil') }),
     trim: new THREE.MeshLambertMaterial({ color: 0x2a303c, flatShading: true }),
@@ -92,9 +93,19 @@ export class Hull {
     amber: new THREE.MeshBasicMaterial({ color: 0xffb050 }),
     stripe: new THREE.MeshBasicMaterial({ color: 0xe8c040 }),
     hazard: new THREE.MeshLambertMaterial({ map: hazardTexture() }),
+    // light along the tops of the walls, and dim guide lights along their feet
+    cove: new THREE.MeshBasicMaterial({ color: 0xe6d6b8 }),
+    guide: new THREE.MeshBasicMaterial({ color: 0x2f9cc0 }),
+    // the outside: painted and bare metal, with the plates' seams in relief, that catches the light and shines
+    // (setEnv gives it something to reflect)
+    xhull: metal(0xdfe2e8, 0.35, 0.5, 'hull'),
+    xdark: metal(0x4e5668, 0.55, 0.42, 'hull'),
+    xaccent: new THREE.MeshStandardMaterial({ color: 0xd8643a, flatShading: true, metalness: 0.2, roughness: 0.4 }),
+    xsteel: new THREE.MeshStandardMaterial({ color: 0xb4bcc8, flatShading: true, metalness: 0.9, roughness: 0.3 }),
+    xburnt: new THREE.MeshStandardMaterial({ color: 0x3a3f4a, flatShading: true, metalness: 0.85, roughness: 0.35, side: THREE.DoubleSide }),
   };
   /** the materials tiled in metres, whatever the size of the piece */
-  private tiled = new Set<THREE.Material>([this.mat.hull, this.mat.dark, this.mat.wall, this.mat.floor, this.mat.ceil, this.mat.hazard]);
+  private tiled = new Set<THREE.Material>([this.mat.hull, this.mat.dark, this.mat.wall, this.mat.floor, this.mat.ceil, this.mat.hazard, this.mat.xhull, this.mat.xdark]);
 
   // animated parts
   private core: THREE.MeshBasicMaterial;
@@ -103,6 +114,9 @@ export class Hull {
   private wormMat: THREE.MeshBasicMaterial;
   private lights: { l: THREE.PointLight; base: THREE.Color; k: number }[] = [];
   private navLights: THREE.Sprite[] = [];
+  private strobes: THREE.Sprite[] = [];
+  /** the merged outside, with plain twins of its materials for when you are inside (see viewFrom) */
+  private outer: { m: THREE.Mesh; shine: THREE.Material; plain: THREE.Material }[] = [];
   private hatchLight: THREE.MeshBasicMaterial;
   private holo: THREE.Points;
   private holoRing: THREE.Mesh;
@@ -139,7 +153,7 @@ export class Hull {
       e: [pane(-7, -2.8, 0.9, 2.5), pane(0, 3.5, 0.9, 2.5)],
     }, { two: ['n'], sky: { x0: -3, x1: 3, z0: -5, z1: 1 } });
     this.room('aft passage', { x0: -1.2, x1: 1.2, z0: 4.25, z1: 7.75 }, 3, { n: 'open', s: 'open', w: [], e: [] });
-    this.room('engineering', { x0: -4.5, x1: 4.5, z0: 8, z1: 18 }, 4.2, { n: [door(0)], s: [], w: [], e: [] });
+    this.room('engineering', { x0: -4.5, x1: 4.5, z0: 8, z1: 18 }, 4.2, { n: [door(0)], s: [], w: [], e: [] }, { two: ['n'] });
     this.room('airlock', { x0: -8.6, x1: -6.25, z0: -1.6, z1: 1.6 }, 3, { n: [], s: [], w: [], e: 'open' });
     // through the doors, across the thickness of the walls
     this.walk.push(
@@ -157,31 +171,31 @@ export class Hull {
     this.deck = 0;
 
     // ---- the outside
-    this.box(-4, 4, -1.9, -T, -23.5, 4.25, M.dark, true);
-    this.box(-5.6, 5.6, -1.6, -T, -7.6, 3.6, M.hull, true);
+    this.box(-4, 4, -1.9, -T, -23.5, 4.25, M.xdark, true);
+    this.box(-5.6, 5.6, -1.6, -T, -7.6, 3.6, M.xhull, true);
     // the prow: a long faceted wedge under the bridge's glass, its chin swept up to a point
     const prow = new THREE.LatheGeometry([0.02, 1.2, 2.4, 3.3, 3.9, 4.2, 4.3].map((r, k) => new THREE.Vector2(r, -k * 1.7)), 10);
     prow.rotateX(-Math.PI / 2);
     prow.scale(1, 0.36, 1);
-    const nose = new THREE.Mesh(prow, M.hull);
+    const nose = new THREE.Mesh(prow, M.xhull);
     nose.position.set(0, -0.85, -34.2);
     g.add(nose);
-    const keel = new THREE.Mesh(prow.clone().scale(0.55, 0.6, 0.98), M.dark);
+    const keel = new THREE.Mesh(prow.clone().scale(0.55, 0.6, 0.98), M.xdark);
     keel.position.set(0, -1.35, -33.8);
     g.add(keel);
     this.solids.push(new THREE.Box3(new THREE.Vector3(-3.5, -2, -32), new THREE.Vector3(3.5, 0.6, -24)));
     this.dress(glow);
     // a spine and stripes
-    this.box(-0.7, 0.7, 3 + T, 3.6, -13.5, -8.5, M.accent, false);
-    for (const s of [1, -1]) this.box(s > 0 ? 6 + T : -6.3, s > 0 ? 6.3 : -6 - T, 2.55, 2.75, -8, 4, M.accent, false);
-    for (const s of [1, -1]) this.box(s > 0 ? 5.5 + T : -5.8, s > 0 ? 5.8 : -5.5 - T, -1.2, -0.95, 4.5, 18, M.accent, false);
+    this.box(-0.7, 0.7, 3 + T, 3.6, -13.5, -8.5, M.xaccent, false);
+    for (const s of [1, -1]) this.box(s > 0 ? 6 + T : -6.3, s > 0 ? 6.3 : -6 - T, 2.55, 2.75, -8, 4, M.xaccent, false);
+    for (const s of [1, -1]) this.box(s > 0 ? 5.5 + T : -5.8, s > 0 ? 5.8 : -5.5 - T, -1.2, -0.95, 4.5, 18, M.xaccent, false);
     // wings and their pods
     const wing = new THREE.Shape();
     wing.moveTo(0, 8); wing.lineTo(11.5, 14.5); wing.lineTo(11.5, 18.2); wing.lineTo(0, 18);
     const wingG = new THREE.ExtrudeGeometry(wing, { depth: 0.35, bevelEnabled: false });
     wingG.rotateX(Math.PI / 2);
     for (const s of [1, -1]) {
-      const w = new THREE.Mesh(wingG, M.hull);
+      const w = new THREE.Mesh(wingG, M.xhull);
       w.scale.x = s;
       w.position.set(s * 4.7, 0.9, 0);
       g.add(w);
@@ -194,11 +208,11 @@ export class Hull {
     }
     // engines
     for (const [x, y] of [[-2.6, 0.6], [2.6, 0.6], [0, 2.6]] as const) {
-      const eng = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.35, 6, 12), M.dark);
+      const eng = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.35, 6, 12), M.xdark);
       eng.rotation.x = Math.PI / 2;
       eng.position.set(x, y, 21.3);
       g.add(eng);
-      const bell = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 0.75, 0.6, 12, 1, true), new THREE.MeshLambertMaterial({ color: 0x3a3f4a, side: THREE.DoubleSide }));
+      const bell = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 0.75, 0.6, 12, 1, true), M.xburnt);
       bell.rotation.x = Math.PI / 2;
       bell.position.set(x, y, 24.5);
       g.add(bell);
@@ -213,15 +227,15 @@ export class Hull {
     }
     this.solids.push(new THREE.Box3(new THREE.Vector3(-4, -0.8, 18), new THREE.Vector3(4, 3.8, 24.5)));
     // a fin and a dish
-    this.box(-0.15, 0.15, 4.2 + T, 8, 11.5, 18.5, M.accent, true);
-    const dishPost = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1.2, 6), M.dark);
+    this.box(-0.15, 0.15, 4.2 + T, 8, 11.5, 18.5, M.xaccent, true);
+    const dishPost = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1.2, 6), M.xdark);
     dishPost.position.set(4.2, 3.85, 2.2);
-    const dish = new THREE.Mesh(new THREE.ConeGeometry(1.1, 0.5, 12, 1, true), new THREE.MeshLambertMaterial({ color: 0xc9ccd4, flatShading: true, side: THREE.DoubleSide }));
+    const dish = new THREE.Mesh(new THREE.ConeGeometry(1.1, 0.5, 12, 1, true), new THREE.MeshStandardMaterial({ color: 0xc9ccd4, flatShading: true, metalness: 0.7, roughness: 0.3, side: THREE.DoubleSide }));
     dish.position.set(4.2, 4.6, 2.2);
     dish.rotation.set(Math.PI * 0.8, 0, 0.4);
     g.add(dishPost, dish);
     // the hatch, seen from outside
-    const hatch = new THREE.Mesh(new THREE.TorusGeometry(0.95, 0.12, 6, 16), M.accent);
+    const hatch = new THREE.Mesh(new THREE.TorusGeometry(0.95, 0.12, 6, 16), M.xaccent);
     hatch.rotation.y = Math.PI / 2;
     hatch.position.set(-8.6 - T - 0.05, 1.3, 0);
     this.hatchLight = new THREE.MeshBasicMaterial({ color: 0x40ff70 });
@@ -237,11 +251,11 @@ export class Hull {
     for (const [x, y, z] of [[5.5 + T + 0.2, -1.5, 6.2], [5.5 + T + 0.2, -1.5, 16.4], [-(5.5 + T + 0.2), -1.5, 6.2], [-(5.5 + T + 0.2), -1.5, 16.4], [3.2, -0.35, -19], [-3.2, -0.35, -19]]) {
       const leg = new THREE.Group();
       leg.position.set(x, y, z);
-      const sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.42, 1.6, 0.42), M.dark);
+      const sleeve = new THREE.Mesh(new THREE.BoxGeometry(0.42, 1.6, 0.42), M.xdark);
       sleeve.position.y = -0.8;
-      const strut = new THREE.Mesh(new THREE.BoxGeometry(0.28, 1, 0.28), M.steel);
+      const strut = new THREE.Mesh(new THREE.BoxGeometry(0.28, 1, 0.28), M.xsteel);
       strut.name = 'strut';
-      const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.65, 0.18, 10), M.dark);
+      const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.65, 0.18, 10), M.xdark);
       pad.name = 'pad';
       leg.add(sleeve, strut, pad);
       g.add(leg);
@@ -251,7 +265,7 @@ export class Hull {
     // the boarding ladder, down from the airlock to the ground once landed
     this.ladder.position.set(-8.6 - T - 0.6, 0.6, 0);
     for (const s of [-1, 1]) {
-      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1, 0.06), M.steel);
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(0.06, 1, 0.06), M.xsteel);
       rail.position.set(0, -0.5, s * 0.3);
       rail.name = 'rail';
       this.ladder.add(rail);
@@ -293,9 +307,12 @@ export class Hull {
     // the nav table, with a hologram of what is round the ship
     const ped = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.95, 0.9, 16), M.trim);
     ped.position.set(0, 0.45, -16.4);
-    const top = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 0.95, 0.06, 24), M.cyan);
+    const top = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 0.95, 0.06, 24), new THREE.MeshLambertMaterial({ color: 0x0c1822, emissive: 0x08303e }));
     top.position.set(0, 0.93, -16.4);
-    g.add(ped, top);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(0.95, 0.03, 4, 32), M.cyan);
+    rim.rotation.x = Math.PI / 2;
+    rim.position.set(0, 0.965, -16.4);
+    g.add(ped, top, rim);
     this.holo = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ size: 5, sizeAttenuation: false, vertexColors: true, depthWrite: false, transparent: true }));
     this.holo.position.set(0, 1.75, -16.4);
     this.holo.frustumCulled = false;
@@ -667,7 +684,10 @@ export class Hull {
     }
     for (const [mat, geos] of buckets) {
       const merged = mergeGeometries(geos);
-      if (merged) this.group.add(new THREE.Mesh(merged, mat));
+      if (!merged) continue;
+      const mesh = new THREE.Mesh(merged, mat);
+      if (mat instanceof THREE.MeshStandardMaterial) this.outer.push({ m: mesh, shine: mat, plain: new THREE.MeshLambertMaterial({ color: mat.color, map: mat.map, flatShading: true, side: mat.side }) });
+      this.group.add(mesh);
       for (const g of geos) g.dispose();
     }
   }
@@ -710,14 +730,46 @@ export class Hull {
     // the fore and aft walls stop short where a side is open, rather than poke into the next room's wall
     const solid = (s: Side) => Array.isArray(w[s]);
     const xa = solid('w') ? r.x0 - T : r.x0, xb = solid('e') ? r.x1 + T : r.x1;
-    side('n', xa, xb, (b0, b1, y0, y1) => this.slab(b0, b1, y0, y1, r.z0 - T, r.z0, 4, M.wall, two('n')), (b0, b1, y0, y1) => this.box(b0, b1, y0, y1, r.z0 - T / 2 - 0.01, r.z0 - T / 2 + 0.01, M.glass, false));
-    side('s', xa, xb, (b0, b1, y0, y1) => this.slab(b0, b1, y0, y1, r.z1, r.z1 + T, 5, M.wall, two('s')), (b0, b1, y0, y1) => this.box(b0, b1, y0, y1, r.z1 + T / 2 - 0.01, r.z1 + T / 2 + 0.01, M.glass, false));
-    side('w', r.z0, r.z1, (b0, b1, y0, y1) => this.slab(r.x0 - T, r.x0, y0, y1, b0, b1, 0, M.wall, two('w')), (b0, b1, y0, y1) => this.box(r.x0 - T / 2 - 0.01, r.x0 - T / 2 + 0.01, y0, y1, b0, b1, M.glass, false));
-    side('e', r.z0, r.z1, (b0, b1, y0, y1) => this.slab(r.x1, r.x1 + T, y0, y1, b0, b1, 1, M.wall, two('e')), (b0, b1, y0, y1) => this.box(r.x1 + T / 2 - 0.01, r.x1 + T / 2 + 0.01, y0, y1, b0, b1, M.glass, false));
+    const dressed = (s: Side, b0: number, b1: number, y0: number, y1: number) => this.dressWall(s, r, b0, b1, y0 - Y, y1 - Y, Y, H);
+    side('n', xa, xb, (b0, b1, y0, y1) => { this.slab(b0, b1, y0, y1, r.z0 - T, r.z0, 4, M.wall, two('n')); dressed('n', b0, b1, y0, y1); }, (b0, b1, y0, y1) => this.box(b0, b1, y0, y1, r.z0 - T / 2 - 0.01, r.z0 - T / 2 + 0.01, M.glass, false));
+    side('s', xa, xb, (b0, b1, y0, y1) => { this.slab(b0, b1, y0, y1, r.z1, r.z1 + T, 5, M.wall, two('s')); dressed('s', b0, b1, y0, y1); }, (b0, b1, y0, y1) => this.box(b0, b1, y0, y1, r.z1 + T / 2 - 0.01, r.z1 + T / 2 + 0.01, M.glass, false));
+    side('w', r.z0, r.z1, (b0, b1, y0, y1) => { this.slab(r.x0 - T, r.x0, y0, y1, b0, b1, 0, M.wall, two('w')); dressed('w', b0, b1, y0, y1); }, (b0, b1, y0, y1) => this.box(r.x0 - T / 2 - 0.01, r.x0 - T / 2 + 0.01, y0, y1, b0, b1, M.glass, false));
+    side('e', r.z0, r.z1, (b0, b1, y0, y1) => { this.slab(r.x1, r.x1 + T, y0, y1, b0, b1, 1, M.wall, two('e')); dressed('e', b0, b1, y0, y1); }, (b0, b1, y0, y1) => this.box(r.x1 + T / 2 - 0.01, r.x1 + T / 2 + 0.01, y0, y1, b0, b1, M.glass, false));
     // a strip of light along the middle of the ceiling, and a skirting rail
     const lx = (r.x0 + r.x1) / 2, lz = (r.z0 + r.z1) / 2;
     if (r.x1 - r.x0 < r.z1 - r.z0 || !sky) this.box(lx - 0.12, lx + 0.12, Y + H - 0.04, Y + H, r.z0 + 0.6, r.z1 - 0.6, M.lamp, false);
     else this.box(r.x0 + 0.6, r.x1 - 0.6, Y + H - 0.04, Y + H, lz + 4, lz + 4.2, M.lamp, false);
+  }
+
+  /**
+   * a stretch of wall's fittings, on its inner face: from the floor, a dark kick plate with a line of guide
+   * light along it; on a full-height stretch, a rail at waist height and a rib at each end; under the
+   * ceiling, a cove of light. `y0` and `y1` are its bottom and top over the deck, `b0` to `b1` its length
+   */
+  private dressWall(s: Side, r: Rect, b0: number, b1: number, y0: number, y1: number, Y: number, H: number) {
+    const M = this.mat, len = b1 - b0;
+    if (len < 0.3) return;
+    // a box standing `d` m out from the face, along b from a0 to a1, up from h0 to h1 (over the deck)
+    const on = (a0: number, a1: number, h0: number, h1: number, d: number, m: THREE.Material) => {
+      if (s === 'n') this.box(a0, a1, Y + h0, Y + h1, r.z0, r.z0 + d, m, false);
+      else if (s === 's') this.box(a0, a1, Y + h0, Y + h1, r.z1 - d, r.z1, m, false);
+      else if (s === 'w') this.box(r.x0, r.x0 + d, Y + h0, Y + h1, a0, a1, m, false);
+      else this.box(r.x1 - d, r.x1, Y + h0, Y + h1, a0, a1, m, false);
+    };
+    // (inset from the ends a little, so neighbouring walls' fittings do not cross in the corners)
+    const a0 = b0 + 0.04, a1 = b1 - 0.04;
+    if (y0 < 0.01) {
+      on(a0, a1, 0, 0.16, 0.025, M.trim);
+      on(a0, a1, 0.06, 0.085, 0.035, M.guide);
+    }
+    if (y0 < 0.01 && y1 > H - 0.01) {
+      on(a0, a1, 1.0, 1.07, 0.05, M.steel);
+      if (len > 0.8) for (const a of [a0 + 0.07, a1 - 0.07]) on(a - 0.07, a + 0.07, 0.16, H - 0.12, 0.06, M.trim);
+    }
+    if (y1 > H - 0.01 && H - y0 > 0.2) {
+      on(a0, a1, H - 0.12, H - 0.04, 0.07, M.trim);
+      on(a0, a1, H - 0.115, H - 0.105, 0.075, M.cove);
+    }
   }
 
   /** a door frame in the accent colour */
@@ -753,38 +805,40 @@ export class Hull {
     };
     // the canopy frame: a dark bezel round the bridge's front glass, and a visor ridge over it
     for (const [x0, x1, y0, y1] of [[-4.6, 4.6, 2.85, 3.2], [-4.6, 4.6, 0.25, 0.5], [-4.6, -4.25, 0.25, 3.2], [4.25, 4.6, 0.25, 3.2], [-0.1, 0.1, 0.5, 2.85]]) {
-      const b = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, 0.3), M.trim);
+      const b = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, 0.3), M.xdark);
       b.position.set((x0 + x1) / 2, (y0 + y1) / 2, -24.2);
       g.add(b);
     }
-    mesh(new THREE.BoxGeometry(9.4, 0.35, 1.6), M.dark, 0, 3.35, -23.6, 0.12, 0, 0);
+    mesh(new THREE.BoxGeometry(9.4, 0.35, 1.6), M.xdark, 0, 3.35, -23.6, 0.12, 0, 0);
     // the dorsal spine, fore and aft of the commons' skylight, and a glass bubble over the skylight
-    const spine = (z0: number, z1: number) => {
-      const sp = mesh(new THREE.CylinderGeometry(1.5, 1.5, z1 - z0, 10, 1, false, -Math.PI / 2, Math.PI), M.hull, 0, 3.0 + 0.25, (z0 + z1) / 2, Math.PI / 2, 0, 0);
+    // (the upper half of a cylinder, on each section's own roof)
+    const spine = (z0: number, z1: number, roof = 3.0) => {
+      const sp = mesh(new THREE.CylinderGeometry(1.5, 1.5, z1 - z0, 10, 1, false, Math.PI / 2, Math.PI), M.xhull, 0, roof + T, (z0 + z1) / 2, Math.PI / 2, 0, 0);
       sp.scale.set(1, 1, 0.55);
       return sp;
     };
     spine(-13.6, -6.2);
-    spine(2.2, 18);
+    spine(2.2, 7.75);
+    spine(7.75, 18, 4.2);
     const bubble = mesh(new THREE.SphereGeometry(3.4, 24, 10, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x9cc4e6, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide }), 0, 3.0 + 0.25, -2);
     bubble.scale.set(1, 0.42, 1.05);
-    mesh(new THREE.TorusGeometry(3.4, 0.12, 6, 32), M.trim, 0, 3.3, -2, Math.PI / 2, 0, 0).scale.set(1, 1.05, 1);
+    mesh(new THREE.TorusGeometry(3.4, 0.12, 6, 32), M.xdark, 0, 3.3, -2, Math.PI / 2, 0, 0).scale.set(1, 1.05, 1);
     // the wings' leading edges, a darker strip, and a fence
     for (const s of [1, -1]) {
-      const le = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, Math.hypot(11.5, 6.5), 8), M.dark);
+      const le = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, Math.hypot(11.5, 6.5), 8), M.xdark);
       le.position.set(s * (4.7 + 5.75), 0.73, 11.25);
       le.rotation.set(Math.PI / 2, 0, 0);
       le.rotateX(0);
       le.rotation.z = 0;
       le.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(s * 11.5, 0, 6.5).normalize());
       g.add(le);
-      mesh(new THREE.BoxGeometry(0.12, 0.6, 5), M.accent, s * 10, 1.1, 15.5);
+      mesh(new THREE.BoxGeometry(0.12, 0.6, 5), M.xaccent, s * 10, 1.1, 15.5);
       // the nacelle at the tip: a long pod with an intake ring at the front and a glowing nozzle at the back
       const nx = s * 16.6;
-      mesh(new THREE.CylinderGeometry(1.1, 1.25, 9, 14), M.hull, nx, 0.75, 15.5, Math.PI / 2, 0, 0);
-      mesh(new THREE.CylinderGeometry(0.6, 1.1, 2.2, 14), M.hull, nx, 0.75, 9.9, Math.PI / 2, 0, 0);
-      mesh(new THREE.TorusGeometry(1.15, 0.12, 6, 16), M.accent, nx, 0.75, 11.1);
-      mesh(new THREE.CylinderGeometry(1.0, 0.85, 1.2, 14, 1, true), new THREE.MeshLambertMaterial({ color: 0x3a3f4a, side: THREE.DoubleSide }), nx, 0.75, 20.6, Math.PI / 2, 0, 0);
+      mesh(new THREE.CylinderGeometry(1.1, 1.25, 9, 14), M.xhull, nx, 0.75, 15.5, Math.PI / 2, 0, 0);
+      mesh(new THREE.CylinderGeometry(0.6, 1.1, 2.2, 14), M.xhull, nx, 0.75, 9.9, Math.PI / 2, 0, 0);
+      mesh(new THREE.TorusGeometry(1.15, 0.12, 6, 16), M.xaccent, nx, 0.75, 11.1);
+      mesh(new THREE.CylinderGeometry(1.0, 0.85, 1.2, 14, 1, true), M.xburnt, nx, 0.75, 20.6, Math.PI / 2, 0, 0);
       mesh(new THREE.CircleGeometry(0.8, 14), M.cyan, nx, 0.75, 20.3, 0, Math.PI, 0);
       const f = new THREE.Sprite(new THREE.SpriteMaterial({ map: glow, color: 0x7fb4ff, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
       f.position.set(nx, 0.75, 21.4);
@@ -794,13 +848,13 @@ export class Hull {
       // a canted tail fin over each side of the engines
       const fin = new THREE.Shape();
       fin.moveTo(0, 0); fin.lineTo(5.5, 0); fin.lineTo(6.8, 4.6); fin.lineTo(4.6, 4.6); fin.lineTo(0, 0);
-      const fg = new THREE.ExtrudeGeometry(fin, { depth: 0.25, bevelEnabled: false });
-      const fm = mesh(fg, M.hull, s * 3.4, 3.6, 13.5, 0, -Math.PI / 2, s * 0.45);
-      fm.scale.z = s;
+      // (its outline along the ship, its thickness across, leaning outward from its root on engineering's roof)
+      const fg = new THREE.ExtrudeGeometry(fin, { depth: 0.25, bevelEnabled: false }).rotateY(-Math.PI / 2).translate(0.125, 0, 0);
+      mesh(fg, M.xhull, s * 3.4, 4.2 + T, 13.5, 0, 0, -s * 0.45);
       // RCS blocks: four nozzles on each corner of the hull
       for (const [y, z] of [[2.6, -20], [-1.2, -20], [2.6, 15], [-1.2, 15]]) {
-        mesh(new THREE.BoxGeometry(0.7, 0.7, 0.7), M.dark, s * 4.85, y, z);
-        for (const [dy, dz] of [[0.42, 0], [-0.42, 0], [0, 0.42], [0, -0.42]]) mesh(new THREE.CylinderGeometry(0.08, 0.14, 0.2, 6), M.steel, s * 4.85, y + dy, z + dz, dz ? Math.PI / 2 : 0, 0, 0);
+        mesh(new THREE.BoxGeometry(0.7, 0.7, 0.7), M.xdark, s * 4.85, y, z);
+        for (const [dy, dz] of [[0.42, 0], [-0.42, 0], [0, 0.42], [0, -0.42]]) mesh(new THREE.CylinderGeometry(0.08, 0.14, 0.2, 6), M.xsteel, s * 4.85, y + dy, z + dz, dz ? Math.PI / 2 : 0, 0, 0);
       }
       // the ship's name along the flank, on the engineering section
       const tex = nameplate();
@@ -818,19 +872,50 @@ export class Hull {
     }
     // the shroud round the main engines: an octagonal cowling with a lip, open at the back
     const shroud = new THREE.CylinderGeometry(4.3, 4.0, 6.2, 8, 1, true);
-    mesh(shroud, M.dark, 0, 1.2, 21.3, Math.PI / 2, 0, Math.PI / 8).material = new THREE.MeshLambertMaterial({ color: 0x5a6274, flatShading: true, side: THREE.DoubleSide });
-    mesh(new THREE.TorusGeometry(4.35, 0.2, 6, 8), M.accent, 0, 1.2, 24.4, 0, 0, Math.PI / 8);
+    mesh(shroud, M.xdark, 0, 1.2, 21.3, Math.PI / 2, 0, Math.PI / 8).material = new THREE.MeshStandardMaterial({ color: 0x5a6274, flatShading: true, metalness: 0.55, roughness: 0.42, side: THREE.DoubleSide });
+    mesh(new THREE.TorusGeometry(4.35, 0.2, 6, 8), M.xaccent, 0, 1.2, 24.4, 0, 0, Math.PI / 8);
     // exhaust cones in the nozzles
-    for (const [x, y] of [[-2.6, 0.6], [2.6, 0.6], [0, 2.6]] as const) mesh(new THREE.ConeGeometry(0.45, 1.2, 10), M.steel, x, y, 24.9, -Math.PI / 2, 0, 0);
+    for (const [x, y] of [[-2.6, 0.6], [2.6, 0.6], [0, 2.6]] as const) mesh(new THREE.ConeGeometry(0.45, 1.2, 10), M.xsteel, x, y, 24.9, -Math.PI / 2, 0, 0);
     // sensor domes under the prow and on the spine, and a pair of antennas
-    mesh(new THREE.SphereGeometry(0.7, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), M.steel, 0, -2.2, -21, Math.PI, 0, 0);
-    mesh(new THREE.SphereGeometry(0.5, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), M.steel, 0, 4.6, 10);
-    for (const x of [-1.2, 1.2]) mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.6, 4), M.steel, x, 5.4, 15, 0, 0, x * 0.15);
+    mesh(new THREE.SphereGeometry(0.7, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), M.xsteel, 0, -2.2, -21, Math.PI, 0, 0);
+    mesh(new THREE.SphereGeometry(0.5, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), M.xsteel, 0, 4.2 + T + 0.75, 10);
+    for (const x of [-1.2, 1.2]) mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.6, 4), M.xsteel, x, 5.4, 15, 0, 0, x * 0.15);
+    // white strobes on the fin's tip and under the belly, flashing twice
+    for (const [x, y, z] of [[0, 8.15, 18.4], [0, DECK_Y[1] - T - 0.4, 12.5], [0, -2.4, -30]]) {
+      const st = new THREE.Sprite(new THREE.SpriteMaterial({ map: glow, color: 0xffffff, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+      st.position.set(x, y, z);
+      st.scale.setScalar(3);
+      g.add(st);
+      this.strobes.push(st);
+    }
+    // the roofs' fittings: vents, junction boxes, conduits and hatches, where nothing else stands
+    let seed = 11;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const kit = [M.xdark, M.xsteel, M.xhull, M.xdark];
+    const fit = (x0: number, x1: number, z0: number, z1: number, y: number, n: number) => {
+      for (let k = 0; k < n; k++) {
+        const w = 0.25 + rnd() * 0.9, d = 0.3 + rnd() * 1.4, h = 0.08 + rnd() * 0.3;
+        const x = x0 + w / 2 + rnd() * (x1 - x0 - w), z = z0 + d / 2 + rnd() * (z1 - z0 - d);
+        mesh(new THREE.BoxGeometry(w, h, d), kit[k % kit.length], x, y + h / 2, z);
+      }
+      // a conduit along the run
+      mesh(new THREE.CylinderGeometry(0.07, 0.07, z1 - z0, 6), M.xsteel, x0 + 0.1, y + 0.08, (z0 + z1) / 2, Math.PI / 2, 0, 0);
+    };
+    for (const sd of [1, -1]) {
+      // engineering's roof, either side of the spine and clear of the fin
+      fit(sd > 0 ? 1.8 : -4.3, sd > 0 ? 4.3 : -1.8, 8.4, 17.6, 4.2 + T, 9);
+      // the commons' roof, outboard of the skylight's bubble
+      fit(sd > 0 ? 3.6 : -5.8, sd > 0 ? 5.8 : -3.6, -7.6, 3.6, 3 + T, 6);
+      // the passages' and quarters' roofs
+      fit(sd > 0 ? 1.7 : -4.3, sd > 0 ? 4.3 : -1.7, -13.5, -8.5, 3 + T, 4);
+    }
   }
 
   /** a slab of hull: plating outside, `inner` (a box face: +x −x +y −y +z −z) panelled, and the face opposite too if it is `two`-sided */
   private slab(x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, inner: number, m: THREE.Material, two = false) {
-    const mats: THREE.Material[] = Array(6).fill(this.mat.hull);
+    const mats: THREE.Material[] = Array(6).fill(this.mat.xhull);
+    // (the belly in the darker paint)
+    mats[3] = this.mat.xdark;
     mats[inner] = m;
     if (two) mats[inner ^ 1] = m;
     this.add(x0, x1, y0, y1, z0, z1, mats);
@@ -1096,6 +1181,8 @@ export class Hull {
     }
     const blink = Math.sin(t * 4) > 0.6 ? 1 : 0.15;
     for (const n of this.navLights) n.material.opacity = blink;
+    const ph = t % 1.7, strobe = ph < 0.06 || (ph > 0.22 && ph < 0.28) ? 1 : 0;
+    for (const st of this.strobes) st.material.opacity = strobe;
     this.hatchLight.color.setHex(s.boardable ? (Math.sin(t * 6) > 0 ? 0x40ff70 : 0x103018) : 0x40ff70);
     this.holoRing.rotation.z += dt * 0.4;
     this.trophies.forEach((m, k) => { m.rotation.y = t * 0.3 + k; });
@@ -1105,6 +1192,41 @@ export class Hull {
       fl.scale.setScalar(f * (0.92 + 0.08 * Math.sin(t * 30 + fl.position.x)));
       fl.material.color.setHex(s.worm > 0.05 ? 0xc890ff : s.od > 0.05 ? 0xe0e8ff : 0x7fb4ff);
     }
+  }
+
+  /**
+   * something for the outside's metal to reflect, made once: a dark sky with a broad warm light to one
+   * side, a dimmer cool one opposite and a few small bright ones, so the plates shine as the ship turns
+   */
+  setEnv(r: THREE.WebGLRenderer) {
+    const pm = new THREE.PMREMGenerator(r), sc = new THREE.Scene();
+    sc.background = new THREE.Color(0x06080d);
+    const panel = (w: number, h: number, color: number, x: number, y: number, z: number) => {
+      const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide }));
+      m.position.set(x, y, z);
+      m.lookAt(0, 0, 0);
+      sc.add(m);
+    };
+    panel(60, 40, 0xfff0dc, 70, 40, -40);
+    panel(90, 50, 0x30486a, -70, -30, 30);
+    panel(30, 30, 0x9aa6b8, 0, 90, 0);
+    for (const [x, y, z] of [[-40, 30, -70], [50, -40, 60], [-60, 10, -20], [20, -70, -30]]) panel(6, 6, 0xffffff, x, y, z);
+    const env = pm.fromScene(sc, 0.03).texture;
+    const M = this.mat;
+    this.group.traverse(o => {
+      const ms = (o as THREE.Mesh).material;
+      for (const m of Array.isArray(ms) ? ms : ms ? [ms] : []) if (m instanceof THREE.MeshStandardMaterial) { m.envMap = env; m.envMapIntensity = 1; m.needsUpdate = true; }
+    });
+    M.xsteel.envMap = env;
+    pm.dispose();
+  }
+
+  /**
+   * from inside, the outside in plain paint: it is only glimpsed through the windows, and its shining metal
+   * would cost more than the rooms themselves, lit behind every wall whether it shows or not
+   */
+  viewFrom(inside: boolean) {
+    for (const o of this.outer) o.m.material = inside ? o.plain : o.shine;
   }
 
   /** for the landing to come: open the bay doors (0 shut – 1 open) */
@@ -1143,7 +1265,7 @@ export class Hull {
     for (const r of this.ladder.children) if (r.name === 'rail') { r.scale.y = len; r.position.y = -len / 2; }
     const want = Math.floor(len / 0.32);
     while (this.rungs.length < want) {
-      const r = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.6), this.mat.steel);
+      const r = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.6), this.mat.xsteel);
       this.ladder.add(r);
       this.rungs.push(r);
     }
@@ -1250,17 +1372,23 @@ function plating(kind: 'hull' | 'wall' | 'floor' | 'ceil') {
     c.fillStyle = 'rgba(40,40,40,0.35)';
     for (let k = 0; k < 6; k++) c.fillRect(px * 0.15, px * 0.15 + k * 6, px * 0.2, 3);
   } else {
-    // hull plating: staggered rows of plates, slightly uneven, with rivet lines
-    const rows = 4, h = N / rows;
+    // hull plating: big plates, a metre high and two long, staggered, a little uneven, riveted along their edges
+    const rows = 2, h = N / rows;
     for (let j = 0; j < rows; j++) {
-      const off = (j % 2) * px * 0.5;
-      for (let i = -1; i < 3; i++) {
-        panel(off + i * px, j * h, px, h, 212 + Math.floor(rnd() * 34));
-        seam(off + i * px - 1, j * h, 2, h);
-        for (let k = 6; k < h; k += 10) bolt(off + i * px + 5, j * h + k);
+      const off = (j % 2) * px;
+      for (let i = -1; i < 2; i++) {
+        panel(off + i * 2 * px, j * h, 2 * px, h, 222 + Math.floor(rnd() * 18));
+        seam(off + i * 2 * px - 1, j * h, 2, h);
+        for (let k = 8; k < h; k += 16) bolt(off + i * 2 * px + 6, j * h + k);
       }
       seam(0, j * h - 1, N, 2);
+      for (let k = 8; k < N; k += 16) bolt(k, j * h + 6);
     }
+    // and an access panel or two
+    c.strokeStyle = 'rgba(50,50,50,0.5)';
+    c.lineWidth = 1.5;
+    c.strokeRect(px * 0.3, px * 0.3, px * 0.4, px * 0.3);
+    c.strokeRect(px * 1.25, px * 1.35, px * 0.5, px * 0.2);
   }
   // a little grime
   for (let k = 0; k < 900; k++) {
@@ -1269,6 +1397,34 @@ function plating(kind: 'hull' | 'wall' | 'floor' | 'ceil') {
   }
   const t = new THREE.CanvasTexture(cv);
   t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 8;
+  return t;
+}
+
+/** the outside's plating, painted metal: its seams and rivets in relief, from the plating's own picture */
+function metal(color: number, metalness: number, roughness: number, kind: 'hull') {
+  const map = plating(kind);
+  return new THREE.MeshStandardMaterial({ color, flatShading: true, map, metalness, roughness, normalMap: reliefOf(map.image as HTMLCanvasElement, 3), normalScale: new THREE.Vector2(0.7, 0.7) });
+}
+
+/** a normal map from a picture's light and dark: the dark seams sunk, the light plates raised */
+function reliefOf(src: HTMLCanvasElement, k: number) {
+  const N = src.width, M = src.height, d = src.getContext('2d')!.getImageData(0, 0, N, M).data;
+  const cv = document.createElement('canvas');
+  cv.width = N; cv.height = M;
+  const c = cv.getContext('2d')!, out = c.createImageData(N, M);
+  const h = (x: number, y: number) => d[(((y + M) % M) * N + ((x + N) % N)) * 4] / 255;
+  for (let y = 0; y < M; y++) for (let x = 0; x < N; x++) {
+    const dx = (h(x + 1, y) - h(x - 1, y)) * k, dy = (h(x, y + 1) - h(x, y - 1)) * k;
+    const l = Math.hypot(dx, dy, 1), i = (y * N + x) * 4;
+    out.data[i] = (-dx / l * 0.5 + 0.5) * 255;
+    out.data[i + 1] = (dy / l * 0.5 + 0.5) * 255;
+    out.data[i + 2] = (1 / l * 0.5 + 0.5) * 255;
+    out.data[i + 3] = 255;
+  }
+  c.putImageData(out, 0, 0);
+  const t = new THREE.CanvasTexture(cv);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.anisotropy = 8;
   return t;
