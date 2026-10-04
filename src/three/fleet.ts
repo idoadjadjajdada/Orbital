@@ -5,7 +5,7 @@ import type { V3 } from '../pixel/sprites';
 import { groundSpec, groundAt, tangent, type GroundSpec, type GroundSample } from './terrain';
 import { atmosphere, composition, interior, life, gravity, airAt, giantPressure, giantTemp, cloudDecks, rng, type Atmosphere } from './science';
 import { bodyQuat, dirOf, latLonOf, arc } from './ground';
-import { probeMesh, orbiterMesh, landerMesh, roverMesh, stationMesh, baseMesh } from './craftmesh';
+import { probeMesh, orbiterMesh, landerMesh, roverMesh, stationMesh, baseMesh, padMesh } from './craftmesh';
 import { sitesOn } from './sites';
 import { Interior, stationInterior, baseInterior } from './interior';
 
@@ -30,14 +30,15 @@ import { Interior, stationInterior, baseInterior } from './interior';
  * orbit while the world turns under them.
  */
 
-export type CraftKind = 'probe' | 'orbiter' | 'lander' | 'rover' | 'station' | 'base';
+export type CraftKind = 'probe' | 'orbiter' | 'lander' | 'rover' | 'station' | 'base' | 'pad';
 export const KINDS: { k: CraftKind; name: string; about: string }[] = [
   { k: 'probe', name: 'Probe', about: 'Falls through the atmosphere reading it, to the ground or until it is crushed' },
   { k: 'orbiter', name: 'Orbiter', about: 'Maps the world from a polar orbit: what it is made of, inside and out' },
   { k: 'lander', name: 'Lander', about: 'Sets down and analyses the air and soil; runs the life experiments' },
   { k: 'rover', name: 'Rover', about: 'Drives the ground and samples it; you can drive it' },
   { k: 'station', name: 'Station', about: 'An ISS-sized outpost in orbit' },
-  { k: 'base', name: 'Base', about: 'Habitats, solar field and pad, built beside the landed ship' },
+  { k: 'base', name: 'Base', about: 'Habitats, a lab, a garage and a pad for the ship: you choose where' },
+  { k: 'pad', name: 'Launch pad', about: 'Needed to launch craft up from the ground; Lander 1 flies from it to the ship and back' },
 ];
 
 export interface Reading { t: number; msg: string }
@@ -73,7 +74,7 @@ export interface Craft {
 }
 
 let nextId = 1;
-const NAMES: Record<CraftKind, string> = { probe: 'Probe', orbiter: 'Orbiter', lander: 'Lander', rover: 'Rover', station: 'Station', base: 'Base' };
+const NAMES: Record<CraftKind, string> = { probe: 'Probe', orbiter: 'Orbiter', lander: 'Lander', rover: 'Rover', station: 'Station', base: 'Base', pad: 'Launch pad' };
 /** how much pressure a probe stands, bar, and heat, K */
 const PROBE_BAR = 120, PROBE_K = 900;
 
@@ -103,11 +104,39 @@ export class Fleet {
     if (!a) { a = atmosphere(b, this.stars()); this.atmos.set(b, a); }
     return a;
   }
-  /** ground height (m over the datum, sea level for a sea) */
+  /** ground height (m over the datum, sea level for a sea): the top of a pad or a base's terrace where one stands */
   heightAt(b: Body, n: V3, fine = 1) {
+    const h = this.terrainAt(b, n, fine);
+    return Math.max(h, this.platformAt(b, n));
+  }
+  /** the ground itself, without what is built on it */
+  terrainAt(b: Body, n: V3, fine = 1) {
     if (isGiant(b)) return 0;
     const h = groundAt(this.spec(b), n, fine, this.smp);
     return this.smp.sea ? 0 : h;
+  }
+
+  /** the flat tops of what is built on a world: a launch pad's apron, a base's terrace and its landing pad */
+  private platCache = new Map<Body, { n: V3; r: number; top: number }[]>();
+  platforms(b: Body): { n: V3; r: number; top: number }[] {
+    const had = this.platCache.get(b);
+    if (had) return had;
+    const out: { n: V3; r: number; top: number }[] = [];
+    this.platCache.set(b, out);
+    for (const c of this.crafts) {
+      if (c.b !== b || c.state !== 'surface' || (c.kind !== 'base' && c.kind !== 'pad') || c.build < 0.5) continue;
+      const top = this.level(c);
+      if (c.kind === 'pad') out.push({ n: c.n, r: 17, top: top + 0.3 });
+      else { out.push({ n: c.n, r: 22, top }); out.push({ n: this.onBase(c, 30, -12), r: 9.5, top: top + 0.2 }); }
+    }
+    return out;
+  }
+  /** the height of a platform at n, or −∞ */
+  platformAt(b: Body, n: V3) {
+    let h = -Infinity;
+    const R = b.r * AU_M;
+    for (const p of this.platforms(b)) if (arc(p.n, n) * R < p.r) h = Math.max(h, p.top);
+    return h;
   }
 
   /**
@@ -122,12 +151,12 @@ export class Fleet {
     // the ship has to be close: within a few dozen radii (or a million km of a small world)
     if (shipAlt > Math.max(R * 40, 2e9)) return `Too far from ${b.name}: get within ${(Math.max(R * 40, 2e9) / 1e9).toFixed(1)} million km`;
     const giant = isGiant(b), a = this.air(b);
-    if (kind === 'lander' || kind === 'rover' || kind === 'base') {
+    if (kind === 'lander' || kind === 'rover' || kind === 'base' || kind === 'pad') {
       if (giant) return `${b.name} has no surface: send a probe into it`;
       if (R < 2000) return `${b.name} is too small to land on`;
       const T = a.T;
       if (T > 900) return `Too hot for it: ${Math.round(T)} K`;
-      if (kind === 'base' && !landed && shipAlt > 3000) return 'Land the ship first: the base is built beside it';
+      if ((kind === 'base' || kind === 'pad') && !landed && shipAlt > 3000) return `Come down near the ground to choose where the ${kind === 'pad' ? 'pad' : 'base'} goes`;
     }
     if (kind === 'probe' && a.bar <= 0 && !giant) return '';
     return '';
@@ -191,7 +220,7 @@ export class Fleet {
 
   private model(k: CraftKind): THREE.Object3D {
     const g = new THREE.Group();
-    g.add(k === 'probe' ? probeMesh(true) : k === 'orbiter' ? orbiterMesh() : k === 'lander' ? landerMesh() : k === 'rover' ? roverMesh() : k === 'station' ? stationMesh() : baseMesh(nextId));
+    g.add(k === 'probe' ? probeMesh(true) : k === 'orbiter' ? orbiterMesh() : k === 'lander' ? landerMesh() : k === 'rover' ? roverMesh() : k === 'station' ? stationMesh() : k === 'pad' ? padMesh() : baseMesh(nextId));
     g.traverse(o => { o.frustumCulled = false; });
     return g;
   }
@@ -211,7 +240,7 @@ export class Fleet {
       return out.copy(c.from).lerp(end, k);
     }
     if (c.state === 'orbit' && c.orbit) return out.set(Math.cos(c.orbit.ph) * c.orbit.r, Math.sin(c.orbit.ph) * c.orbit.r, 0).applyQuaternion(c.orbit.plane);
-    const h = (c.kind === 'base' && c.state === 'surface' ? this.level(c) : this.heightAt(b, c.n, 0.5)) + (c.state === 'surface' ? 0 : c.alt);
+    const h = ((c.kind === 'base' || c.kind === 'pad') && c.state === 'surface' ? this.level(c) : this.heightAt(b, c.n, 0.5)) + (c.state === 'surface' ? 0 : c.alt);
     const r = R + h;
     return out.set(c.n[0] * r, c.n[1] * r, c.n[2] * r).applyQuaternion(bodyQuat(b));
   }
@@ -235,6 +264,7 @@ export class Fleet {
   // ---------------------------------------------------------------- each frame
   /** move them all on: before the viewer is placed, so what you are inside is where you are */
   step(dt: number) {
+    this.platCache.clear();
     for (const c of this.crafts) {
       if (!c.b.alive && c.state !== 'lost') { c.state = 'lost'; c.status = `${c.b.name} is gone`; this.note(c, `Lost: ${c.b.name} no longer exists`, true); }
       c.t += dt; c.age += dt;
@@ -277,7 +307,9 @@ export class Fleet {
       if (c.inside) c.inside.group.visible = near;
       const chute = m.getObjectByName('chute');
       if (chute) chute.visible = c.state === 'descent' && this.air(c.b).bar > 0.005 && c.vz < 200;
-      if (c.kind === 'base') m.scale.setScalar(0.05 + 0.95 * c.build);
+      if (c.kind === 'base' || c.kind === 'pad') m.scale.setScalar(0.05 + 0.95 * c.build);
+      // a pad's rocket is gone for a while after it launches, until the next is stacked
+      if (c.kind === 'pad') { const r = m.getObjectByName('rocket'); if (r) r.visible = c.age >= c.odo; }
     }
   }
 
@@ -379,8 +411,8 @@ export class Fleet {
 
   private surface(c: Craft, dt: number) {
     const b = c.b, R = b.r * AU_M;
-    if (c.kind === 'base') {
-      if (c.build < 1) { c.build = Math.min(1, c.build + dt / 20); if (c.build >= 1) { c.status = 'crewed'; this.note(c, 'Built and crewed', true); } }
+    if (c.kind === 'base' || c.kind === 'pad') {
+      if (c.build < 1) { c.build = Math.min(1, c.build + dt / 20); if (c.build >= 1) { c.status = c.kind === 'pad' ? 'ready' : 'crewed'; this.note(c, c.kind === 'pad' ? 'Built: ready to launch from' : 'Built and crewed', true); } }
       return;
     }
     if (c.kind !== 'rover') return;
@@ -438,9 +470,25 @@ export class Fleet {
         const c = this.make('base', b, name);
         c.state = 'surface'; c.n = dirOf(lat, lon); c.head = head; c.build = 1; c.status = 'crewed';
         this.note(c, 'A base beside the spaceport: habitats, a lab, a garage, a pad for the ship');
+        const pad = this.make('pad', b, name.replace('Base', 'Launch Pad'));
+        pad.state = 'surface'; pad.n = this.offset(c.n, 260, head + 1.2, R); pad.head = head; pad.build = 1; pad.status = 'ready';
+        this.note(pad, 'A launch pad, with a rocket on the stand');
       }
     }
   }
+
+  /** build a base or a launch pad where you chose: it goes up over twenty seconds */
+  build(kind: 'base' | 'pad', b: Body, n: V3, head: number): Craft {
+    const k = this.crafts.filter(c => c.kind === kind && !c.fixed).length + 1;
+    const c = this.make(kind, b, `${NAMES[kind]} ${k}`);
+    c.fixed = false;
+    c.n = n; c.head = head; c.build = 0; c.state = 'surface'; c.status = 'under construction';
+    this.note(c, 'Construction started');
+    return c;
+  }
+
+  /** the built launch pads on a world */
+  pads(b: Body) { return this.crafts.filter(c => c.kind === 'pad' && c.b === b && c.build >= 1); }
 
   /** a craft that is simply there (no launch) */
   private make(kind: CraftKind, b: Body, name: string): Craft {
@@ -465,10 +513,10 @@ export class Fleet {
     let hi = -Infinity;
     // (rings over all of it, whichever way it faces)
     const pts: [number, number][] = [[0, 0]];
-    for (const rr of [9, 17, 24]) for (let k = 0; k < 12; k++) pts.push([Math.cos(k * Math.PI / 6) * rr, Math.sin(k * Math.PI / 6) * rr]);
+    for (const rr of c.kind === 'pad' ? [8, 16] : [9, 17, 24]) for (let k = 0; k < 12; k++) pts.push([Math.cos(k * Math.PI / 6) * rr, Math.sin(k * Math.PI / 6) * rr]);
     for (const [x, z] of pts) {
       const m: V3 = [c.n[0] + (e[0] * x + nn[0] * z) / R, c.n[1] + (e[1] * x + nn[1] * z) / R, c.n[2] + (e[2] * x + nn[2] * z) / R], l = Math.hypot(...m);
-      hi = Math.max(hi, this.heightAt(c.b, [m[0] / l, m[1] / l, m[2] / l], 0.5));
+      hi = Math.max(hi, this.terrainAt(c.b, [m[0] / l, m[1] / l, m[2] / l], 0.5));
     }
     c.h0 = hi;
     return hi;

@@ -269,6 +269,48 @@ export function baseMesh(seed = 1) {
   return g;
 }
 
+/** where the launch pad's rocket stands and where landers set down, in its own frame */
+export const PAD = { rocket: new THREE.Vector3(-8, 0, 0), land: new THREE.Vector3(10, 0, 4) };
+
+/**
+ * a launch pad: a concrete apron on a foundation, the flame trench, a
+ * service tower with its swing arms beside a rocket on the stand, and a
+ * marked circle beside it where landers come down and go up
+ */
+export function padMesh() {
+  const g = new THREE.Group();
+  const conc = lam(0x9a968e), slab = lam(0x8c8a84);
+  add(g, box(44, 30, 34), slab, 0, -15.05, 0);
+  add(g, box(44, 0.3, 34), conc, 0, 0.15, 0);
+  // the flame trench under the rocket
+  add(g, box(5, 0.32, 16), MAT.black, PAD.rocket.x, 0.16, 6);
+  // the stand and the rocket on it: two stages and a capsule
+  add(g, box(7, 1.6, 7), MAT.grey, PAD.rocket.x, 0.8, PAD.rocket.z);
+  const r = new THREE.Group();
+  r.name = 'rocket';
+  r.position.set(PAD.rocket.x, 1.6, PAD.rocket.z);
+  g.add(r);
+  add(r, cyl(1.8, 1.8, 28, 16), MAT.white, 0, 14, 0);
+  add(r, cyl(1.8, 1.8, 0.6, 16), MAT.black, 0, 20, 0);
+  add(r, cyl(1.5, 1.8, 10, 16), MAT.white, 0, 33, 0);
+  add(r, cyl(0.3, 1.5, 4, 16), MAT.silver, 0, 40, 0);
+  for (let k = 0; k < 4; k++) add(r, box(0.15, 3, 1.6), MAT.dark, Math.cos(k * Math.PI / 2) * 1.9, 1.5, Math.sin(k * Math.PI / 2) * 1.9, 0, -k * Math.PI / 2, 0);
+  // the service tower and its arms
+  add(g, box(4, 46, 4), MAT.orange, PAD.rocket.x - 6.5, 23, PAD.rocket.z);
+  for (let y = 4; y < 46; y += 4) add(g, box(4.2, 0.2, 4.2), MAT.dark, PAD.rocket.x - 6.5, y, PAD.rocket.z);
+  for (const y of [18, 34]) add(g, box(4.5, 0.6, 1), MAT.grey, PAD.rocket.x - 3, y, PAD.rocket.z);
+  add(g, new THREE.SphereGeometry(0.4, 6, 4), new THREE.MeshBasicMaterial({ color: 0xff3020 }), PAD.rocket.x - 6.5, 46.5, PAD.rocket.z);
+  // the landing circle, ringed in orange with a big H
+  add(g, cyl(7, 7, 0.06, 32), MAT.dark, PAD.land.x, 0.33, PAD.land.z);
+  add(g, new THREE.TorusGeometry(6.2, 0.25, 4, 32), MAT.orange, PAD.land.x, 0.38, PAD.land.z, Math.PI / 2, 0, 0);
+  for (const sx of [-1, 1]) add(g, box(0.7, 0.06, 5), MAT.white, PAD.land.x + sx * 1.6, 0.38, PAD.land.z);
+  add(g, box(2.6, 0.06, 0.7), MAT.white, PAD.land.x, 0.38, PAD.land.z);
+  for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2; add(g, new THREE.SphereGeometry(0.2, 6, 4), MAT.lamp, PAD.land.x + Math.cos(a) * 7.4, 0.5, PAD.land.z + Math.sin(a) * 7.4); }
+  // floodlight masts at the corners
+  for (const [x, z] of [[-20, -15], [20, -15], [-20, 15], [20, 15]]) { add(g, cyl(0.2, 0.25, 18, 6), MAT.silver, x, 9, z); add(g, box(1.6, 0.6, 0.6), MAT.lamp, x, 18, z); }
+  return g;
+}
+
 /** a dome's outer shell: the hemisphere with the window panels cut out, as the inside has them */
 function domeOutside(R: number) {
   const seg = 24, rings = 8, pos: number[] = [], idx: number[] = [];

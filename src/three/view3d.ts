@@ -19,6 +19,7 @@ import { tangent } from './terrain';
 import { gravity, atmosphere } from './science';
 import { Fleet, type CraftKind, type Craft } from './fleet';
 import { Visit } from './visit';
+import { Placer } from './placer';
 import { Shuttle } from './shuttle';
 import { Giant, HULL_BAR } from './giant';
 import { starMaterial, tickStar, dropStar } from './star';
@@ -452,6 +453,8 @@ export class View3D {
   travel: { b: Body | null; at?: () => V3; stop: number; name: string; land?: boolean; dock?: Craft } | null = null;
   /** inside a station or a base, docking, the base's pad */
   visit!: Visit;
+  /** choosing where a base or launch pad goes */
+  placer!: Placer;
   /** the suit's top-up and the lab's analyser (the suit's own module fills these in) */
   suitRefill?: () => void;
   analyseSamples?: () => void;
@@ -486,6 +489,7 @@ export class View3D {
     this.fleet = new Fleet(this.scene, () => this.stars());
     this.giant = new Giant(this.scene, this.glowTex);
     this.fleet.onNews = m => this.app.onToast(m);
+    this.ground.platformAt = n => (this.ground.body ? this.fleet.platformAt(this.ground.body, n) : -Infinity);
     this.markers = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ size: 3, sizeAttenuation: false, vertexColors: true, depthWrite: false, fog: false }));
     this.markers.frustumCulled = false;
     this.scene.add(this.markers);
@@ -503,6 +507,7 @@ export class View3D {
     this.ship = new Ship(this.scene, this.glowTex);
     this.shuttle = new Shuttle(this);
     this.visit = new Visit(this);
+    this.placer = new Placer(this);
     this.scene.add(this.camera);
     this.base = this.ship.nav;
     this.controls = new Controls3D(this);
@@ -965,18 +970,49 @@ export class View3D {
     if (!b) return 'No target';
     const P = this.shipPos();
     const alt = (Math.hypot(b.x - P[0], b.y - P[1], b.z - P[2]) - b.r) * AU_M;
-    return this.fleet.why(kind, b, alt, this.landing?.phase === 'landed' && this.landing.b === b);
+    const why = this.fleet.why(kind, b, alt, (this.landing?.phase === 'landed' && this.landing.b === b) || this.grounded() === b);
+    if (why) return why;
+    // from the ground, anything going up into space goes from a launch pad
+    const gw = this.grounded();
+    if (gw && this.needsPad(kind, b, gw) && !this.fleet.pads(gw).length) return `Build a launch pad first: from the ground of ${gw.name}, craft go up from a pad`;
+    return '';
+  }
+
+  /** the world you are standing on (on foot, in a base, or with the ship landed), if any */
+  grounded(): Body | null {
+    if (this.mode === 'surface' && this.surf.b) return this.surf.b;
+    if (this.mode === 'inside' && this.visit.at?.c.kind === 'base') return this.visit.at.c.b;
+    if (this.landing?.phase === 'landed') return this.landing.b;
+    return null;
+  }
+
+  /** does sending this craft from the ground of gw mean launching it into space? */
+  private needsPad(kind: CraftKind, target: Body, gw: Body) {
+    if (kind === 'base' || kind === 'pad') return false;
+    return kind === 'probe' || kind === 'orbiter' || kind === 'station' || target !== gw;
   }
 
   /** send a craft to the target, at a named site or below the ship */
   launch(kind: CraftKind, site?: string) {
     const why = this.launchBlock(kind);
     if (why) { this.app.onToast(why); return; }
-    const b = this.missionTarget()!, P = this.shipPos();
+    if (kind === 'base' || kind === 'pad') { this.panels.close(); this.placer.start(kind); return; }
+    const b = this.missionTarget()!;
+    let P = this.shipPos(), from = '';
+    // from the ground: up off the nearest launch pad, on its rocket
+    const gw = this.grounded();
+    if (gw && this.needsPad(kind, b, gw)) {
+      const me = this.mode === 'surface' ? this.surf.n : this.fleet.local(this.fleet.pads(gw)[0]).applyQuaternion(bodyQuat(gw).invert()).normalize().toArray() as V3;
+      const pad = this.fleet.pads(gw).map(c => ({ c, d: arc(c.n, me) })).sort((x, y) => x.d - y.d)[0].c;
+      P = this.visit.worldOf(pad, new THREE.Vector3(-8, 60, 0));
+      pad.odo = pad.age + 45;
+      from = ` from ${pad.name}`;
+    }
     const at = new THREE.Vector3((P[0] - b.x) * AU_M, (P[1] - b.y) * AU_M, (P[2] - b.z) * AU_M);
     const c = this.fleet.launch(kind, b, at, site ? this.fleet.siteFor(b, site) : null);
+    if (from) { this.app.onToast(`${c.name} lifts off${from}, toward ${b.name}${site ? `, for ${site}` : ''}`); return; }
     this.bayT = 4;
-    this.app.onToast(`${c.name} ${kind === 'base' ? 'is being built beside the ship' : `launched toward ${b.name}${site ? `, for ${site}` : ''}`}`);
+    this.app.onToast(`${c.name} launched toward ${b.name}${site ? `, for ${site}` : ''}`);
   }
 
   /** the floodlight (and the helmet lamp on foot or outside): on or off */
@@ -1414,6 +1450,7 @@ export class View3D {
       if ((s.star?.L ?? 0) / d2 > best) { best = (s.star?.L ?? 0) / d2; sun = new THREE.Vector3(P[0] - s.x, P[1] - s.y, P[2] - s.z).normalize(); }
     }
     this.mouths();
+    this.placer.frame();
     this.cabin(dtReal);
     sh.draw(dtReal, cam, sh.nav.vel, sun, sh.hull.group.position, this.mode === 'pilot', tunnel);
     // on a world, the sunlight on the ship and what stands on the ground is the sunlight through its air, and none at night
@@ -1570,6 +1607,7 @@ export class View3D {
       else if (!L && !this.landBlock()) this.prompt = { label: `Land on ${this.ground.body?.name ?? 'the ground'}`, act: () => this.landOrLift() };
     }
 
+    if (this.placer.kind) this.prompt = this.placer.prompt();
     // the console, a few times a second
     this.screenT -= dt;
     if (this.screenT <= 0) {

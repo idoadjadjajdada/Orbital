@@ -7,6 +7,8 @@ import type { Mover } from './ship';
 import { bodyQuat, latLonOf, arc } from './ground';
 import { tangent } from './terrain';
 import { gravity, airAt } from './science';
+import type { Craft } from './fleet';
+import { PAD } from './craftmesh';
 
 /**
  * Lander 1, the crewed lander in the hangar, flown by hand. It drops out of
@@ -16,6 +18,11 @@ import { gravity, airAt } from './science';
  * its legs. On the ground you can step out and walk, board it again, lift
  * off, and dock back in the hangar by flying within a hundred metres of the
  * ship.
+ *
+ * With launch pads it shuttles by itself: from a pad, F flies it up to the
+ * ship and into the hangar; out of the hangar near a world with a pad, F
+ * flies it there and sets it down on the pad's landing circle. Touching the
+ * controls takes it back.
  */
 
 const DOCK_M = 120;
@@ -33,6 +40,8 @@ export class Shuttle {
   head = 0;
   /** coming straight down by itself */
   autoland = false;
+  /** flying itself: up to the ship, or over to a pad */
+  route: { to: 'ship' } | { to: 'pad'; c: Craft } | null = null;
   /** the camera round it */
   camYaw = 0;
   camPitch = 0.3;
@@ -105,7 +114,7 @@ export class Shuttle {
     const vel = new THREE.Vector3(...nav.vel);
     const want = hand ? v.controls.thrust(1, this.quat) : [0, 0, 0] as V3;
     const idle = Math.abs(want[0]) + Math.abs(want[1]) + Math.abs(want[2]) < 1e-3;
-    if (!idle) this.autoland = false;
+    if (!idle) { this.autoland = false; this.route = null; }
     const acc = new THREE.Vector3(...want).multiplyScalar(12);
     let up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.quat), agl = Infinity;
     if (b) {
@@ -138,6 +147,18 @@ export class Shuttle {
       if (solid && a.bar > 0) { const s = airAt(a, gravity(b), Math.max(0, agl) / 1000); vel.multiplyScalar(Math.max(0, 1 - dt * Math.min(2, s.bar * 0.3))); }
       // a giant has no ground, and its depths crush the lander
       if (GIANT(b) && agl < -60000 && this.toasted !== 'deep') { this.toasted = 'deep'; v.app.onToast('Lander 1: hull groaning. Climb!'); }
+    }
+    // on a route: straight for the hangar door, or over the pad and then down on it
+    if (this.route) {
+      const T = this.routeTarget(), d = new THREE.Vector3((T[0] - P[0]) * AU_M, (T[1] - P[1]) * AU_M, (T[2] - P[2]) * AU_M), dist = d.length();
+      acc.set(0, 0, 0);
+      vel.lerp(d.normalize().multiplyScalar(Math.min(2500, dist * 0.35 + 4)), Math.min(1, dt * 1.5));
+      if (vel.lengthSq() > 1) {
+        const fwd = vel.clone().normalize(), m = new THREE.Matrix4().lookAt(new THREE.Vector3(), fwd.negate(), up);
+        this.quat.slerp(new THREE.Quaternion().setFromRotationMatrix(m), Math.min(1, dt));
+      }
+      if (this.route.to === 'pad' && dist < 30) { this.route = null; this.autoland = true; v.app.onToast('Over the pad: setting down'); }
+      else if (this.route.to === 'ship') { const S = v.shipPos(); if (Math.hypot(S[0] - P[0], S[1] - P[1], S[2] - P[2]) * AU_M < DOCK_M * 0.8) { this.route = null; if (hand) this.dock(); else this.stow(); } }
     }
     vel.addScaledVector(acc, dt);
     nav.vel = [vel.x, vel.y, vel.z];
@@ -179,14 +200,48 @@ export class Shuttle {
     this.v.app.onToast('Lifting off');
   }
 
+  /** where a route is heading now (AU): the hangar door, or high over the pad's landing circle */
+  private routeTarget(): V3 {
+    const v = this.v, r = this.route!;
+    if (r.to === 'ship') { const sh = v.ship, drop = new THREE.Vector3(0.6, -12, 12.5).applyQuaternion(sh.quat), S = v.shipPos(); return [S[0] + drop.x / AU_M, S[1] + drop.y / AU_M, S[2] + drop.z / AU_M]; }
+    const P = this.pos(), over = v.visit.worldOf(r.c, PAD.land.clone().setY(60)), high = v.visit.worldOf(r.c, PAD.land.clone().setY(1500));
+    // far off, come in high; near, drop to just over the circle
+    const far = Math.hypot(over[0] - P[0], over[1] - P[1], over[2] - P[2]) * AU_M > 2500;
+    return far ? high : over;
+  }
+
+  /** the nearest launch pad to the lander, on the world it is over, and how far (m) */
+  private padNear(): { c: Craft; d: number } | null {
+    const P = this.pos(), { b } = this.agl();
+    if (!b) return null;
+    let best: { c: Craft; d: number } | null = null;
+    for (const c of this.v.fleet.pads(b)) {
+      const q = this.v.visit.worldOf(c, PAD.land), d = Math.hypot(q[0] - P[0], q[1] - P[1], q[2] - P[2]) * AU_M;
+      if (!best || d < best.d) best = { c, d };
+    }
+    return best;
+  }
+
   /** at the controls: what F does */
   prompt(): { label: string; act: () => void } | null {
     if (this.state === 'landed') return { label: 'Step out', act: () => this.stepOut() };
     if (this.state === 'flying') {
       const S = this.v.shipPos(), P = this.pos();
       if (Math.hypot(S[0] - P[0], S[1] - P[1], S[2] - P[2]) * AU_M < DOCK_M) return { label: 'Dock with the ship', act: () => this.dock() };
+      if (this.route) return { label: 'Take the controls', act: () => { this.route = null; } };
+      const pad = this.padNear();
+      if (pad && pad.d > 400 && pad.d < 3e6) return { label: `Fly to ${pad.c.name}`, act: () => { this.route = { to: 'pad', c: pad.c }; this.autoland = false; this.v.app.onToast(`Lander 1 flying itself to ${pad.c.name}`); } };
+      return { label: 'Fly up to the ship', act: () => { this.route = { to: 'ship' }; this.autoland = false; this.v.app.onToast('Lander 1 flying itself up to the ship'); } };
     }
     return null;
+  }
+
+  /** back in its hangar with nobody aboard */
+  private stow() {
+    this.state = 'docked';
+    this.autoland = false;
+    this.v.ship.hull.lander.visible = true;
+    this.v.app.onToast('Lander 1 is back in the hangar');
   }
 
   /** onto the ground beside it */

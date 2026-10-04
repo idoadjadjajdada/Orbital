@@ -259,8 +259,14 @@ export class Ground {
   heightAt(n: V3, fine = 0.5) {
     if (!this.spec) return 0;
     this.paint ??= groundPainter(this.spec.look);
-    return groundAt(this.spec, n, fine, this.sample, this.paint, this.det);
+    const h = groundAt(this.spec, n, fine, this.sample, this.paint, this.det);
+    // what is built on it: a pad's apron, a base's terrace
+    const p = this.platformAt(n);
+    if (p > (this.sample.sea ? 0 : h)) { this.sample.sea = false; return p; }
+    return h;
   }
+  /** the top of whatever is built at n (the fleet fills this in), or −∞ */
+  platformAt: (n: V3) => number = () => -Infinity;
   /** the ground sample there (after heightAt) */
   get last_sample() { return this.sample; }
 
@@ -646,6 +652,7 @@ export class Ground {
         const th = rad / R;
         const dir: V3 = [Math.cos(th) * n[0] + Math.sin(th) * (Math.cos(ang) * e[0] + Math.sin(ang) * nn[0]), Math.cos(th) * n[1] + Math.sin(th) * (Math.cos(ang) * e[1] + Math.sin(ang) * nn[1]), Math.cos(th) * n[2] + Math.sin(th) * (Math.cos(ang) * e[2] + Math.sin(ang) * nn[2])];
         // (as fine as the ground is drawn near you, and the trunk set a little into it so it never stands on air)
+        if (this.platformAt(dir) > -Infinity) continue;
         const h = this.heightAt(dir, 0.5) - 0.4;
         if (this.sample.sea) continue;
         const kind = kinds[Math.floor(r() * kinds.length)];

@@ -411,6 +411,7 @@ export class Controls3D {
       else if (v.mode === 'scope') v.leaveScope();
       else if (v.mode === 'craft') v.leaveCraft();
       else if (v.mode === 'inside' && v.visit.at?.cupola) v.prompt?.act();
+      if (v.placer.kind) { v.placer.stop(); v.app.onToast('Not building'); }
       return;
     }
     if (e.code === 'KeyK' && !e.repeat && v.mode !== 'eva' && v.mode !== 'scope') { v.panels.show('mission'); return; }
@@ -428,7 +429,7 @@ export class Controls3D {
         if (e.code === 'KeyO') this.toggleOd();
         if (e.code === 'KeyJ') this.jumpSelected();
         if (e.code === 'KeyZ') v.ship.view = v.ship.view === 'chase' ? 'cockpit' : 'chase';
-        if (e.code === 'KeyF') v.leaveHelm();
+        if (e.code === 'KeyF') { if (v.placer.kind || v.prompt?.label.startsWith('Dock') || v.prompt?.label.startsWith('Undock')) v.prompt?.act(); else v.leaveHelm(); }
         if (e.code === 'KeyL') v.landOrLift();
         break;
       case 'surface':
