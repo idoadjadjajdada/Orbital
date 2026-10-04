@@ -113,6 +113,11 @@ uniform vec2 texel;
 uniform vec3 lightDir;
 uniform vec3 lightCol;
 uniform float lit;
+/** the light's direction in the body's own frame, and its rings (to shadow the planet): profile, edges in its radii */
+uniform vec3 lightL;
+uniform sampler2D ringProf;
+uniform float ringIn;
+uniform float ringOut;
 uniform float heat;
 uniform vec3 atmo;
 uniform float hasAtmo;
@@ -184,6 +189,14 @@ void main() {
     float dl = dot(N, lightDir), dl0 = dot(N0, lightDir);
     // a soft terminator, and no relief lit past it
     float term = clamp((dl0 + 0.03) / 0.1, 0.0, 1.0);
+    // the rings' shadow: where the line to the star crosses them, as much light as gets through
+    if (ringOut > 0.0 && abs(lightL.z) > 1e-4) {
+      float tr = -n.z / lightL.z;
+      if (tr > 0.0) {
+        float rr = length((n + lightL * tr).xy);
+        if (rr > ringIn && rr < ringOut) term *= 1.0 - 0.92 * texture2D(ringProf, vec2((rr - ringIn) / (ringOut - ringIn), 0.5)).r;
+      }
+    }
     vec3 c = col * (0.025 + ambientX + max(dl, 0.0) * term * lightCol + lampLight(vWorldP, N));
     // a glint off the sea
     vec3 H = normalize(lightDir + V);
@@ -248,6 +261,8 @@ uniform vec3 col;
 uniform vec3 lightCol;
 uniform float time;
 uniform float spokes;
+/** the light's direction in the planet's own frame (the planet is radius 1 there), to find its shadow */
+uniform vec3 lightL;
 varying vec3 vObj;
 varying vec3 vWorldN;
 varying vec3 vWorldP;
@@ -273,6 +288,9 @@ void main() {
   float cl = mix(clumps(vObj.xy, r, (p1 - 0.5) * P), clumps(vObj.xy, r, (p2 - 0.5) * P), abs(2.0 * p1 - 1.0));
   a = clamp(a * (0.78 + 0.45 * cl), 0.0, 1.0);
   vec3 c = col * (0.25 + 0.75 * lightCol) * (0.9 + 0.2 * cl);
+  // in the planet's shadow: behind it from the star, within its radius of the line through it
+  float ts = -dot(vObj, lightL);
+  if (ts > 0.0) c *= 0.12 + 0.88 * smoothstep(0.97, 1.03, length(vObj + lightL * ts));
   if (spokes > 0.0 && r > 1.53 && r < 1.95) {
     vec2 d = normalize(turn(vObj.xy, -time * 0.012));
     float s = vnoise3(vec3(d * 13.0, time * 0.004)) * 0.6 + vnoise3(vec3(turn(d, 0.7) * 29.0, r * 4.0 + time * 0.006)) * 0.4;
@@ -1924,6 +1942,7 @@ export class View3D {
           map: { value: o.tex }, aux: { value: o.aux }, texel: { value: new THREE.Vector2(1 / o.map.w, 1 / o.map.h) },
           lightDir: { value: new THREE.Vector3(1, 0, 0) }, lightCol: { value: new THREE.Vector3(1, 1, 1) }, lit: { value: 0 }, heat: { value: 0 },
           atmo: { value: new THREE.Vector3() }, hasAtmo: { value: 0 }, bump: { value: o.map.gas ? 0.01 : 0.05 }, detail: { value: o.map.gas ? 0 : 1 },
+          lightL: { value: new THREE.Vector3(1, 0, 0) }, ringProf: { value: null }, ringIn: { value: 0 }, ringOut: { value: 0 },
           time: { value: 0 }, gas: { value: o.map.gas ? 1 : 0 }, vortex: { value: new THREE.Vector4(...(VORTEX[b.look.real ?? ''] ?? [0, 0, 0, 0])) },
           ...this.lights.uniforms,
         },
@@ -1954,11 +1973,15 @@ export class View3D {
           uniforms: {
             prof: { value: pt }, rIn: { value: rg.inner }, rOut: { value: rg.outer }, col: { value: new THREE.Vector3(((c >> 16) & 255) / 255, ((c >> 8) & 255) / 255, (c & 255) / 255) },
             lightCol: { value: new THREE.Vector3(1, 1, 1) }, time: o.mat.uniforms.time, spokes: { value: b.look.real === 'Saturn' ? 1 : 0 },
+            lightL: o.mat.uniforms.lightL,
           },
         });
         const ring = new THREE.Mesh(new THREE.RingGeometry(rg.inner, rg.outer, 160, 1), rm);
         ring.name = 'rings';
         group.add(ring);
+        o.mat.uniforms.ringProf.value = pt;
+        o.mat.uniforms.ringIn.value = rg.inner;
+        o.mat.uniforms.ringOut.value = rg.outer;
       }
     }
     return o;
@@ -2059,6 +2082,7 @@ export class View3D {
       const c = starRGB(best.star!.teff);
       (u.lightCol.value as THREE.Vector3).set(0.55 + 0.6 * c[0], 0.55 + 0.6 * c[1], 0.55 + 0.6 * c[2]);
       u.lit.value = 1;
+      (u.lightL.value as THREE.Vector3).copy(u.lightDir.value as THREE.Vector3).applyQuaternion(g.quaternion.clone().invert());
     } else u.lit.value = 0;
     // a surface glows only once it is molten; a warm one (tidally heated Io) shows it at its volcanoes
     u.heat.value = Math.max(0, (b.heat - 0.55) / 0.45);

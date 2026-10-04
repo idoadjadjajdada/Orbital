@@ -65,7 +65,37 @@ belts on the night side. Jupiter's Great Red Spot, painted with its brick-red
 spiral core, pale collar and turbulent wake, turns on itself (anticlockwise,
 fastest near its rim), as does Neptune's Great Dark Spot. In the rings, clumps
 and wakes go round at the orbital speed of their radius, the inner edge
-lapping the outer, and Saturn's spokes come and go across the B ring.
+lapping the outer, and Saturn's spokes come and go across the B ring. The
+rings cast their shadow across the planet, and the planet its shadow across
+the rings behind it.
+
+**Black holes, traced.** Up close in 3D every pixel round a hole follows its
+ray of light back through the hole's gravity (the photon orbit equation in
+Schwarzschild space). Rays that fall in make the shadow, 2.6 horizons across;
+rays that skim the photon sphere make the thin ring round it; rays that cross
+the accretion disc pick up its light, so the far side of the disc shows bent
+up over the top of the hole and under it, as in *Interstellar*. The disc runs
+from the innermost stable orbit out to the gas round the hole (out past a
+million horizons round TON 618), white-hot inside, gold, then dull red,
+following the thin-disc temperature law. Its gas goes round at the orbital
+speed of each radius, and the side coming toward you is brighter and bluer
+(Doppler beaming at up to half the speed of light). From far off a fed hole
+is a brilliant point, as quasars are. Its jets are glowing plasma along the
+spin axis, brightest down the spine, with knots streaming outward. The stars
+behind a hole are lensed into arcs. On the map the same disc is drawn tilted
+as it lies, flowing, beamed and ringed round its shadow, with smooth, tapering
+jets.
+
+**The other strange things.** A pulsar's two beams leave its magnetic poles,
+35° off its spin, and sweep round like a lighthouse's (a magnetar's flicker).
+A planetary nebula is a traced shell of glowing gas, blue-green oxygen inside
+a red rim, brightest at its edge as the Ring Nebula is. A supernova remnant
+has blue-white filaments shot with red. A protoplanetary disc is dust lit by
+its young star, with bright rings and dark gaps where planets are clearing
+their paths, as ALMA saw round HL Tauri. White dwarfs and neutron stars are
+white-hot. A white hole is a blinding blue-white glare. Every bright thing's
+glow is worked out per pixel from how near your line of sight passes it, so
+it stays right from any distance, inside the glow or out.
 
 ## Playing
 
@@ -578,9 +608,14 @@ real waves are invisible), and neutron-star mergers a kilonova.
 - The 1PN term is the test-particle form, exact for periapsis advance; it does
   not include frame-dragging or the full Einstein–Infeld–Hoffmann terms.
 - Stellar evolution is single-star and parametric, not a stellar-structure code.
-- Gravitational lensing is drawn as a point lens on the background sky, as if
-  seen from a height equal to the view's width. Simulated bodies lie beside a
-  hole rather than behind it and are not lensed.
+- On the map, gravitational lensing is drawn as a point lens on the background
+  sky, as if seen from a height equal to the view's width; simulated bodies lie
+  beside a hole rather than behind it and are not lensed. In 3D a hole's own
+  disc and the stars behind it are traced; other bodies behind it are not.
+- A hole's disc in 3D is drawn from the thin-disc law, not from the
+  simulated gas: the gas sets how far out the disc reaches and the accretion
+  rate sets how bright it is. Spinning (Kerr) holes are drawn as Schwarzschild
+  holes.
 - A hand-built body's shape is drawn and its strength tested against its own
   weight, but gravity treats it as a point mass like everything else.
 - The ground close up is generated: its large features are the real ones (from
@@ -606,9 +641,9 @@ src/pixel/data/sun-map.jpg  the Sun's surface, baked by tools/bake-sun.py (star.
 src/three/     the 3D view (three.js, loaded on demand), its flying controls, the ship (hull.ts), its consoles (panels.ts, survey.ts) and its scope;
                the ground (terrain.ts, built in terrainworker.ts; ground.ts draws it with its sky and what stands on it), giant
                interiors (giant.ts), the craft (fleet.ts, craftmesh.ts), what the instruments read (science.ts), real sites (sites.ts),
-               the stars (star.ts) and the lights you bring (lights.ts)
+               the stars (star.ts), black holes (hole.ts), nebulae, pulsars and dusty discs (exotic.ts) and the lights you bring (lights.ts)
 src/physics/data/moons.ts   generated from JPL by tools/fetch-moons.py
 src/ui/        input and tools, HUD, the body builder, the belt histogram
 tests/         physics, landing and mars tests (vitest); browser.mjs (Playwright smoke test in parts, run side by side in CI);
-               shot.mjs and surface-shot.mjs take pictures of the 3D view to look at
+               shot.mjs, surface-shot.mjs and special-shot.mjs take pictures of the 3D view and the map to look at
 ```

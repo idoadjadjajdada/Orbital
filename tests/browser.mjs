@@ -387,6 +387,11 @@ try {
   ok('a probe falls into it, reading the air, until it is crushed', await page.waitForFunction(() => { const c = window.orbital.v3.fleet.crafts.find(x => x.kind === 'probe'); return c && c.state === 'lost' && c.profile.length > 5 && /crushed/.test(c.status); }, null, { timeout: 150000 }).then(() => true, () => false));
   await page.keyboard.press('KeyV');
 
+  // TON 618: its traced disc reaches out to the gas round it, and its jets are on
+  await page.keyboard.press('KeyV');
+  await page.waitForFunction(() => window.orbital.v3?.active, null, { timeout: 30000 });
+  await page.evaluate(() => { const a = window.orbital; a.clear(); a.armed = 'ton618'; const b = a.place({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0 }); a.armed = null; a.select(b); });
+  ok('a quasar has its lensed disc out to its gas, and its jets', await until(page, () => { const a = window.orbital, o = a.v3.objs.get(a.selected); return !!o?.hole && o.hole.outer > 100 && o.hole.jets.visible; }));
   clean('giant');
   }
 
