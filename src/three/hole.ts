@@ -154,9 +154,12 @@ void main() {
   }
   // what is behind, bent: the real sky looked up along the ray as it leaves, so the stars behind the hole are
   // lensed into arcs and its shadow is a hole in them (the sky outside this sphere is the same sky, unbent)
+  // (only where the bending shows: further out the real sky, and what is in front of it, shows through)
   if (!fell && alpha < 0.999) {
-    col += (1.0 - alpha) * textureCube(sky, normalize(localToWorld * normalize(d))).rgb;
-    alpha = 1.0;
+    float defl = acos(clamp(dot(normalize(d), d0), -1.0, 1.0));
+    float a = smoothstep(0.01, 0.06, defl);
+    col += (1.0 - alpha) * textureCube(sky, normalize(localToWorld * normalize(d))).rgb * a;
+    alpha += (1.0 - alpha) * a;
   }
   // the photon ring: light that wound round the hole on its way
   // (round a hole with nothing to light it, only starlight wound round it: faint)
@@ -195,6 +198,14 @@ void main() {
  * passes to the jet's axis, and how far out along it; bright where it passes close, the glow
  * widening with distance as a jet does, fading toward the tip, with knots streaming out
  */
+/**
+ * a jet, as a dense beam of plasma: for the ray through each pixel, the nearest it passes to the jet's
+ * axis and how far out along it. Right at the hole it flares into a wide funnel, the gas swept up off
+ * the inner disc and channelled into it (in units of the body's radius: horizon radii for a hole, the
+ * star's for a pulsar); a few tens of radii out it has narrowed into a tight, solid, white-hot beam
+ * that stays bright a long way, opening only slowly, with knots streaming outward and a coloured
+ * sheath round it. Never drawn thinner than a pixel or two, so it stays a solid line from far off.
+ */
 export const JET_FRAG = /* glsl */ `
 #include <common>
 #include <logdepthbuf_pars_fragment>
@@ -208,8 +219,19 @@ uniform float len;
 /** how wide (1 a jet's) and how knotted (0 smooth, 1 a jet's knots) */
 uniform float wid;
 uniform float knotK;
-/** how far out (as a fraction of its length) it comes up to full brightness */
 uniform float rise;
+/** the body's radius in world units; the funnel's width and length at the root, in those radii */
+uniform float unit;
+uniform float funnel;
+uniform float funnelL;
+/** the angle a pixel spans */
+uniform float pxAng;
+/** the shadow's radius in the body's radii (0: a star, nothing hidden) */
+uniform float shadow;
+/** where the beam lights up, in the body's radii from the centre */
+uniform float start;
+/** the bright disc's radius, in the body's radii (0: none): a jet seen through it is mostly hidden */
+uniform float discR;
 uniform vec3 eye;
 uniform mat4 invProj;
 uniform mat3 viewToWorld;
@@ -227,18 +249,36 @@ void main() {
   if (tr < 0.0) { s = -w0a; tr = 0.0; }
   float t = s / len;
   if (t > 1.0 || t < 0.0) discard;
-  float d = length(r * tr - (base + axis * s)) / len;
-  // its width: narrow at the root, opening out
-  float wdt = (0.003 + 0.028 * t) * wid;
-  float core = exp(-sq(d / wdt) * 2.5);
-  float sheath = exp(-sq(d / (wdt * 2.2))) * 0.03;
-  // launched from near the hole, brightening over its first stretch, fading toward the tip
-  float along = exp(-t * 2.4) * smoothstep(0.0, rise, t) * (1.0 - smoothstep(0.6, 1.0, t));
+  float sr = s / unit;
+  float dr = length(r * tr - (base + axis * s)) / unit;
+  // behind a black hole, hidden by its shadow (2.6 horizon radii across, for the jet's own hole)
+  float bc = dot(base, r);
+  if (shadow > 0.0 && tr > bc && length(base - r * bc) / unit < shadow) discard;
+  // behind the disc: where the line of sight crosses its plane before reaching the jet, within its bright part
+  float hide = 1.0;
+  float rn = dot(r, axis);
+  if (discR > 0.0 && abs(rn) > 1e-4) {
+    float tp = dot(base, axis) / rn;
+    if (tp > 0.0 && tp < tr) hide = 1.0 - 0.85 * (1.0 - smoothstep(0.6 * discR, discR, length(r * tp - base) / unit));
+  }
+  // the beam: tight, opening slowly; never thinner on screen than about two pixels (its light spread to match)
+  // (and flaring into a trumpet near its root: the beam itself widens as it comes down onto the hole)
+  float wc = (0.55 + 0.0035 * sr + funnel * exp(-(sr - start) / funnelL)) * wid;
+  float wpx = 1.2 * tr * pxAng / unit;
+  float we = max(wc, wpx);
+  float spread = clamp(wc / we, 0.35, 1.0);
+  // the funnel at the root, flaring toward the hole
+  float wf = wc * 2.2;
+  float core = exp(-sq(dr / we) * 1.6) * spread;
+  float fun = exp(-sq(dr / max(wf, we))) * exp(-sr / (funnelL * 2.0)) * step(0.001, funnel);
+  float sheath = exp(-sq(dr / (we * 3.5))) * 0.1;
+  // up to full brightness over its first couple of radii, then holding bright a long way before it fades
+  float along = smoothstep(start, start + 1.5, sr) * exp(-t * 1.3) * (1.0 - smoothstep(0.75, 1.0, t));
   float k = fract(t * 7.0 - time * 0.25);
-  float knots = mix(1.0, 0.6 + 0.9 * exp(-sq((k - 0.5) / 0.09)), knotK);
-  float I = (core * knots + sheath) * along * power;
-  vec3 c = mix(col, vec3(1.0), core * 0.55) * I * 1.8;
-  gl_FragColor = vec4(1.0 - exp(-c), 1.0);
+  float knots = mix(1.0, 0.75 + 0.6 * exp(-sq((k - 0.5) / 0.09)), knotK);
+  vec3 c = vec3(1.0) * core * 2.6 * knots + mix(col, vec3(1.0), 0.35) * fun * 0.6 + col * sheath;
+  c *= along * power * hide;
+  gl_FragColor = vec4(1.0 - exp(-c * 1.4), 1.0);
 }`;
 
 export class HoleLook {
@@ -267,6 +307,7 @@ export class HoleLook {
     this.disc = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24), this.mat);
     this.disc.scale.setScalar(RB);
     this.disc.frustumCulled = false;
+    this.disc.renderOrder = 1;
     this.group.add(this.disc);
     // two cones, apex at the hole, opening along +z and −z
     this.jets = new THREE.Group();
@@ -275,14 +316,15 @@ export class HoleLook {
         vertexShader: JET_VERT, fragmentShader: JET_FRAG, transparent: true, depthWrite: false, side: THREE.BackSide, blending: THREE.AdditiveBlending,
         uniforms: {
           power: { value: 0 }, time: { value: 0 }, col: { value: new THREE.Color(0.55, 0.7, 1.0) },
-          base: { value: new THREE.Vector3() }, axis: { value: new THREE.Vector3(0, 0, s) }, len: { value: 1 }, eye: { value: new THREE.Vector3() }, wid: { value: 1 }, knotK: { value: 1 }, rise: { value: 0.04 },
+          base: { value: new THREE.Vector3() }, axis: { value: new THREE.Vector3(0, 0, s) }, len: { value: 1 }, eye: { value: new THREE.Vector3() }, wid: { value: 1 }, knotK: { value: 1 }, rise: { value: 0 },
+          unit: { value: 1 }, funnel: { value: 2.2 }, funnelL: { value: 5 }, pxAng: { value: 0.002 }, shadow: { value: 2.6 }, start: { value: 2.8 }, discR: { value: 0 },
           invProj: { value: new THREE.Matrix4() }, viewToWorld: { value: new THREE.Matrix3() }, res: { value: new THREE.Vector2(1, 1) },
         },
       });
       m.userData.sign = s;
       this.jetMats.push(m);
       // a bounding cone round the glow: unit length along y (0 at the hole, 1 at the tip)
-      const g = new THREE.CylinderGeometry(0.15, 0.03, 1, 32, 1, false).translate(0, 0.5, 0);
+      const g = new THREE.CylinderGeometry(0.15, 0.15, 1, 32, 1, false).translate(0, 0.5, 0);
       const cone = new THREE.Mesh(g, m);
       cone.frustumCulled = false;
       cone.rotation.x = s > 0 ? Math.PI / 2 : -Math.PI / 2;
@@ -342,11 +384,17 @@ export class HoleLook {
       m.uniforms.power.value = jet; m.uniforms.time.value = time;
       (m.uniforms.base.value as THREE.Vector3).copy(origin);
       (m.uniforms.axis.value as THREE.Vector3).set(0, 0, m.userData.sign).applyQuaternion(this.q).normalize();
+      // drawn over the hole's traced sphere (which paints the bent sky behind it), hiding themselves where
+      // the shadow or the bright disc is in front of them
+      (this.jets.children[this.jetMats.indexOf(m)] as THREE.Mesh).renderOrder = 2;
+      m.uniforms.discR.value = glow > 0.02 ? Math.min(u.rOut.value, 40) : 0;
       m.uniforms.len.value = len;
       (m.uniforms.eye.value as THREE.Vector3).copy(eyeWorld);
       (m.uniforms.invProj.value as THREE.Matrix4).copy(cam.projectionMatrixInverse);
       (m.uniforms.viewToWorld.value as THREE.Matrix3).setFromMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(cam.getWorldQuaternion(new THREE.Quaternion())));
       (m.uniforms.res.value as THREE.Vector2).copy(res);
+      m.uniforms.unit.value = this.group.getWorldScale(new THREE.Vector3()).x;
+      m.uniforms.pxAng.value = 2 * Math.tan(((cam as THREE.PerspectiveCamera).fov ?? 70) * Math.PI / 360) / Math.max(1, res.y);
     }
   }
 

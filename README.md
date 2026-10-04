@@ -96,8 +96,13 @@ further out (round TON 618, a torus hundreds of horizons across) glows deep
 orange. Its gas goes round at the orbital speed of each radius, and the side
 coming toward you is brighter (Doppler beaming at up to half the speed of
 light). From far off a fed hole
-is a brilliant point, as quasars are. Its jets are glowing plasma along the
-spin axis, brightest down the spine, with knots streaming outward. The stars
+is a brilliant point, as quasars are. Its jets are dense beams of plasma
+along the spin axis: they light up a few horizons out, pouring off the top of
+the shadow in a wide white funnel that narrows within a few tens of horizons
+into a tight, solid, white-hot beam, bright a long way out, with knots
+streaming along it; never thinner than a line on screen, so they read from
+any distance. The shadow and the bright disc hide whatever part of a jet is
+behind them. The stars
 behind a hole are lensed into arcs. On the map the same disc is drawn tilted
 as it lies, flowing, beamed and ringed round its shadow, with smooth, tapering
 jets.

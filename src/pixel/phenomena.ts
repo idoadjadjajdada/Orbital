@@ -143,11 +143,12 @@ export function drawJet(ctx: CanvasRenderingContext2D, b: Body, x: number, y: nu
       const dx = sg * ux, dy = sg * uy, px = -dy, py = dx;
       const ex = x + dx * n, ey = y + dy * n;
       // nested bands, each narrower and brighter: together a soft glow brightest down the spine
-      for (const [wTip, wRoot, k, c] of [[0.11, 1.8, 0.1, [0.45, 0.58, 1]], [0.075, 1.4, 0.13, [0.5, 0.62, 1]], [0.045, 1.0, 0.2, [0.65, 0.75, 1]], [0.022, 0.7, 0.35, [0.82, 0.9, 1]], [0.009, 0.45, 0.6, [0.95, 0.97, 1]]] as const) {
+      // (a dense beam: a solid white-hot core, flaring wider at its root where it comes off the hole)
+      for (const [wTip, wRoot, k, c] of [[0.03, 3.2, 0.12, [0.45, 0.58, 1]], [0.018, 2.4, 0.2, [0.6, 0.7, 1]], [0.009, 1.6, 0.45, [0.82, 0.9, 1]], [0.004, 1.0, 0.95, [1, 1, 1]]] as const) {
         const wt = Math.max(1.5, n * wTip * (0.6 + 0.6 * power)), w0 = Math.max(0.8, rPx * wRoot);
         const g = ctx.createLinearGradient(x, y, ex, ey);
         g.addColorStop(0, rgba(c as unknown as V3, k * power));
-        g.addColorStop(0.35, rgba(c as unknown as V3, k * power * 0.55));
+        g.addColorStop(0.6, rgba(c as unknown as V3, k * power * 0.75));
         g.addColorStop(1, rgba(c as unknown as V3, 0));
         ctx.fillStyle = g;
         ctx.beginPath();

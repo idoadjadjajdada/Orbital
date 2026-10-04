@@ -277,7 +277,8 @@ export class PulsarBeams {
           col: { value: kind === 'jet' ? (strong ? new THREE.Color(0.75, 0.55, 1.0) : new THREE.Color(0.55, 0.72, 1.0)) : new THREE.Color(0.8, 0.88, 1.0) },
           base: { value: new THREE.Vector3() }, axis: { value: new THREE.Vector3() }, len: { value: 1 }, eye: { value: new THREE.Vector3() },
           invProj: { value: new THREE.Matrix4() }, viewToWorld: { value: new THREE.Matrix3() }, res: { value: new THREE.Vector2(1, 1) },
-          wid: { value: kind === 'jet' ? 0.6 : 0.45 }, knotK: { value: kind === 'jet' ? 1 : 0 }, rise: { value: kind === 'jet' ? 0.004 : 0.0005 },
+          wid: { value: kind === 'jet' ? 0.7 : 0.45 }, knotK: { value: kind === 'jet' ? 1 : 0 }, rise: { value: 0 },
+          unit: { value: 1 }, funnel: { value: kind === 'jet' ? 1.2 : 0 }, funnelL: { value: 3 }, shadow: { value: 0 }, start: { value: 1 }, discR: { value: 0 }, pxAng: { value: 0.002 },
         },
       });
       m.userData.sign = s;
@@ -317,6 +318,8 @@ export class PulsarBeams {
       (u.invProj.value as THREE.Matrix4).copy(cam.projectionMatrixInverse);
       (u.viewToWorld.value as THREE.Matrix3).setFromMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(cam.getWorldQuaternion(new THREE.Quaternion())));
       (u.res.value as THREE.Vector2).copy(res);
+      u.unit.value = this.group.parent!.parent!.getWorldScale(new THREE.Vector3()).x;
+      u.pxAng.value = 2 * Math.tan(((cam as THREE.PerspectiveCamera).fov ?? 70) * Math.PI / 360) / Math.max(1, res.y);
     }
   }
   dispose() { this.group.traverse(o => { const m = o as THREE.Mesh; m.geometry?.dispose(); (m.material as THREE.Material | undefined)?.dispose(); }); }

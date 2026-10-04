@@ -1360,7 +1360,7 @@ export class View3D {
     for (const [b, o] of this.objs) {
       if (!o.group.visible) continue;
       // (only within the disc's bright part: the dim gas beyond shows as itself, a torus round the hole)
-      if (o.hole && o.hole.outer > 20) { drawn.push({ b, r: Math.min(o.hole.outer, 60) * schwarzschild(b.m) }); tori.push({ b, r: o.hole.outer * schwarzschild(b.m) * 1.3 }); }
+      if (o.hole && o.hole.outer > 20) { drawn.push({ b, r: Math.min(o.hole.outer, 60) * schwarzschild(b.m) }); tori.push({ b, r: 3e6 * schwarzschild(b.m) }); }
       if (o.neb && o.neb.mesh.visible && o.shellR) drawn.push({ b, r: o.shellR * 2 });
     }
     if (!blind) for (const p of app.world.bodies) {
@@ -2189,7 +2189,8 @@ export class View3D {
         if (d < 3e6 && v2 < 2 * GM / r) ds.push(d);
       }
       ds.sort((x, y) => x - y);
-      look.setOuter(ds.length > 30 ? Math.max(16, Math.min(2e6, ds[Math.floor(ds.length * 0.85)])) : 16);
+      // (traced out to 120 horizons at most: the gas further out is drawn as itself, a glowing torus)
+      look.setOuter(ds.length > 30 ? Math.max(16, Math.min(120, ds[Math.floor(ds.length * 0.85)])) : 16);
     }
     // its disc as it has built up from what it has actually swallowed (physics/feeding.ts): none round a hole
     // that has eaten nothing, growing over a meal, fading after; a fed nucleus starts with it in place
@@ -2361,7 +2362,11 @@ function milkyWay() {
         float n = vnoise3(d * 6.0) * 0.5 + vnoise3(d * 14.0) * 0.3 + vnoise3(d * 35.0) * 0.2;
         float band = exp(-pow(b / 0.16, 2.0)) * (0.55 + 0.8 * n) + exp(-pow(b / 0.45, 2.0)) * 0.18;
         float bulge = exp(-pow(acos(clamp(toC, -1.0, 1.0)) / 0.35, 2.0)) * 0.9;
-        float lanes = 1.0 - 0.6 * smoothstep(0.55, 0.75, vnoise3(d * 9.0 + 3.0)) * exp(-pow(b / 0.06, 2.0));
+        // dust lanes: dark filaments running along the band, not blobs
+        vec3 e1 = normalize(cross(pole, centre)), e2 = cross(e1, pole);
+        float l = atan(dot(d, e1), dot(d, e2));
+        float fil = vnoise3(vec3(cos(l) * 5.0, sin(l) * 5.0, b * 60.0)) * 0.7 + vnoise3(vec3(cos(l) * 13.0, sin(l) * 13.0, b * 140.0)) * 0.3;
+        float lanes = 1.0 - 0.55 * smoothstep(0.5, 0.72, fil) * exp(-pow(b / 0.07, 2.0));
         float I = (band * (0.6 + 0.6 * max(toC, 0.0)) + bulge) * lanes * 0.045;
         gl_FragColor = vec4(vec3(0.95, 0.88, 0.78) * I, 1.0);
       }`,
