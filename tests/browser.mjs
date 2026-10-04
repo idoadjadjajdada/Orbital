@@ -415,6 +415,19 @@ try {
   const d0 = await page.evaluate(() => window.orbital.v3.feeds.drawn);
   await page.waitForTimeout(1500);
   ok('but not while you are away from it', await page.evaluate(d => window.orbital.v3.feeds.drawn === d, d0));
+  // the dome's growth lab: set up a chamber, sow, and (time run on) the harvest goes in the log
+  await stand(-26.2, -0.9, -27.4, -1.65, -0.45);
+  ok('the growth lab is in reach in the dome', await until(page, () => window.orbital.v3.prompt?.label === 'The growth lab: soils and plants'));
+  await page.keyboard.press('KeyF');
+  ok('F opens it, six chambers', await until(page, () => document.querySelectorAll('.panel3 button[data-act="gset"]').length === 6));
+  await page.click('.panel3 button[data-act="gset"][data-id="0"]');
+  await page.click('.panel3 button[data-act="gplant"][data-id="1"]');
+  ok('a chamber is set up with a soil, its analysis, and a plant', await page.evaluate(() => /Soil: Potting soil/.test(document.querySelector('.panel3').textContent) && /Plant: Lettuce/.test(document.querySelector('.panel3').textContent) && /Nitrogen/.test(document.querySelector('.panel3').textContent)));
+  await page.click('.panel3 button[data-act="gsow"]');
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => { const v = window.orbital.v3, ch = v.growlab.chambers(v.growlab.base)[0]; ch.start -= 46 / (365.25 * 1440); });
+  ok('it grows, and the harvest is logged', await until(page, () => window.orbital.v3.logbook.finds.some(f => /^Grown: Lettuce in Potting soil/.test(f.what) && /100% of what potting soil gives/.test(f.note))));
+  ok('the chamber shows the plant', await page.evaluate(() => { const v = window.orbital.v3, c = v.fleet.crafts.find(q => q.name === 'Canaveral Base'); let n = 0; c.inside.group.getObjectByName('growlab').traverse(o => { if (o.isMesh && o.geometry.type === 'SphereGeometry') n++; }); return n >= 8; }));
   await stand(28, -6, 28, 4, -0.2);
   ok('the hangar\'s rover is in reach', await until(page, () => window.orbital.v3.prompt?.label === 'The rover: drive it out'));
   await page.keyboard.press('KeyF');

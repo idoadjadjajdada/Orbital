@@ -10,6 +10,7 @@ import { KINDS, pct, fmtLL, type CraftKind } from './fleet';
 import { latLonOf } from './ground';
 import { speciesIn } from './sites';
 import { MAX_SKY_LAMPS } from './lights';
+import { PLANTS, AMENDS, amended, type Amend, type Soil } from './growlab';
 
 /**
  * The ship's consoles, as panels over the view: the comms log and the sensor
@@ -19,11 +20,11 @@ import { MAX_SKY_LAMPS } from './lights';
  * closes them.
  */
 
-export type PanelKind = 'comms' | 'sensors' | 'log' | 'survey' | 'power' | 'bay' | 'mission' | 'craft' | 'scan';
+export type PanelKind = 'comms' | 'sensors' | 'log' | 'survey' | 'power' | 'bay' | 'mission' | 'craft' | 'scan' | 'growlab';
 
 const TITLE: Record<PanelKind, string> = {
   comms: 'Comms log', sensors: 'Sensor sweep', log: "Captain's log", survey: 'Science survey', power: 'Power routing', bay: 'Hangar · landing survey',
-  mission: 'Mission control', craft: 'Craft telemetry', scan: 'Field scan',
+  mission: 'Mission control', craft: 'Craft telemetry', scan: 'Field scan', growlab: 'Growth lab',
 };
 
 const esc = (s: string | undefined) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
@@ -138,6 +139,7 @@ export class Panels {
     else if (a === 'site') { /* handled above */ }
     else if (a === 'gosite') { const t = v.missionTarget(); if (t) { v.goToSite(t, id); this.close(); return; } }
     else if (a === 'lhang') v.hangLamp();
+    else if (a.startsWith('g') && this.kind === 'growlab') this.growAct(a, id);
     else if (a === 'feed' && v.feeds.target) {
       const n = Number(id), t = v.feeds.target;
       v.feeds.assign(t, n >= 0 ? n : null);
@@ -158,6 +160,50 @@ export class Panels {
     }
     this.t = 0;
     this.refresh();
+  }
+
+  // ---------------------------------------------------------------- the growth lab
+  private growAct(a: string, id: string) {
+    const v = this.v, gl = v.growlab, d = gl.draft, nS = gl.soils().length;
+    if (a === 'gset') gl.draft = { base: gl.base, k: Number(id), soil: 0, plant: 0, amends: new Set() };
+    else if (a === 'gsoil' && d) d.soil = (d.soil + Number(id) + nS) % nS;
+    else if (a === 'gplant' && d) d.plant = (d.plant + Number(id) + PLANTS.length) % PLANTS.length;
+    else if (a === 'gam' && d) { const m = id as Amend; if (d.amends.has(m)) d.amends.delete(m); else d.amends.add(m); }
+    else if (a === 'gcancel') gl.draft = null;
+    else if (a === 'gsow') { const r = gl.sow(v.app.world.time); if (r) v.app.onToast(`${r.p.name} sown in ${r.s.name}. The chamber runs at a day a minute`); }
+    else if (a === 'gclear') gl.clear(gl.base, Number(id));
+  }
+
+  /** a soil's analysis, as the lab reads it */
+  private soilCard(s: Soil, raw?: Soil) {
+    const bar = (k: string, x: number, txt?: string) => `<div class="pbar"><span>${k}</span><i style="width:${(Math.max(0.01, Math.min(1, x)) * 100).toFixed(0)}%"></i><b>${txt ?? `${Math.round(x * 100)}%`}</b></div>`;
+    const chg = raw && raw !== s ? ' <span class="pdim">(as amended)</span>' : '';
+    return `<div class="pdim">${esc(s.from)} · ${esc(s.note)}</div>`
+      + `<div class="pbars">${bar('Nitrogen', s.N)}${bar('Phosphorus', s.P)}${bar('Potassium', s.K)}${bar('pH', (s.pH - 3) / 9, s.pH.toFixed(1))}${bar(`Toxins${s.toxWhat ? `: ${esc(s.toxWhat)}` : ''}`, s.tox)}${bar('Holds water', s.water)}${bar('Organic matter', s.org)}${bar('Sharp grains', s.sharp)}</div>${chg}`
+      + (s.rows?.length ? `<div class="pdim">Made of ${s.rows.map(([k, x]) => `${esc(k)} ${x}%`).join(', ')}</div>` : '');
+  }
+
+  private growlab() {
+    const v = this.v, gl = v.growlab, now = v.app.world.time, d = gl.draft;
+    if (gl.base < 0) return '<p class="pdim">Use the growth bench in a base\'s dome.</p>';
+    if (d) {
+      const s = gl.soils()[d.soil], p = PLANTS[d.plant], am = amended(s, d.amends);
+      return `<div class="phero"><div><div class="pbig">Chamber ${d.k + 1}</div><div class="pdim">Choose a soil, a plant and what to do to the soil first; then sow. It runs at a day a minute.</div></div></div>`
+        + `<div class="prow"><div><div class="pnm">Soil: ${esc(s.name)}</div></div><span class="pbtns"><button data-act="gsoil" data-id="-1">◀</button><button data-act="gsoil" data-id="1">▶</button></span></div>`
+        + this.soilCard(am, s)
+        + `<div class="prow"><div><div class="pnm">Plant: ${esc(p.name)} <span class="pdim">· ${esc(p.latin)}</span></div><div class="pdim">${p.days} days to grow · likes pH ${p.pH[0]}–${p.pH[1]}${p.legume ? ' · a legume' : ''}</div></div><span class="pbtns"><button data-act="gplant" data-id="-1">◀</button><button data-act="gplant" data-id="1">▶</button></span></div>`
+        + `<div class="plaunch">${AMENDS.map(m => `<button data-act="gam" data-id="${m.id}"${d.amends.has(m.id) ? ' class="on"' : ''}><b>${d.amends.has(m.id) ? '✓ ' : ''}${m.name}</b><span>${esc(m.about)}</span></button>`).join('')}</div>`
+        + `<div class="prow"><span class="pbtns"><button data-act="gsow">Sow</button><button data-act="gcancel">Cancel</button></span></div>`;
+    }
+    const rows = gl.chambers(gl.base).map((ch, k) => {
+      if (!ch) return `<div class="prow tight"><div><div class="pnm">Chamber ${k + 1}</div><div class="pdim">empty</div></div><span class="pbtns"><button data-act="gset" data-id="${k}">Set up</button></span></div>`;
+      const st = gl.state(ch, now), g = st.g;
+      const how = g.dies ? (st.frac < 0.2 ? 'germinated, struggling' : 'dead') : g.stress === 'none' ? 'healthy' : g.stress === 'purple' ? 'stressed, leaves purpling' : 'pale, yellowing';
+      const what = st.done ? (g.dies ? `Died. ${esc(g.limits.slice(0, 2).join(', '))}` : `Grown: ${st.yield}% of what potting soil gives${g.limits.length ? `. Held back by ${esc(g.limits.slice(0, 3).join(', '))}` : ''}`) : `day ${Math.floor(st.day)} of ${st.p.days} · ${how}`;
+      return `<div class="prow tight"><div><div class="pnm">Chamber ${k + 1}: ${esc(st.p.name)} in ${esc(st.s.name)}${ch.amends.length ? ` <span class="pdim">· ${esc(ch.amends.join(', '))}</span>` : ''}</div><div class="pdim">${what}</div><div class="pbars"><div class="pbar"><span>Grown</span><i style="width:${Math.max(1, st.frac * 100).toFixed(0)}%"></i><b>${Math.round(st.frac * 100)}%</b></div></div></div><span class="pbtns"><button data-act="gclear" data-id="${k}">${st.done ? 'Harvest' : 'Clear'}</button></span></div>`;
+    }).join('');
+    const shelf = gl.soils().map(s => `<div class="prow tight"><div><div class="pnm">${esc(s.name)}</div><div class="pdim">N ${Math.round(s.N * 100)}% · P ${Math.round(s.P * 100)}% · K ${Math.round(s.K * 100)}% · pH ${s.pH.toFixed(1)}${s.tox > 0.05 ? ` · toxic: ${esc(s.toxWhat)}` : ''}</div></div></div>`).join('');
+    return `<p class="pdim">Six chambers under grow lights, a day a minute. Samples you analyse go on the shelf as soils to try.</p>${rows}<p class="pdim">The shelf: ${gl.soils().length} soils</p>${shelf}`;
   }
 
   /** the buttons for a body: select, fly there, open a wormhole */

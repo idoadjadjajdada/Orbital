@@ -4,7 +4,8 @@ import type { V3 } from '../pixel/sprites';
 import type { View3D } from './view3d';
 import type { Craft } from './fleet';
 import { Interior, STATION, stationInterior } from './interior';
-import { BASE, BUILDINGS, at, baseGround } from './basecamp';
+import { BASE, BUILDINGS, at, baseGround, BENCH } from './basecamp';
+import { showSlot } from './growlab';
 import { HATCH_OUT } from './hull';
 import { gravity, atmosphere } from './science';
 import { bodyQuat, latLonOf } from './ground';
@@ -232,6 +233,7 @@ export class Visit {
       case 'suit': v.suitRefill?.(); this.toast('Suit topped up: oxygen, battery, coolant water. Ready to go outside'); break;
       // ---- the base
       case 'mission': v.feeds.target = null; v.panels.show('mission'); break;
+      case 'growlab': v.growlab.base = c.id; v.growlab.draft = null; v.panels.show('growlab'); break;
       case 'vehicle': this.roverOut(c); break;
       case 'callship': this.callToPad(c); break;
       case 'holo': v.openMap(); break;
@@ -248,6 +250,25 @@ export class Visit {
       default: this.toast(id);
     }
     void R;
+  }
+
+  /** the growth lab's chambers: their plants as they are now, their labels, and a harvest into the log */
+  private growth(c: Craft, I: NonNullable<Craft['inside']>) {
+    const v = this.v, gl = v.growlab, bench = BENCH.get(I), now = v.app.world.time;
+    if (!bench) return;
+    gl.chambers(c.id).forEach((ch, k) => {
+      const st = ch ? gl.state(ch, now) : null;
+      showSlot(bench.slots[k], st, c.id * 7 + k);
+      if (!ch || !st) { I.drawScreen(`ch${k}`, [`CHAMBER ${k + 1}`, 'empty']); return; }
+      I.drawScreen(`ch${k}`, [`${st.p.name.toUpperCase()}`, `${st.done ? 'grown' : `day ${Math.floor(st.day)}/${st.p.days}`} · ${st.g.dies ? 'dead' : `${st.yield}%`}`]);
+      if (st.done && !ch.logged) {
+        ch.logged = true;
+        const why = st.g.limits.slice(0, 2).join(', ');
+        const note = st.g.dies ? `It died: ${why}.` : `${st.yield}% of what potting soil gives${why ? `; held back by ${why}` : ''}.`;
+        v.logbook.finds.push({ what: `Grown: ${st.p.name} in ${st.s.name}${ch.amends.length ? ` (${ch.amends.join(', ')})` : ''}`, note, where: `${c.name} · growth lab` });
+        this.toast(`Chamber ${k + 1}: ${st.p.name} in ${st.s.name} — ${note}`);
+      }
+    });
   }
 
   private orbitLine(c: Craft) {
@@ -383,7 +404,8 @@ export class Visit {
       I.drawScreen('ship', ['THE SHIP', ship, 'the flight desk calls', 'it to the pad']);
       I.drawScreen('weather', ['OUTSIDE', air.bar > 1e-4 ? `${air.bar.toPrecision(3)} bar · ${Math.round(air.T - 273.15)} °C` : `vacuum · ${Math.round(air.T - 273.15)} °C`, `${(gravity(b) / 9.81).toFixed(2)} g`, hhmm]);
       I.drawScreen('rover', ['ROVERS', rovers.length ? `${rovers.length} out on ${b.name}` : 'all in the hangar', rovers[0] ? `${rovers[0].name}: ${rovers[0].status}` : 'bay 1: charged', 'F at the rover: drive']);
-      I.drawScreen('spec', ['SPECTROMETER', `${v.logbook.finds.length} finds logged`, 'ready for samples']);
+      I.drawScreen('spec', ['SPECTROMETER', `${v.logbook.finds.length} finds logged`, `${v.growlab.samples.length} soils on the shelf`]);
+      this.growth(c, I);
       for (const id of ['feed', 'lab', 'dcam', 'hcam']) I.drawScreen(id, cam);
     }
   }

@@ -160,8 +160,10 @@ export class Suit {
       const cp = b ? composition(b) : null;
       const top = cp?.rows.slice(0, 3).map(([k, x]) => `${k} ${x}%`).join(', ') ?? '';
       v.logbook.finds.push({ what: `Sample: ${s.what}`, note: top ? `Made of ${top}` : 'Analysed', where: `${s.world} · ${s.where}` });
+      // and onto the growth lab's shelf, as a soil to try plants in
+      v.growlab.addSample(b ?? null, s.world, s.what, s.where);
     }
-    this.toast(`${this.samples.length} sample${this.samples.length > 1 ? 's' : ''} analysed and logged: ${this.samples.map(s => s.what).slice(0, 3).join('; ')}${this.samples.length > 3 ? '…' : ''}`);
+    this.toast(`${this.samples.length} sample${this.samples.length > 1 ? 's' : ''} analysed and logged (and on the growth lab's shelf): ${this.samples.map(s => s.what).slice(0, 3).join('; ')}${this.samples.length > 3 ? '…' : ''}`);
     this.samples.length = 0;
   }
 

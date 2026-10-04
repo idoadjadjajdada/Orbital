@@ -22,6 +22,7 @@ import { Visit } from './visit';
 import { Placer } from './placer';
 import { Suit } from './suit';
 import { Feeds } from './feeds';
+import { GrowLab } from './growlab';
 import { Shuttle } from './shuttle';
 import { Giant, HULL_BAR } from './giant';
 import { starMaterial, tickStar, dropStar } from './star';
@@ -461,6 +462,8 @@ export class View3D {
   kit!: Suit;
   /** monitors carrying craft cameras */
   feeds!: Feeds;
+  /** the bases' growth labs, and the soils from the samples you have analysed */
+  readonly growlab = new GrowLab();
   /** the suit's top-up and the lab's analyser (the suit's own module fills these in) */
   suitRefill?: () => void;
   analyseSamples?: () => void;

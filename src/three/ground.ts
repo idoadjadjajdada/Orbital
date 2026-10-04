@@ -8,6 +8,7 @@ import { TileSet } from './tiles';
 import { FormSet, type Form } from './landforms';
 import { earthAnimal, alienAnimal, type Beast } from './fauna';
 import { Flora, type PlantKind } from './flora';
+import { Grass } from './grass';
 import { detailFor } from '../pixel/surface';
 import { LIGHT_GLSL } from './lightglsl';
 import { atmosphere, life, gravity, rng, type Atmosphere, type Life } from './science';
@@ -78,6 +79,9 @@ uniform vec3 fogCol;
 uniform float fogK;
 uniform float time;
 uniform vec3 seaUp;
+uniform float lush;
+uniform vec3 leaf;
+uniform float alien;
 ${LIGHT_GLSL}
 varying vec3 vN;
 varying vec3 vP;
@@ -103,6 +107,29 @@ void main() {
   float near = 1.0 - smoothstep(20.0, 600.0, d);
   float g1 = n3(vLocal * 1.0), g2 = n3(vLocal * 0.125), g3 = n3(vLocal * 7.0);
   vec3 col = vCol * (1.0 + ((g1 - 0.5) * 0.3 + (g3 - 0.5) * 0.25 * (1.0 - smoothstep(2.0, 30.0, d))) * near + (g2 - 0.5) * 0.18);
+  #ifndef CAVE
+  // grass, where the ground is grassy (grass.ts makes the same test for its tufts): on the Earth ground with more
+  // green than red or blue, elsewhere ground the colour of the plants; never on a cliff
+  if (lush > 0.0 && vSea < 0.5) {
+    float gw;
+    if (alien < 0.5) gw = smoothstep(0.012, 0.055, vCol.g - max(vCol.r, vCol.b));
+    else gw = 1.0 - smoothstep(0.06, 0.2, length(vCol / (vCol.r + vCol.g + vCol.b + 1e-4) - leaf / (leaf.r + leaf.g + leaf.b + 1e-4)));
+    gw *= lush * smoothstep(0.7, 0.88, dot(N, seaUp)) * (1.0 - smoothstep(150.0, 2500.0, d));
+    if (gw > 0.0) {
+      // drier and lusher patches a few metres across
+      float pa = n3(vLocal * 0.23), pb = n3(vLocal * 0.71 + 17.0);
+      vec3 gc = col * mix(vec3(1.12, 1.04, 0.78), vec3(0.86, 1.1, 0.92), pa);
+      // the blades: a fine speckle of lit tips and dark gaps, finer still close by
+      float bl = n3(vLocal * 9.0) * 0.6 + n3(vLocal * 27.0 + 3.0) * 0.4 * (1.0 - smoothstep(3.0, 25.0, d));
+      gc *= mix(1.0, 0.7 + 0.6 * bl, 1.0 - smoothstep(6.0, 80.0, d));
+      // here and there the soil shows through
+      gc = mix(gc, col * vec3(0.95, 0.8, 0.62), smoothstep(0.78, 0.88, pb) * 0.55);
+      // seen at a glance grass looks denser and lighter
+      gc = mix(gc, gc * 1.22 + vec3(0.015, 0.025, 0.0), pow(1.0 - max(dot(N, V), 0.0), 3.0) * 0.5);
+      col = mix(col, gc, gw);
+    }
+  }
+  #endif
   vec3 c;
   if (vSea > 0.5) {
     // the sea: small waves, the sky reflected at a glancing angle, a glint of the sun
@@ -218,7 +245,8 @@ export class Ground {
   private towns: { name: string; lat: number; lon: number; pop: number; alien: boolean }[] = [];
   /** the trees and plants round you */
   readonly flora = new Flora();
-  private plants: { kinds: PlantKind[]; density: number; tint: THREE.Color | null } = { kinds: [], density: 0, tint: null };
+  readonly grass = new Grass();
+  private plants: { kinds: PlantKind[]; density: number; tint: THREE.Color | null; grass: { lush: number; leaf: THREE.Color | null } } = { kinds: [], density: 0, tint: null, grass: { lush: 0, leaf: null } };
   private floraAt: V3 | null = null;
   private critters: Critter[] = [];
   private found = new Set<string>();
@@ -228,12 +256,13 @@ export class Ground {
   constructor(scene: THREE.Scene, lightUniforms: Record<string, THREE.IUniform> = {}) {
     this.root.name = 'ground';
     scene.add(this.root);
-    this.root.add(this.flora.group);
+    this.root.add(this.flora.group, this.grass.group);
     this.mat = new THREE.ShaderMaterial({
       vertexShader: GROUND_VERT, fragmentShader: GROUND_FRAG, vertexColors: true,
       uniforms: {
         sunDir: { value: new THREE.Vector3(0, 0, 1) }, sunCol: { value: new THREE.Vector3(1, 1, 1) }, ambient: { value: new THREE.Vector3(0.03, 0.03, 0.03) },
         fogCol: { value: new THREE.Vector3() }, fogK: { value: 0 }, time: { value: 0 }, seaUp: { value: new THREE.Vector3() },
+        lush: { value: 0 }, leaf: { value: new THREE.Vector3(0.3, 0.45, 0.15) }, alien: { value: 0 },
         ...lightUniforms,
       },
     });
@@ -404,7 +433,7 @@ export class Ground {
       this.forms.frame(spec, n, alt, this.formSample);
       for (const f of this.forms.near(spec, n, 80)) if (!this.found.has(f.key)) { this.found.add(f.key); this.onFind(f.name, f.about); }
     } else this.forms.clear();
-    if (alt < 3000) this.life(dt, n);
+    if (alt < 3000) this.life(dt, n, alt);
     else if (this.floraAt || this.critters.length) this.clearLife();
   }
 
@@ -590,13 +619,15 @@ export class Ground {
   // ---------------------------------------------------------------- living things
   private clearLife() {
     this.flora.clear();
+    this.grass.clear();
+    this.mat.uniforms.lush.value = 0;
     this.floraAt = null;
     for (const c of this.critters) { this.root.remove(c.obj); disposeTree(c.obj); }
     this.critters = [];
   }
 
   /** what grows and walks round you: scattered when you arrive, again when you have moved on */
-  private life(dt: number, n: V3) {
+  private life(dt: number, n: V3, alt: number) {
     const b = this.body!, spec = this.spec!, L = this.lifeInfo!, R = spec.R;
     const earth = b.look.real === 'Earth';
     const alive = earth || L.tier === 'plants' || L.tier === 'animals' || L.tier === 'intelligent';
@@ -614,6 +645,13 @@ export class Ground {
     }
     // the trees: fixed to the world, modelled near you
     this.flora.frame({ R, seed: Math.floor(b.look.seed % 9973), built: m => this.platformAt(m) > -Infinity, heightAt: m => { const h = this.heightAt(m, 0.5); return { h, sea: this.sample.sea }; } }, n, this.plants.kinds, this.plants.density, this.plants.tint);
+    // the grass: in the ground's colour (its texture, in the shader) and, round you on foot, in tufts
+    const u = this.mat.uniforms, g = this.plants.grass;
+    u.lush.value = g.lush;
+    u.alien.value = g.leaf ? 1 : 0;
+    if (g.leaf) (u.leaf.value as THREE.Vector3).set(g.leaf.r, g.leaf.g, g.leaf.b);
+    if (alt < 150) this.grass.frame({ R, seed: Math.floor(b.look.seed % 9973), built: m => this.platformAt(m) > -Infinity, sampleAt: m => { const h = this.heightAt(m, 0.5), q = this.sample; return { h, sea: q.sea, r: q.r, g: q.g, b: q.b, rock: q.rock }; } }, n, g.lush, g.leaf, this.t);
+    else if (this.grass.mesh.count) this.grass.clear();
     // the animals wander
     for (const c of this.critters) {
       c.t -= dt;
@@ -651,8 +689,13 @@ export class Ground {
       density = L.tier === 'plants' ? 0.5 : 0.7;
     }
     // the trees are the flora's (flora.ts): what grows here, how thickly, and on a made-up world its leaves' colour
-    this.plants = { kinds, density, tint: earth || !kinds.length ? null : new THREE.Color(kinds[0].col) };
+    // how much grass: on the Earth by its biome (the ground's own green decides where); elsewhere where the plants are
+    const lush = earth ? { tropical: 0.9, temperate: 1, boreal: 0.7, grassland: 1, desert: 0.2, mountain: 0.7, city: 0.6, tundra: 0.45, ice: 0, ocean: 0 }[this.biome!] : kinds.length ? 0.8 : 0;
+    const tint = earth || !kinds.length ? null : new THREE.Color(kinds[0].col);
     for (const k of kinds) if (!this.found.has(k.name)) { this.found.add(k.name); this.onFind(k.name, 'Plant life.'); }
+    // (grasses, reeds and mosses are the grass's to draw, not trees)
+    const trees = kinds.filter(k => !/grass|bluestem|reed|moss|lichen|kelp|sedge/i.test(k.name));
+    this.plants = { kinds: trees, density: trees.length ? density : 0, tint, grass: { lush, leaf: tint } };
     // animals
     let fauna: { name: string; size: number; color: number; fly: boolean }[] = [];
     if (earth) fauna = speciesIn(this.biome!).filter(s => s.kind === 'animal' && s.size > 0.1 && s.name !== 'Human').map(s => ({ name: `${s.name} (${s.latin})`, size: s.size, color: s.color, fly: /macaw|condor|robin|pigeon|bee/i.test(s.name) }));

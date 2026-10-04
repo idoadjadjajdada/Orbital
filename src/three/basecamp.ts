@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { load, type ModelName } from './models';
 import { Interior } from './interior';
+import { benchModel } from './growlab';
 
 /**
  * A base on the ground, built from its three buildings: the modular outpost
@@ -45,6 +46,9 @@ const grids = new Map<ModelName, Grid>();
  */
 /** doorways (middle and half sizes, a building's frame) to keep clear of the doors standing open in them */
 const OPEN: Partial<Record<ModelName, [number, number, number, number][]>> = { 'modular-outpost': [[0, -6.1, 0.55, 0.45]], 'dome-habitat': [[8.6, 0, 0.35, 0.6]] };
+/** what the base adds to a building and stands in the way (middle and half sizes, its frame): the dome's growth bench */
+export const GROW = { x: 1.0, z: -2.65, w: 3.0, d: 0.6 };
+const ADDED: Partial<Record<ModelName, [number, number, number, number][]>> = { 'dome-habitat': [[GROW.x, GROW.z, GROW.w / 2 + 0.05, GROW.d / 2 + 0.05]] };
 
 function gridOf(name: ModelName, root: THREE.Object3D): Grid {
   const had = grids.get(name);
@@ -114,6 +118,7 @@ function gridOf(name: ModelName, root: THREE.Object3D): Grid {
   }
   // doors left standing open in their doorways: you squeeze past them
   for (const [x, z, hx, hz] of OPEN[name] ?? []) for (let a = x - hx; a <= x + hx; a += RES / 2) for (let b = z - hz; b <= z + hz; b += RES / 2) { const q = cell(a, b); if (q >= 0) cuts[q] = 0; }
+  for (const [x, z, hx, hz] of ADDED[name] ?? []) for (let a = x - hx; a <= x + hx; a += RES / 2) for (let b = z - hz; b <= z + hz; b += RES / 2) { const q = cell(a, b); if (q >= 0) solid[q] = 1; }
   for (let q = 0; q < nx * nz; q++) {
     if (Number.isNaN(floor[q])) floor[q] = deck[q];
     const f = Number.isNaN(floor[q]) ? 0 : floor[q];
@@ -217,6 +222,9 @@ export function at(B: Building, x: number, y: number, z: number) {
   return new THREE.Vector3(B.x + c * x + s * z, y, B.z - s * x + c * z);
 }
 
+/** each base's growth bench */
+export const BENCH = new WeakMap<Interior, ReturnType<typeof benchModel>>();
+
 /**
  * the base's consoles, monitors and fittings, as spots to use (F) and screens
  * that show its state; the monitors can carry a craft's camera
@@ -246,7 +254,15 @@ export function baseLayer(name: string): Interior {
   I.addSpot('greens', at(O, 0, Fo + 1.0, 6.5), 'Hydroponics: food and air', 2.8);
   // the dome: the common room's table, the greenhouse, the lab's desks, the medical bay
   I.addSpot('galley', at(D, 0, Fd + 0.9, 0), 'The common room: something hot from the galley', 2.6);
-  I.addSpot('greens', at(D, 1.5, Fd + 1.1, -4.4), 'The greenhouse', 2.8);
+  I.addSpot('greens', at(D, 3.4, Fd + 1.1, -3.6), 'The greenhouse', 2.6);
+  // the growth lab: six chambers on a bench in front of the greenhouse racks, a label over each
+  const bench = benchModel();
+  bench.group.position.copy(at(D, GROW.x, Fd, GROW.z));
+  bench.group.rotation.y = D.rot;
+  G.add(bench.group);
+  BENCH.set(I, bench);
+  for (let k = 0; k < 6; k++) I.screen(`ch${k}`, G, 0.44, 0.11, at(D, GROW.x + bench.slots[k].x, Fd + bench.height + 0.6, GROW.z + 0.25), D.rot);
+  I.addSpot('growlab', at(D, GROW.x, Fd + 1.1, GROW.z), 'The growth lab: soils and plants', 2.6);
   I.addSpot('med', at(D, -4.0, Fd + 0.9, 0), 'The medical bay: a check-up', 2.4);
   monitor(D, 'lab', 3.96, 1.24, 3.33, -0.77, -0.64, 'the lab\'s east screen');
   monitor(D, 'dcam', -0.9, 1.24, 5.10, 0.17, -0.98, 'the lab\'s west screen');

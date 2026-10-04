@@ -371,6 +371,18 @@ leaves a shade lighter or darker. Further off they become simple trunks and
 crowns, and past a few hundred metres they are not drawn at all; each kind of
 tree is one instanced draw, so a forest costs a handful of draws.
 
+**Grass** grows where the ground is grassy. On the Earth that is ground with
+more green in it than red or blue; on a made-up world, ground the colour of its
+plants; never on a cliff or bare rock. From afar it is a texture in the
+ground's own shader: drier and lusher patches a few metres across, soil showing
+through here and there, a fine speckle of lit blade tips and dark gaps close
+by, and the sheen grass has when you see it at a glance. Round you on foot it
+is tufts of blades out to 20 m, swaying in the wind and fading out at the
+edge. Like the trees they sit on a lattice fixed to the world, so the same
+tufts are there when you come back. Their heights come from the corners of
+two-metre cells, each worked out once and kept, so walking on costs only the
+new cells at the edge, and all of them are one instanced draw.
+
 **Worlds with life of their own.** A made-up world's life is rolled from its
 seed and weighted by how habitable it is: in its star's habitable zone
 (Kopparapu et al. 2013), at a temperature where water is liquid, with water to
@@ -458,9 +470,9 @@ through its airlock to the hub, where the **command table opens Mission
 Control**. East of the hub is the control room, with three consoles (the base,
 the ship, a camera). West are the quarters, with bunks to sleep in and the
 suit lockers that top up your suit. South is the hydroponics. The **dome** is
-the common room, where the galley serves something hot, with a greenhouse, a
-medical bay, and the lab, where the sample analyser reads the case you
-collected. The **hangar** holds a rover that drives out of its open end with
+the common room, where the galley serves something hot, with a greenhouse and
+the growth lab in front of it, a medical bay, and the lab, where the sample
+analyser reads the case you collected. The **hangar** holds a rover that drives out of its open end with
 you at the wheel; behind it is a crew room with a briefing table (the map),
 three consoles and lockers. The flight desk (or `G` on the ground near the
 base) **calls the ship to its pad**, and the ship flies over and lands there.
@@ -470,6 +482,35 @@ is made once from each model, giving its floors, stairs and decks, and its
 walls and furniture cut through at knee to head height. So you climb the
 stairs step by step, go in and out through real doorways, and stop at a desk
 or a bunk. Inside, the ceiling lights nearest you come on.
+
+**The growth lab** is a bench of six glass chambers in front of the dome's
+greenhouse racks. Each chamber runs one experiment: a soil, a plant, and
+whatever you did to the soil first, grown under lights at a day a minute, its
+plant growing in the chamber and its label showing the day.
+- **Soils:** potting soil and a nutrient solution to compare against,
+  simulants of the Moon's highlands and of washed Mars ground, and every
+  sample you have analysed. A sample's chemistry comes from where it came
+  from: Mars ground has Phoenix's pH 7.7, plenty of phosphorus and 0.6%
+  perchlorate; Moon regolith has no nitrogen and sharp, unweathered glass;
+  Titan's ice has cyanides and no phosphorus; Enceladus's has the
+  phosphates Cassini found.
+- **Analysis:** the lab reads each soil as what a root can take up (nitrogen,
+  phosphorus, potassium), its pH, what poisons it, how well it holds water,
+  its organic matter and how sharp its grains are.
+- **Plants:** thale cress, lettuce, radish, dwarf wheat, pea, dwarf tomato
+  and potato.
+- **Amendments:** compost, a rinse (which washes out what dissolves, such as
+  perchlorate and salts, and some nutrients too), a pH buffer, fertiliser,
+  and rhizobia, which let a legume make its own nitrogen.
+
+A plant grows as fast as the scarcest thing it needs allows (Liebig's law of
+the minimum), slowed further by the wrong pH, by poisons, by a soil that dries
+out and by grains that cut its roots. Starved of nitrogen it yellows; poisoned
+or cut, it purples. Raw Mars ground kills a radish until it is rinsed. Fed
+Apollo-like regolith grows cress slowly and purple, as the real Apollo soil
+did (Paul et al. 2022). A pea with rhizobia thrives in washed Mars simulant.
+When a plant is grown, its yield against potting soil and what held it back
+go into the log.
 
 **Monitors.** Every console in a base (and the big screen in the station's
 Destiny) is a monitor. Use one and Mission Control opens; each craft there has
