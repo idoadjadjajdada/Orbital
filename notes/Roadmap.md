@@ -16,4 +16,4 @@ What's next, in order. Move things up or down; tick them when done.
 - [ ] More building types for bases
 
 ## Done
-See [[Built]].
+See [Built](Built.md).

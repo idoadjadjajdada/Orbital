@@ -11,6 +11,7 @@ What looks wrong, and where: the world and the latitude and longitude from the r
 - Locally, the browser test's touch part times out when run after other parts in the same process (CI runs each part separately, where it passes).
 
 ## Fixed
+- The belt and moons visible in the daytime sky; rocks different a few steps apart; structures floating or sunk: see [Feedback, 3 October](Feedback/2026-10-03.md) (89055af, 347f546)
 - Trees drawn giant; kapok trees drawn as autumn-red maples (2365ddd)
 - The whole base building marked solid; the ajar airlock door blocking the way (2365ddd)
 - Fixed-time browser checks failing on slow CI frames (467bbbf, 84f16ed, d39807f)
