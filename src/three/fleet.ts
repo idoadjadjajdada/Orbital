@@ -7,7 +7,8 @@ import { atmosphere, composition, interior, life, gravity, airAt, giantPressure,
 import { bodyQuat, dirOf, latLonOf, arc } from './ground';
 import { probeMesh, orbiterMesh, landerMesh, roverMesh, stationMesh, baseMesh, padMesh } from './craftmesh';
 import { sitesOn } from './sites';
-import { Interior, stationInterior, baseInterior } from './interior';
+import { Interior, stationInterior } from './interior';
+import { baseLayer, baseGround, BASE } from './basecamp';
 
 /**
  * The craft the ship can send out, and what they find.
@@ -81,6 +82,8 @@ const PROBE_BAR = 120, PROBE_K = 900;
 const isGiant = (b: Body) => b.cls === 'gas' || ['gas', 'icegiant', 'hotjupiter', 'browndwarf'].includes(b.look.style);
 
 export class Fleet {
+  /** called when a craft's inside (or a base's consoles) is first built: its monitors to register */
+  onInterior: (c: Craft) => void = () => {};
   readonly root = new THREE.Group();
   readonly crafts: Craft[] = [];
   private specs = new Map<Body, GroundSpec>();
@@ -127,7 +130,7 @@ export class Fleet {
       if (c.b !== b || c.state !== 'surface' || (c.kind !== 'base' && c.kind !== 'pad') || c.build < 0.5) continue;
       const top = this.level(c);
       if (c.kind === 'pad') out.push({ n: c.n, r: 17, top: top + 0.3 });
-      else { out.push({ n: c.n, r: 22, top }); out.push({ n: this.onBase(c, 30, -12), r: 9.5, top: top + 0.2 }); }
+      else { out.push({ n: this.onBase(c, 0, -15), r: 44, top }); out.push({ n: this.onBase(c, BASE.pad.x, BASE.pad.z), r: BASE.padR, top: top + 0.12 }); }
     }
     return out;
   }
@@ -303,7 +306,7 @@ export class Fleet {
       this.quat(c, m.quaternion);
       // near enough to look in at the windows (or to go in): its inside, built the first time
       const near = (c.kind === 'station' || (c.kind === 'base' && c.build >= 1)) && d < 900;
-      if (near && !c.inside) { c.inside = c.kind === 'station' ? stationInterior(c.name) : baseInterior(c.name, c.id); m.add(c.inside.group); }
+      if (near && !c.inside) { c.inside = c.kind === 'station' ? stationInterior(c.name) : baseLayer(c.name); m.add(c.inside.group); this.onInterior(c); }
       if (c.inside) c.inside.group.visible = near;
       const chute = m.getObjectByName('chute');
       if (chute) chute.visible = c.state === 'descent' && this.air(c.b).bar > 0.005 && c.vz < 200;
@@ -513,7 +516,7 @@ export class Fleet {
     let hi = -Infinity;
     // (rings over all of it, whichever way it faces)
     const pts: [number, number][] = [[0, 0]];
-    for (const rr of c.kind === 'pad' ? [8, 16] : [9, 17, 24]) for (let k = 0; k < 12; k++) pts.push([Math.cos(k * Math.PI / 6) * rr, Math.sin(k * Math.PI / 6) * rr]);
+    for (const rr of c.kind === 'pad' ? [8, 16] : [10, 20, 30, 40]) for (let k = 0; k < 12; k++) pts.push([Math.cos(k * Math.PI / 6) * rr, Math.sin(k * Math.PI / 6) * rr]);
     for (const [x, z] of pts) {
       const m: V3 = [c.n[0] + (e[0] * x + nn[0] * z) / R, c.n[1] + (e[1] * x + nn[1] * z) / R, c.n[2] + (e[2] * x + nn[2] * z) / R], l = Math.hypot(...m);
       hi = Math.max(hi, this.terrainAt(c.b, [m[0] / l, m[1] / l, m[2] / l], 0.5));
@@ -538,6 +541,24 @@ export class Fleet {
     const w = p.clone().applyQuaternion(this.quat(c)).add(this.local(c));
     return w.applyQuaternion(bodyQuat(c.b).invert());
   }
+  /** a direction on the ground (body frame) in a craft's own frame: x and z, m */
+  toLocal(c: Craft, n: V3): { x: number; z: number } {
+    const R = c.b.r * AU_M + this.level(c);
+    const w = new THREE.Vector3(n[0] * R, n[1] * R, n[2] * R).applyQuaternion(bodyQuat(c.b)).sub(this.local(c)).applyQuaternion(this.quat(c).invert());
+    return { x: w.x, z: w.z };
+  }
+
+  /** what is underfoot among a world's bases' buildings at n: a floor (m over the datum) or a wall */
+  structureAt(b: Body, n: V3): { floor: number | null; solid: boolean } | null {
+    const R = b.r * AU_M;
+    for (const c of this.crafts) {
+      if (c.kind !== 'base' || c.b !== b || c.state !== 'surface' || c.build < 1 || arc(c.n, n) * R > 60) continue;
+      const l = this.toLocal(c, n), g = baseGround(l.x, l.z);
+      if (g.building) return { floor: g.floor === null ? null : this.level(c) + g.floor, solid: g.solid };
+    }
+    return null;
+  }
+
   /** the same, as a direction on the ground */
   onBase(c: Craft, x: number, z: number): V3 {
     const w = this.bodyPoint(c, new THREE.Vector3(x, 0, z)).normalize();

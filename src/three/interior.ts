@@ -30,6 +30,8 @@ export class Interior {
   readonly discs: Disc[] = [];
   /** named parts, for "where am I" */
   readonly regions: Region[] = [];
+  /** the monitors that can carry a craft's camera (feeds.ts) */
+  readonly monitors: { id: string; mesh: THREE.Mesh; label: string }[] = [];
   /** the light fixtures: the lights inside follow the nearest */
   readonly lamps: THREE.Vector3[] = [];
   /** where you come in, and which way you face */
@@ -444,6 +446,10 @@ function furnishStation(I: Interior, h: THREE.Group, id: string, len: number, ha
       // the command post: three screens, a keyboard shelf, the comms panel
       I.screen('status', h, 0.9, 0.6, new THREE.Vector3(-half + 0.02, 0.2, -1.5), Math.PI / 2);
       I.screen('orbit', h, 0.9, 0.6, new THREE.Vector3(-half + 0.02, 0.2, -0.45), Math.PI / 2);
+      // a big monitor for a craft's camera, and Mission Control at the post
+      const big = I.screen('feed', h, 1.2, 0.75, new THREE.Vector3(half - 0.02, 0.15, -2.2), -Math.PI / 2);
+      I.monitors.push({ id: 'feed', mesh: big, label: 'the Destiny monitor' });
+      I.addSpot('monitor:feed', W(new THREE.Vector3(half - 0.4, 0.15, -2.2)), `Monitor: Mission Control, or a craft's camera on it`, 2.2);
       add(h, box(0.3, 0.04, 2.2), MATS.dark, -half + 0.18, -0.25, -1);
       I.addSpot('status', W(new THREE.Vector3(-half + 0.4, 0.2, -1)), 'The station: where it is, how it is', 2.2);
       I.screen('comms', h, 0.7, 0.45, new THREE.Vector3(half - 0.02, 0.2, 2), -Math.PI / 2);
@@ -483,256 +489,13 @@ function furnishStation(I: Interior, h: THREE.Group, id: string, len: number, ha
     case 'kibo': {
       // the robotics workstation: two screens and two hand controllers; the airlock hatch at the far end
       I.screen('arm', h, 0.8, 0.5, new THREE.Vector3(-half + 0.02, 0.25, -1.5), Math.PI / 2);
-      I.screen('cam', h, 0.8, 0.5, new THREE.Vector3(-half + 0.02, 0.25, -0.6), Math.PI / 2);
+      const cam = I.screen('cam', h, 0.8, 0.5, new THREE.Vector3(-half + 0.02, 0.25, -0.6), Math.PI / 2);
+      I.monitors.push({ id: 'cam', mesh: cam, label: 'the Kibo camera monitor' });
       for (const z of [-1.4, -0.7]) add(h, cyl(0.03, 0.04, 0.18, 6), MATS.dark, -half + 0.25, -0.2, z, 0, 0, Math.PI / 2);
       I.addSpot('arm', W(new THREE.Vector3(-half + 0.35, 0.2, -1)), 'The robotic arm: watch it work', 2.2);
       add(h, new THREE.TorusGeometry(0.62, 0.07, 8, 4), MATS.red, 0, 0, len / 2 - 0.05, 0, 0, Math.PI / 4);
       I.addSpot('eva', W(new THREE.Vector3(0, 0, len / 2 - 0.5)), 'Spacewalk: out through the airlock', 2.2);
       break;
     }
-  }
-}
-
-// ---------------------------------------------------------------- the base
-
-/**
- * A base on the ground, as its outside shows it: the commons dome in the
- * middle (the command table, the galley, the hydroponics), the lab dome to
- * the east, quarters and the suit room to the west, the garage south with its
- * vehicle and big door, and the airlock north. Tunnels join them. The floor
- * is at y = 0.3; outside, the ground.
- */
-export const BASE = {
-  domes: [
-    { id: 'commons', name: 'Commons', x: 0, z: 0, r: 8 },
-    { id: 'lab', name: 'Laboratory', x: 17, z: 0, r: 5.5 },
-    { id: 'quarters', name: 'Quarters and suit room', x: -17, z: 0, r: 5.5 },
-  ],
-  tunnels: [
-    { x0: 7.5, x1: 11.8, z0: -1.2, z1: 1.2 },
-    { x0: -11.8, x1: -7.5, z0: -1.2, z1: 1.2 },
-    { x0: -1.2, x1: 1.2, z0: -12.2, z1: -7.5 },
-    { x0: -1.2, x1: 1.2, z0: 7.5, z1: 12.2 },
-  ],
-  garage: { x0: -7, x1: 7, z0: -24, z1: -12 },
-  airlock: { x: 0, z: 14, r: 2.2 },
-  /** the outer door: where you step out, and come back in */
-  door: new THREE.Vector3(0, 0, 16.6),
-  /** the landing pad and the garage's big door */
-  pad: new THREE.Vector3(30, 0, -12),
-  gate: new THREE.Vector3(0, 0, -24.5),
-  floor: 0.3,
-};
-
-/** the base's inside */
-export function baseInterior(name: string, seed: number): Interior {
-  const I = new Interior(name, false);
-  I.floor = BASE.floor;
-  const G = I.group, r = rnd(seed * 31 + 7), F = BASE.floor;
-  const floorTex = panelTexture(seed, '#6a6e74', 'floor');
-  if (floorTex) floorTex.repeat.set(4, 4);
-  const wallTex = panelTexture(seed + 1, '#dcdfe4', 'plate');
-  if (wallTex) wallTex.repeat.set(8, 2);
-  for (const d of BASE.domes) {
-    const g = new THREE.Group();
-    g.position.set(d.x, 0, d.z);
-    G.add(g);
-    add(g, new THREE.CircleGeometry(d.r - 0.15, 40), lit(0xffffff, floorTex), 0, F, 0, -Math.PI / 2, 0, 0);
-    // the dome's inner shell, with a band of real windows cut in it (the outside's windows)
-    g.add(domeShell(d.r - 0.12, wallTex));
-    // a ring of lights round the top
-    add(g, new THREE.TorusGeometry(d.r * 0.45, 0.06, 6, 32), MATS.light, 0, d.r * 0.8, 0, Math.PI / 2, 0, 0);
-    I.lamps.push(new THREE.Vector3(d.x, d.r * 0.75, d.z), new THREE.Vector3(d.x + d.r * 0.5, 2.5, d.z), new THREE.Vector3(d.x - d.r * 0.5, 2.5, d.z));
-    I.discs.push({ x: d.x, z: d.z, r: d.r - 0.4, y0: F, y1: d.r * 0.9 });
-    I.regions.push({ name: d.name, disc: { x: d.x, z: d.z, r: d.r, y0: 0, y1: d.r } });
-    furnishBase(I, g, d.id, d.r, r);
-  }
-  for (const t of BASE.tunnels) {
-    const g = new THREE.Group(), lx = t.x1 - t.x0, lz = t.z1 - t.z0;
-    g.position.set((t.x0 + t.x1) / 2, 0, (t.z0 + t.z1) / 2);
-    G.add(g);
-    corridor(g, Math.max(lx, lz), lx > lz, F, wallTex, floorTex);
-    I.boxes.push(new THREE.Box3(new THREE.Vector3(t.x0 - 0.6, F, t.z0 - 0.6), new THREE.Vector3(t.x1 + 0.6, F + 2.4, t.z1 + 0.6)));
-    I.lamps.push(new THREE.Vector3(g.position.x, 2.3, g.position.z));
-  }
-  garage(I, F, wallTex, floorTex, r);
-  airlock(I, F, wallTex, floorTex);
-  I.spawn = { p: new THREE.Vector3(0, F, 13.2), yaw: 0 };
-  return I;
-}
-
-/** a dome's inner shell: a hemisphere of panels, open where the windows are */
-function domeShell(R: number, tex: THREE.Texture | null) {
-  const seg = 24, rings = 8, pos: number[] = [], uv: number[] = [], idx: number[] = [];
-  for (let j = 0; j <= rings; j++) for (let i = 0; i <= seg; i++) {
-    const th = (j / rings) * Math.PI / 2, ph = (i / seg) * Math.PI * 2;
-    pos.push(Math.cos(ph) * Math.cos(th) * R, Math.sin(th) * R + 0.3, Math.sin(ph) * Math.cos(th) * R);
-    uv.push(i / seg * 4, j / rings);
-  }
-  for (let j = 0; j < rings; j++) for (let i = 0; i < seg; i++) {
-    // the windows: every fourth panel of the second band
-    if (j === 1 && i % 4 === 1) continue;
-    const a = j * (seg + 1) + i, b = a + 1, c = a + seg + 1, d = c + 1;
-    idx.push(a, b, c, b, d, c);
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-  g.setIndex(idx);
-  g.computeVertexNormals();
-  const m = new THREE.Mesh(g, lit(0xffffff, tex, { side: THREE.DoubleSide }));
-  // the window frames
-  const grp = new THREE.Group();
-  grp.add(m);
-  for (let i = 1; i < seg; i += 4) {
-    const ph = ((i + 0.5) / seg) * Math.PI * 2, th = (1.5 / rings) * Math.PI / 2;
-    const fr = new THREE.Mesh(new THREE.TorusGeometry(R * 0.14, 0.05, 4, 4), MATS.dark);
-    fr.position.set(Math.cos(ph) * Math.cos(th) * (R - 0.05), Math.sin(th) * R + 0.3, Math.sin(ph) * Math.cos(th) * (R - 0.05));
-    fr.lookAt(0, fr.position.y, 0);
-    fr.rotateZ(Math.PI / 4);
-    grp.add(fr);
-  }
-  return grp;
-}
-
-/** a tunnel between modules: a ribbed box, along x or z */
-function corridor(g: THREE.Group, len: number, alongX: boolean, F: number, wall: THREE.Texture | null, floor: THREE.Texture | null) {
-  const w = 2.6, h = 2.5, inner = new THREE.Group();
-  if (alongX) inner.rotation.y = Math.PI / 2;
-  g.add(inner);
-  add(inner, new THREE.PlaneGeometry(w, len + 1.6), lit(0xffffff, floor), 0, F, 0, -Math.PI / 2, 0, 0);
-  for (const s of [-1, 1]) add(inner, new THREE.PlaneGeometry(len + 1.6, h), lit(0xffffff, wall, { side: THREE.DoubleSide }), s * w / 2, F + h / 2, 0, 0, Math.PI / 2, 0);
-  add(inner, new THREE.PlaneGeometry(w, len + 1.6), lit(0xc0c4ca, null, { side: THREE.DoubleSide }), 0, F + h, 0, Math.PI / 2, 0, 0);
-  for (let z = -len / 2; z <= len / 2; z += 1.2) {
-    add(inner, box(w, 0.1, 0.12), MATS.grey, 0, F + h - 0.05, z);
-    for (const s of [-1, 1]) add(inner, box(0.1, h, 0.12), MATS.grey, s * (w / 2 - 0.05), F + h / 2, z);
-  }
-  add(inner, box(0.12, 0.04, len), MATS.light, 0, F + h - 0.08, 0);
-}
-
-/** the garage: a long hall with the base's vehicle in it, a workbench, and the big door out */
-function garage(I: Interior, F: number, wall: THREE.Texture | null, floor: THREE.Texture | null, r: () => number) {
-  const { x0, x1, z0, z1 } = BASE.garage, G = new THREE.Group(), w = x1 - x0, d = z1 - z0, H = 5;
-  G.position.set((x0 + x1) / 2, 0, (z0 + z1) / 2);
-  I.group.add(G);
-  add(G, new THREE.PlaneGeometry(w, d), lit(0xffffff, floor), 0, F, 0, -Math.PI / 2, 0, 0);
-  add(G, new THREE.PlaneGeometry(w, d), lit(0xb0b4ba, null, { side: THREE.DoubleSide }), 0, F + H, 0, Math.PI / 2, 0, 0);
-  for (const s of [-1, 1]) add(G, new THREE.PlaneGeometry(d, H), lit(0xffffff, wall, { side: THREE.DoubleSide }), s * w / 2, F + H / 2, 0, 0, Math.PI / 2, 0);
-  // the back wall with the tunnel's door, and the big door at the far end, striped
-  add(G, bulkhead(w, H, 2.4), lit(0xd0d4da, wall, { side: THREE.DoubleSide }), 0, F + H / 2, d / 2);
-  const door = add(G, new THREE.PlaneGeometry(w - 1, H - 0.6), lit(0x8a8e94, null, { side: THREE.DoubleSide }), 0, F + (H - 0.6) / 2, -d / 2);
-  for (let k = 0; k < 6; k++) add(door, box(w - 1, 0.18, 0.05), k % 2 ? MATS.dark : lit(0xe0b020), 0, -H / 2 + 0.5 + k * 0.7, 0.03);
-  for (let k = -1; k <= 1; k++) add(G, box(0.15, 0.06, d * 0.8), MATS.light, k * 3.5, F + H - 0.05, 0);
-  // the workbench and the tool wall
-  add(G, box(0.8, 0.9, 3), MATS.grey, -w / 2 + 0.5, F + 0.45, 2);
-  for (let k = 0; k < 8; k++) add(G, box(0.05, 0.3 + r() * 0.3, 0.06), MATS.dark, -w / 2 + 0.05, F + 1.6 + r() * 0.6, 0.8 + k * 0.35);
-  I.boxes.push(new THREE.Box3(new THREE.Vector3(x0 + 0.2, F, z0 + 0.4), new THREE.Vector3(x1 - 0.2, F + H, z1 + 0.6)));
-  I.regions.push({ name: 'Garage', box: new THREE.Box3(new THREE.Vector3(x0, 0, z0), new THREE.Vector3(x1, H, z1)) });
-  for (let z = z0 + 2; z < z1; z += 4) I.lamps.push(new THREE.Vector3(G.position.x, F + H - 0.4, z));
-  I.addSpot('vehicle', new THREE.Vector3(2, F + 1, -18), 'Take the rover out', 3.5);
-  I.addSpot('gate', new THREE.Vector3(0, F + 1.5, z0 + 0.6), 'Open the big door and walk out', 3);
-}
-
-/** the airlock: a small round room with the suit benches and the outer door */
-function airlock(I: Interior, F: number, wall: THREE.Texture | null, floor: THREE.Texture | null) {
-  const { x, z, r } = BASE.airlock, g = new THREE.Group();
-  g.position.set(x, 0, z);
-  I.group.add(g);
-  add(g, new THREE.CircleGeometry(r, 24), lit(0xffffff, floor), 0, F, 0, -Math.PI / 2, 0, 0);
-  add(g, cyl(r, r, 2.6, 24), lit(0xffffff, wall, { side: THREE.BackSide }), 0, F + 1.3, 0);
-  add(g, new THREE.CircleGeometry(r, 24), lit(0xb0b4ba), 0, F + 2.6, 0, Math.PI / 2, 0, 0);
-  add(g, box(1.4, 2.1, 0.12), lit(0x8a8e94), 0, F + 1.05, r - 0.05);
-  add(g, new THREE.TorusGeometry(0.3, 0.05, 6, 16), MATS.red, 0, F + 1.2, r - 0.12);
-  add(g, box(1.2, 0.08, 0.06), MATS.light, 0, F + 2.5, 0);
-  for (const s of [-1, 1]) add(g, box(0.5, 0.45, 1.4), MATS.grey, s * (r - 0.35), F + 0.22, 0);
-  I.discs.push({ x, z, r: r - 0.3, y0: F, y1: F + 2.6 });
-  I.regions.push({ name: 'Airlock', disc: { x, z, r, y0: 0, y1: 3 } });
-  I.lamps.push(new THREE.Vector3(x, F + 2.3, z));
-  I.addSpot('out', new THREE.Vector3(x, F + 1.2, z + r - 0.3), 'Step outside', 2.4);
-}
-
-/** what each dome holds */
-function furnishBase(I: Interior, g: THREE.Group, id: string, R: number, r: () => number) {
-  const F = BASE.floor, P = (x: number, y: number, z: number) => new THREE.Vector3(g.position.x + x, y, g.position.z + z);
-  if (id === 'commons') {
-    // the command table: a round table with the world turning over it as a hologram
-    add(g, cyl(1.5, 1.6, 0.9, 32), MATS.dark, 0, F + 0.45, 0);
-    add(g, cyl(1.45, 1.45, 0.04, 32), lit(0x0a2030, null, { emissive: 0x0a3a50 }), 0, F + 0.92, 0);
-    const holo = add(g, new THREE.IcosahedronGeometry(0.8, 2), MATS.holo, 0, F + 2, 0);
-    I.animate(t => { holo.rotation.y = t * 0.3; });
-    I.addSpot('holo', P(0, F + 1.4, 0), 'The world below: the map', 3);
-    // the command console at the north wall: screens, and the ship
-    const con = new THREE.Group();
-    con.position.set(0, 0, R - 1.6);
-    g.add(con);
-    add(con, box(3.4, 0.9, 0.7), MATS.grey, 0, F + 0.45, 0);
-    I.screen('base', con, 1.2, 0.7, new THREE.Vector3(-1.1, F + 1.6, 0.2), Math.PI);
-    I.screen('ship', con, 1.2, 0.7, new THREE.Vector3(0.2, F + 1.6, 0.2), Math.PI);
-    I.screen('weather', con, 1, 0.6, new THREE.Vector3(1.45, F + 1.55, 0.1), Math.PI - 0.3);
-    I.addSpot('command', P(-0.9, F + 1.3, R - 1.6), 'Base status', 2.6);
-    I.addSpot('callship', P(0.4, F + 1.3, R - 1.6), 'Call the ship to the pad', 2.6);
-    I.addSpot('weather', P(1.6, F + 1.3, R - 1.8), 'Outside: the air and the weather', 2.6);
-    // the galley and the dining table to the east
-    add(g, box(0.7, 0.95, 3), MATS.white, R - 1.4, F + 0.47, -1);
-    add(g, box(0.72, 0.05, 3), MATS.dark, R - 1.4, F + 0.97, -1);
-    add(g, box(0.8, 1.9, 0.8), MATS.grey, R - 1.6, F + 0.95, 1.4);
-    add(g, cyl(0.9, 0.9, 0.06, 20), MATS.wood, 4, F + 0.75, -3.6);
-    add(g, cyl(0.08, 0.1, 0.72, 6), MATS.dark, 4, F + 0.38, -3.6);
-    for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2 + 0.4; add(g, box(0.45, 0.45, 0.45), MATS.blue, 4 + Math.cos(a) * 1.25, F + 0.22, -3.6 + Math.sin(a) * 1.25); }
-    I.addSpot('galley', P(R - 1.6, F + 1.1, -1), 'The galley: something hot', 2.4);
-    // the hydroponics: planters round the west and south walls, under pink grow lights
-    for (let k = 0; k < 7; k++) {
-      const a = Math.PI * 0.62 + k * 0.22, x = Math.cos(a) * (R - 1.3), z = Math.sin(a) * (R - 1.3);
-      const pl = new THREE.Group();
-      pl.position.set(x, F, z);
-      pl.rotation.y = -a;
-      g.add(pl);
-      add(pl, box(0.7, 0.6, 1.4), MATS.grey, 0, 0.3, 0);
-      add(pl, box(0.6, 0.05, 1.3), lit(0x3a2a1a), 0, 0.6, 0);
-      for (let q = 0; q < 6; q++) add(pl, new THREE.SphereGeometry(0.1 + r() * 0.08, 7, 5), MATS.leaf, (r() - 0.5) * 0.4, 0.72 + r() * 0.1, -0.55 + q * 0.22);
-      for (let q = 0; q < 3; q++) add(pl, new THREE.SphereGeometry(0.04, 6, 4), q % 2 ? MATS.red : MATS.orange, (r() - 0.5) * 0.4, 0.82, (r() - 0.5));
-      add(pl, box(0.6, 0.03, 1.3), MATS.grow, 0, 1.6, 0);
-    }
-    I.addSpot('greens', P(-R + 1.7, F + 0.9, -1.5), 'Hydroponics: food and air', 2.4);
-    // a couch at a window
-    add(g, box(2.2, 0.45, 0.8), MATS.orange, -2.5, F + 0.22, -R + 2);
-    add(g, box(2.2, 0.5, 0.2), MATS.orange, -2.5, F + 0.65, -R + 1.65);
-  } else if (id === 'lab') {
-    // benches, the microscope, the sample shelves of coloured rock, the spectrometer
-    add(g, box(3.5, 0.9, 0.8), MATS.white, 0, F + 0.45, R - 1.3);
-    add(g, cyl(0.12, 0.16, 0.5, 8), MATS.dark, -0.8, F + 1.15, R - 1.3);
-    add(g, cyl(0.04, 0.04, 0.3, 6), MATS.dark, -0.8, F + 1.5, R - 1.35, 0.5, 0, 0);
-    I.screen('spec', g, 0.9, 0.55, new THREE.Vector3(0.9, F + 1.5, R - 1.65), Math.PI);
-    I.addSpot('analyse', g.position.clone().add(new THREE.Vector3(0.4, F + 1.1, R - 1.3)), 'Analyse your samples', 2.4);
-    for (let k = 0; k < 3; k++) {
-      add(g, box(0.4, 0.05, 2.4), MATS.grey, -R + 1, F + 0.6 + k * 0.5, 0);
-      for (let q = 0; q < 6; q++) add(g, new THREE.DodecahedronGeometry(0.08 + r() * 0.05, 0), lit(new THREE.Color().setHSL(r() * 0.12, 0.3 + r() * 0.3, 0.3 + r() * 0.3).getHex()), -R + 1, F + 0.7 + k * 0.5, -1 + q * 0.4);
-    }
-    I.addSpot('rocks', g.position.clone().add(new THREE.Vector3(-R + 1.3, F + 1, 0)), 'The sample collection', 2.4);
-    add(g, box(0.9, 1.8, 0.9), lit(0x9aa0a8), 2.5, F + 0.9, -R + 1.8);
-    add(g, box(0.5, 0.3, 0.05), MATS.glass, 2.5, F + 1.2, -R + 2.26);
-  } else if (id === 'quarters') {
-    // bunks, lockers, the medical bay, and the suit room
-    for (let k = 0; k < 2; k++) for (let lvl = 0; lvl < 2; lvl++) {
-      add(g, box(2, 0.25, 0.9), MATS.grey, -1.8 + k * 3.6, F + 0.4 + lvl * 1.1, -R + 1.4);
-      add(g, box(1.9, 0.12, 0.8), lit(0x4a6aa0), -1.8 + k * 3.6, F + 0.58 + lvl * 1.1, -R + 1.4);
-    }
-    I.addSpot('sleep', g.position.clone().add(new THREE.Vector3(-1.8, F + 0.9, -R + 1.6)), 'Sleep', 2.4);
-    for (let k = 0; k < 4; k++) add(g, box(0.6, 1.9, 0.5), MATS.blue, -1.5 + k * 0.7, F + 0.95, R - 0.9);
-    // the suit room: three suits on their racks
-    for (let k = 0; k < 3; k++) {
-      const s = new THREE.Group();
-      s.position.set(R - 1.3, F, -1.4 + k * 1.4);
-      s.rotation.y = -Math.PI / 2;
-      g.add(s);
-      add(s, box(0.55, 0.75, 0.38), MATS.white, 0, 1.25, 0);
-      add(s, new THREE.SphereGeometry(0.19, 12, 8), MATS.white, 0, 1.85, 0);
-      add(s, new THREE.SphereGeometry(0.155, 12, 8), lit(0xd8a830, null, { emissive: 0x302000 }), 0, 1.85, 0.05);
-      for (const sx of [-1, 1]) { add(s, cyl(0.09, 0.09, 0.8, 8), MATS.white, sx * 0.14, 0.45, 0); add(s, cyl(0.07, 0.08, 0.7, 8), MATS.white, sx * 0.36, 1.2, 0); }
-      add(s, box(0.45, 0.6, 0.22), lit(0xc8ccd2), 0, 1.3, -0.3);
-    }
-    I.addSpot('suit', g.position.clone().add(new THREE.Vector3(R - 1.6, F + 1.3, 0)), 'The suit room: refill and upgrade your suit', 2.6);
-    add(g, box(0.8, 0.7, 2), MATS.white, -R + 1.4, F + 0.35, 0.5);
-    I.addSpot('med', g.position.clone().add(new THREE.Vector3(-R + 1.6, F + 0.8, 0.5)), 'Medical bay: a check-up', 2.4);
   }
 }

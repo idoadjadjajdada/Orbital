@@ -7,6 +7,7 @@ import { groundSpec, groundAt, tangent, groundPainter, type GroundSpec, type Gro
 import { TileSet } from './tiles';
 import { FormSet, type Form } from './landforms';
 import { earthAnimal, alienAnimal, type Beast } from './fauna';
+import { Flora, type PlantKind } from './flora';
 import { detailFor } from '../pixel/surface';
 import { LIGHT_GLSL } from './lightglsl';
 import { atmosphere, life, gravity, rng, type Atmosphere, type Life } from './science';
@@ -215,7 +216,9 @@ export class Ground {
   private placed = new Map<string, Placed>();
   private sites: Site[] = [];
   private towns: { name: string; lat: number; lon: number; pop: number; alien: boolean }[] = [];
-  private flora: THREE.InstancedMesh[] = [];
+  /** the trees and plants round you */
+  readonly flora = new Flora();
+  private plants: { kinds: PlantKind[]; density: number; tint: THREE.Color | null } = { kinds: [], density: 0, tint: null };
   private floraAt: V3 | null = null;
   private critters: Critter[] = [];
   private found = new Set<string>();
@@ -225,6 +228,7 @@ export class Ground {
   constructor(scene: THREE.Scene, lightUniforms: Record<string, THREE.IUniform> = {}) {
     this.root.name = 'ground';
     scene.add(this.root);
+    this.root.add(this.flora.group);
     this.mat = new THREE.ShaderMaterial({
       vertexShader: GROUND_VERT, fragmentShader: GROUND_FRAG, vertexColors: true,
       uniforms: {
@@ -266,6 +270,8 @@ export class Ground {
     if (p > (this.sample.sea ? 0 : h)) { this.sample.sea = false; return p; }
     return h;
   }
+  /** a base's building at n: its floor (m over the datum) or a wall (the fleet fills this in) */
+  structureAt: (n: V3) => { floor: number | null; solid: boolean } | null = () => null;
   /** the top of whatever is built at n (the fleet fills this in), or −∞ */
   platformAt: (n: V3) => number = () => -Infinity;
   /** the ground sample there (after heightAt) */
@@ -288,7 +294,11 @@ export class Ground {
     const h = this.heightAt(n, 0.3), sea = this.sample.sea;
     if (!this.spec) return { h, sea, roof: Infinity, solid: false, inside: null as Form | null, dark: 0 };
     const g = this.forms.ground(this.spec, n, foot);
-    return { h: g.floor ?? (sea ? 0 : h), sea: g.floor === null && sea, roof: g.roof, solid: g.solid, inside: g.inside, dark: g.dark };
+    // a base's buildings: their floors, their walls and furniture
+    const st = this.structureAt(n);
+    // (a floor more than a step over your feet is a wall to you: you climb to it by its stairs)
+    if (st && st.floor !== null && g.floor === null) return { h: st.floor, sea: false, roof: Infinity, solid: st.solid || st.floor > foot, inside: null, dark: 0 };
+    return { h: g.floor ?? (sea ? 0 : h), sea: g.floor === null && sea, roof: g.roof, solid: g.solid || !!st?.solid, inside: g.inside, dark: g.dark };
   }
 
   /** the up direction (unit, body frame) of the ground at n: from the heights around it */
@@ -333,8 +343,7 @@ export class Ground {
     for (const p of this.placed.values()) { this.root.remove(p.obj); disposeTree(p.obj); }
     this.placed.clear();
     this.forms.clear();
-    for (const f of this.flora) { this.root.remove(f); f.dispose(); }
-    this.flora = [];
+    this.flora.clear();
     this.floraAt = null;
     for (const c of this.critters) { this.root.remove(c.obj); disposeTree(c.obj); }
     this.critters = [];
@@ -396,7 +405,7 @@ export class Ground {
       for (const f of this.forms.near(spec, n, 80)) if (!this.found.has(f.key)) { this.found.add(f.key); this.onFind(f.name, f.about); }
     } else this.forms.clear();
     if (alt < 3000) this.life(dt, n);
-    else if (this.flora.length || this.critters.length) this.clearLife();
+    else if (this.floraAt || this.critters.length) this.clearLife();
   }
 
   /** the sky: its colour from the air, how much of it there is above you, and the sun's height */
@@ -580,8 +589,7 @@ export class Ground {
 
   // ---------------------------------------------------------------- living things
   private clearLife() {
-    for (const f of this.flora) { this.root.remove(f); f.dispose(); }
-    this.flora = [];
+    this.flora.clear();
     this.floraAt = null;
     for (const c of this.critters) { this.root.remove(c.obj); disposeTree(c.obj); }
     this.critters = [];
@@ -604,6 +612,8 @@ export class Ground {
       this.biome = earth ? earthBiome(Math.asin(n[2]) * 180 / Math.PI, [smp.r, smp.g, smp.b], smp.sea, smp.h, near) : null;
       this.scatter(n);
     }
+    // the trees: fixed to the world, modelled near you
+    this.flora.frame({ R, seed: Math.floor(b.look.seed % 9973), built: m => this.platformAt(m) > -Infinity, heightAt: m => { const h = this.heightAt(m, 0.5); return { h, sea: this.sample.sea }; } }, n, this.plants.kinds, this.plants.density, this.plants.tint);
     // the animals wander
     for (const c of this.critters) {
       c.t -= dt;
@@ -640,38 +650,9 @@ export class Ground {
       kinds = L.forms.filter(f => f.kind === 'plant').map(f => ({ col: f.color, size: Math.min(40, f.size), cone: /spire|tower|reed/.test(f.about), name: `${f.name}, a ${f.about}` }));
       density = L.tier === 'plants' ? 0.5 : 0.7;
     }
-    if (kinds.length && density > 0) {
-      const trunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.08, 0.12, 1, 5).translate(0, 0.5, 0), new THREE.MeshLambertMaterial({ color: 0x5a4030, flatShading: true }), 1200);
-      const crown = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(0.5, 0).translate(0, 0.5, 0), new THREE.MeshLambertMaterial({ flatShading: true }), 1200);
-      const cone = new THREE.InstancedMesh(new THREE.ConeGeometry(0.4, 1, 6).translate(0, 0.5, 0), new THREE.MeshLambertMaterial({ flatShading: true }), 1200);
-      let a = 0, bN = 0, cN = 0;
-      const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), col = new THREE.Color();
-      const base = new THREE.Vector3(n[0] * R, n[1] * R, n[2] * R);
-      for (let k = 0; k < 2400 && a < 1200; k++) {
-        const rad = 6 + 300 * Math.sqrt(r()), ang = r() * Math.PI * 2;
-        if (r() > density) continue;
-        const th = rad / R;
-        const dir: V3 = [Math.cos(th) * n[0] + Math.sin(th) * (Math.cos(ang) * e[0] + Math.sin(ang) * nn[0]), Math.cos(th) * n[1] + Math.sin(th) * (Math.cos(ang) * e[1] + Math.sin(ang) * nn[1]), Math.cos(th) * n[2] + Math.sin(th) * (Math.cos(ang) * e[2] + Math.sin(ang) * nn[2])];
-        // (as fine as the ground is drawn near you, and the trunk set a little into it so it never stands on air)
-        if (this.platformAt(dir) > -Infinity) continue;
-        const h = this.heightAt(dir, 0.5) - 0.4;
-        if (this.sample.sea) continue;
-        const kind = kinds[Math.floor(r() * kinds.length)];
-        const sz = kind.size * (0.5 + 0.7 * r());
-        q.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(...dir));
-        p.set(dir[0] * (R + h) - base.x, dir[1] * (R + h) - base.y, dir[2] * (R + h) - base.z);
-        s.set(Math.max(0.6, sz * 0.12), sz * 0.6 + 0.4, Math.max(0.6, sz * 0.12));
-        m.compose(p, q, s);
-        trunk.setMatrixAt(a++, m);
-        const top = p.clone().add(new THREE.Vector3(...dir).multiplyScalar(sz * (kind.cone ? 0.25 : 0.45) + 0.4));
-        col.setHex(kind.col).offsetHSL(0, 0, (r() - 0.5) * 0.12);
-        if (kind.cone) { s.set(sz * 0.45, sz * 0.8, sz * 0.45); m.compose(top, q, s); cone.setMatrixAt(cN, m); cone.setColorAt(cN++, col); }
-        else { s.set(sz * 0.6, sz * 0.55, sz * 0.6); m.compose(top, q, s); crown.setMatrixAt(bN, m); crown.setColorAt(bN++, col); }
-        if (rad < 60 && !this.found.has(kind.name)) { this.found.add(kind.name); this.onFind(kind.name, 'Plant life.'); }
-      }
-      trunk.count = a; crown.count = bN; cone.count = cN;
-      for (const im of [trunk, crown, cone]) { im.position.copy(base); im.frustumCulled = false; this.root.add(im); this.flora.push(im); }
-    }
+    // the trees are the flora's (flora.ts): what grows here, how thickly, and on a made-up world its leaves' colour
+    this.plants = { kinds, density, tint: earth || !kinds.length ? null : new THREE.Color(kinds[0].col) };
+    for (const k of kinds) if (!this.found.has(k.name)) { this.found.add(k.name); this.onFind(k.name, 'Plant life.'); }
     // animals
     let fauna: { name: string; size: number; color: number; fly: boolean }[] = [];
     if (earth) fauna = speciesIn(this.biome!).filter(s => s.kind === 'animal' && s.size > 0.1 && s.name !== 'Human').map(s => ({ name: `${s.name} (${s.latin})`, size: s.size, color: s.color, fly: /macaw|condor|robin|pigeon|bee/i.test(s.name) }));

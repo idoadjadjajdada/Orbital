@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { STATION, BASE } from './interior';
+import { STATION } from './interior';
+import { baseModel } from './basecamp';
 
 /**
  * Models of the craft you can send out and the hardware already on the
@@ -203,71 +204,8 @@ export function stationMesh() {
   return g;
 }
 
-/**
- * a surface base, as its inside is laid out (interior.ts): the commons dome
- * in the middle, the lab and quarters domes either side, a garage to the
- * south with its big door and the base's rover, the airlock to the north;
- * tunnels between them; a solar field, a mast, and the landing pad
- */
-export function baseMesh(seed = 1) {
-  const g = new THREE.Group();
-  const shell = lam(0xe6e8ec, { side: THREE.FrontSide });
-  // the foundation: a terrace of concrete under it all, going down into the ground where the ground falls away
-  const slab = lam(0x8c8a84);
-  add(g, box(52, 30, 46), slab, 0, -15.05, -4);
-  add(g, cyl(10, 11, 30, 24), slab, BASE.pad.x, -15.05, BASE.pad.z);
-  add(g, box(10, 30, 6), slab, 22, -15.05, -9);
-  for (const d of BASE.domes) {
-    const dm = new THREE.Mesh(domeOutside(d.r), shell);
-    dm.position.set(d.x, 0, d.z);
-    g.add(dm);
-    add(g, cyl(d.r * 1.03, d.r * 1.06, 0.7, 32), MAT.grey, d.x, 0.35, d.z);
-    // the windows, glowing a little from the light inside
-    for (let i = 1; i < 24; i += 4) {
-      const ph = ((i + 0.5) / 24) * Math.PI * 2, th = (1.5 / 8) * Math.PI / 2;
-      const w = add(g, new THREE.CircleGeometry(d.r * 0.13, 4), MAT.window, d.x + Math.cos(ph) * Math.cos(th) * d.r * 1.002, Math.sin(th) * d.r + 0.3, d.z + Math.sin(ph) * Math.cos(th) * d.r * 1.002);
-      w.lookAt(d.x + Math.cos(ph) * d.r * 3, w.position.y, d.z + Math.sin(ph) * d.r * 3);
-      w.rotateZ(Math.PI / 4);
-    }
-    // a beacon on top
-    add(g, new THREE.SphereGeometry(0.18, 6, 4), new THREE.MeshBasicMaterial({ color: 0xff3020 }), d.x, d.r + 0.4, d.z);
-  }
-  for (const t of BASE.tunnels) {
-    const lx = t.x1 - t.x0 + 1.4, lz = t.z1 - t.z0 + 1.4;
-    add(g, box(Math.max(lx, 2.9), 2.9, Math.max(lz, 2.9)), MAT.grey, (t.x0 + t.x1) / 2, 1.45, (t.z0 + t.z1) / 2);
-  }
-  // the garage, its big striped door to the south
-  const G = BASE.garage, gw = G.x1 - G.x0, gd = G.z1 - G.z0;
-  add(g, box(gw + 0.4, 5.6, gd + 0.4), lam(0xb8bcc2), (G.x0 + G.x1) / 2, 2.8, (G.z0 + G.z1) / 2);
-  const door = add(g, box(gw - 1, 4.6, 0.1), MAT.dark, (G.x0 + G.x1) / 2, 2.3, G.z0 - 0.22);
-  for (let k = 0; k < 5; k++) add(door, box(gw - 1, 0.25, 0.04), MAT.orange, 0, -1.8 + k * 0.9, 0.06);
-  add(g, box(gw + 1, 0.3, 1.2), MAT.grey, (G.x0 + G.x1) / 2, 5.7, G.z0 - 0.3);
-  // the base's rover, parked inside
-  const rv = roverMesh(1.1);
-  rv.position.set(2, BASE.floor, -18);
-  rv.rotation.y = Math.PI;
-  g.add(rv);
-  // the airlock to the north, its outer door lit
-  const A = BASE.airlock;
-  add(g, cyl(A.r + 0.2, A.r + 0.2, 3, 20), lam(0xc8ccd2), A.x, 1.5, A.z);
-  add(g, box(1.4, 2.2, 0.1), MAT.dark, A.x, 1.2, A.z + A.r + 0.21);
-  add(g, new THREE.SphereGeometry(0.15, 6, 4), MAT.lamp, A.x, 2.6, A.z + A.r + 0.3);
-  add(g, box(2.5, 0.2, 2), MAT.grey, A.x, 0.1, A.z + A.r + 1.2);
-  // the solar field to the west
-  for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) {
-    const p = add(g, box(4, 0.05, 2), MAT.panel, -32 + i * 5, 1.4, -6 - j * 3.2, -0.5, 0, 0);
-    add(g, box(0.1, 1.4, 0.1), MAT.silver, p.position.x, 0.7, p.position.z);
-  }
-  // the mast and its dish
-  add(g, cyl(0.15, 0.2, 14, 6), MAT.silver, 11, 7, 10);
-  add(g, new THREE.SphereGeometry(1.4, 12, 5, 0, Math.PI * 2, 0, Math.PI / 3), MAT.white, 11, 14, 10, Math.PI * 0.75, 0, 0);
-  add(g, new THREE.SphereGeometry(0.3, 6, 4), new THREE.MeshBasicMaterial({ color: 0xff3020 }), 11, 14.4, 10);
-  // the landing pad, ringed, and lights round it
-  add(g, cyl(9, 9, 0.2, 32), MAT.dark, BASE.pad.x, 0.1, BASE.pad.z);
-  add(g, new THREE.TorusGeometry(7.5, 0.25, 4, 32), MAT.orange, BASE.pad.x, 0.25, BASE.pad.z, Math.PI / 2, 0, 0);
-  for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2 + seed; add(g, new THREE.SphereGeometry(0.2, 6, 4), MAT.lamp, BASE.pad.x + Math.cos(a) * 9.4, 0.3, BASE.pad.z + Math.sin(a) * 9.4); }
-  return g;
-}
+/** a surface base: its terrace, pad and buildings (basecamp.ts) */
+export function baseMesh(_seed = 1) { return baseModel(); }
 
 /** where the launch pad's rocket stands and where landers set down, in its own frame */
 export const PAD = { rocket: new THREE.Vector3(-8, 0, 0), land: new THREE.Vector3(10, 0, 4) };
@@ -311,24 +249,6 @@ export function padMesh() {
   return g;
 }
 
-/** a dome's outer shell: the hemisphere with the window panels cut out, as the inside has them */
-function domeOutside(R: number) {
-  const seg = 24, rings = 8, pos: number[] = [], idx: number[] = [];
-  for (let j = 0; j <= rings; j++) for (let i = 0; i <= seg; i++) {
-    const th = (j / rings) * Math.PI / 2, ph = (i / seg) * Math.PI * 2;
-    pos.push(Math.cos(ph) * Math.cos(th) * R, Math.sin(th) * R + 0.3, Math.sin(ph) * Math.cos(th) * R);
-  }
-  for (let j = 0; j < rings; j++) for (let i = 0; i < seg; i++) {
-    if (j === 1 && i % 4 === 1) continue;
-    const a = j * (seg + 1) + i, b = a + 1, c = a + seg + 1, d = c + 1;
-    idx.push(a, c, b, b, c, d);
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  geo.setIndex(idx);
-  geo.computeVertexNormals();
-  return geo;
-}
 
 /** the descent stage the Apollo crews left behind, on its four legs, with its gold foil */
 export function apolloMesh() {

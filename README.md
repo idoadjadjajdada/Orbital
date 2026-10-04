@@ -14,6 +14,7 @@ npm run test:browser   # smoke test in Chromium, desktop and iPad (PARTS=map,shi
 python3 tools/fetch-moons.py   # refresh the moon table from JPL
 python3 tools/bake-mars.py     # Mars' heights and colour from the MOLA map and mosaic in tools/data
 python3 tools/bake-sun.py      # the Sun's surface from the photograph in tools/data
+python3 tools/pack-models.py   # the base buildings and trees (GLB) in tools/data, textures cut to 512 px
 ```
 
 Runs in any current browser, iPad and iPhone Safari included: touch to throw
@@ -360,6 +361,16 @@ plants and animals are those of the biome you stand in — spruce and moose in
 the taiga, kapok trees and jaguars in the rainforest, saguaro and dromedaries
 in the desert, 50 species in all, with their Latin names.
 
+**Trees** stand where they grew: each sits in a fixed lattice cell on the
+ground, so walking away and back finds the same forest. Near you they are
+modelled — oak, birch, maple, palm and pine, each species drawn by the nearest
+model — and every tree is its own: its height from what its species grows to
+(a sequoia is tall, a birch slight), then its own build, stretched taller or
+squatter, broader or more slender, leaning a little, turned its own way, its
+leaves a shade lighter or darker. Further off they become simple trunks and
+crowns, and past a few hundred metres they are not drawn at all; each kind of
+tree is one instanced draw, so a forest costs a handful of draws.
+
 **Worlds with life of their own.** A made-up world's life is rolled from its
 seed and weighted by how habitable it is: in its star's habitable zone
 (Kopparapu et al. 2013), at a temperature where water is liquid, with water to
@@ -441,13 +452,42 @@ ground track, the air and water, the arm). From the helm, **dock** with a
 station (the ship flies to it if it is far) and the ship's airlock opens into
 it; leave by Kibo's airlock on a spacewalk and come back in the same way.
 
-**A base** has the commons dome (its table with the world turning over it as a
-hologram, the command console, the galley, the hydroponics), a lab dome with
-the sample analyser and spectrometer, quarters with the suit room, a garage
-with its rover, and an airlock; windows in the domes look out. Walk in through
-its airlock or its garage door. Its console (or `G` on the ground near it)
-**calls the ship to its pad**, and the ship flies over and lands there; the
-garage's rover drives out of the big door with you at the wheel.
+**A base** is three buildings on a level terrace, with paths between them
+and its pad. The **outpost** stands on legs in the middle: climb its stairs and
+through its airlock to the hub, where the **command table opens Mission
+Control**. East of the hub is the control room, with three consoles (the base,
+the ship, a camera). West are the quarters, with bunks to sleep in and the
+suit lockers that top up your suit. South is the hydroponics. The **dome** is
+the common room, where the galley serves something hot, with a greenhouse, a
+medical bay, and the lab, where the sample analyser reads the case you
+collected. The **hangar** holds a rover that drives out of its open end with
+you at the wheel; behind it is a crew room with a briefing table (the map),
+three consoles and lockers. The flight desk (or `G` on the ground near the
+base) **calls the ship to its pad**, and the ship flies over and lands there.
+
+Where you can walk comes from the buildings themselves. A quarter-metre grid
+is made once from each model, giving its floors, stairs and decks, and its
+walls and furniture cut through at knee to head height. So you climb the
+stairs step by step, go in and out through real doorways, and stop at a desk
+or a bunk. Inside, the ceiling lights nearest you come on.
+
+**Monitors.** Every console in a base (and the big screen in the station's
+Destiny) is a monitor. Use one and Mission Control opens; each craft there has
+a 📺 button that **puts its camera on that monitor**. It stays there while
+you walk away: a rover crawling across a crater, the ISS over the Earth, a
+probe falling toward its world. Each camera is drawn into a small picture
+(256 × 160) from a tiny scene of its own: the craft, its world beneath as a
+lit globe, and the sunlight. To keep the frame rate up, a monitor is drawn
+only when you are within 15 m and facing it, at most 3 times a second (once a
+second while frames run slow), and only one in any frame. Otherwise it keeps its last picture, so a base full of
+monitors costs nothing while you are elsewhere. With no camera on it, a
+console shows its readings, refreshed twice a second.
+
+**Keeping it light.** Interiors are attached only within 900 m of their base
+or station. The building models load once, on demand, and are shared. The
+modelled trees are drawn only within 110 m and are rebuilt only when you have
+walked 25 m. Shadows are not drawn, and the view lowers its resolution when
+frames run slow.
 
 ### The suit and what you ride
 

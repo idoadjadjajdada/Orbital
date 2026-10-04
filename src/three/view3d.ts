@@ -21,6 +21,7 @@ import { Fleet, type CraftKind, type Craft } from './fleet';
 import { Visit } from './visit';
 import { Placer } from './placer';
 import { Suit } from './suit';
+import { Feeds } from './feeds';
 import { Shuttle } from './shuttle';
 import { Giant, HULL_BAR } from './giant';
 import { starMaterial, tickStar, dropStar } from './star';
@@ -379,7 +380,7 @@ const LAND_RANGE = 8000;
 
 export class View3D {
   readonly canvas: HTMLCanvasElement;
-  private renderer: THREE.WebGLRenderer;
+  renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
   camera: THREE.PerspectiveCamera;
   private objs = new Map<Body, Obj>();
@@ -443,7 +444,7 @@ export class View3D {
   /** the eye in ship coordinates, when it is inside the hull */
   private localEye: THREE.Vector3 | null = null;
   /** the render scale, lowered while frames are slow and raised again when they are quick: the frame time (ms, smoothed) and when it was last judged */
-  private res = { scale: 1, ms: 16, last: 0, t: 0 };
+  res = { scale: 1, ms: 16, last: 0, t: 0 };
   /** outside: the suit, which moves on its own, and which way it faces */
   suit = { nav: { anchor: null, off: [0, 0, 0], vel: [0, 0, 0] } as Mover, quat: new THREE.Quaternion() };
   /** the telescope: where it points (world) and its field of view, degrees */
@@ -458,6 +459,8 @@ export class View3D {
   placer!: Placer;
   /** your suit's air, power and kit, and what you ride on the ground */
   kit!: Suit;
+  /** monitors carrying craft cameras */
+  feeds!: Feeds;
   /** the suit's top-up and the lab's analyser (the suit's own module fills these in) */
   suitRefill?: () => void;
   analyseSamples?: () => void;
@@ -512,6 +515,9 @@ export class View3D {
     this.visit = new Visit(this);
     this.placer = new Placer(this);
     this.kit = new Suit(this);
+    this.feeds = new Feeds(this);
+    this.fleet.onInterior = c => { for (const m of c.inside?.monitors ?? []) this.feeds.register(`${c.id}:${m.id}`, m.mesh, `${c.name}: ${m.label}`); };
+    this.ground.structureAt = n => (this.ground.body ? this.fleet.structureAt(this.ground.body, n) : null);
     this.suitRefill = () => this.kit.refill();
     this.analyseSamples = () => this.kit.analyse();
     this.scene.add(this.camera);
@@ -873,6 +879,8 @@ export class View3D {
     return [n.vel[0] + (a?.vx ?? 0) * k, n.vel[1] + (a?.vy ?? 0) * k, n.vel[2] + (a?.vz ?? 0) * k];
   }
   /** the stars that are shining */
+  /** the map a world is drawn with, if it has been painted */
+  texOf(b: Body): THREE.Texture | null { return this.objs.get(b)?.tex ?? null; }
   stars() { return this.app.world.sources.filter(s => (s.cls === 'star' || s.cls === 'wd') && (s.star?.L ?? 0) > 0); }
   /** what the lab surveys: the selection, or the nearest world */
   surveyTarget(): Body | null {
@@ -1479,7 +1487,7 @@ export class View3D {
     if (this.mode === 'scope') { cam.fov = this.scope.fov; cam.updateProjectionMatrix(); }
     else if (this.mode !== 'pilot' && cam.fov !== 75) { cam.fov = 75; cam.updateProjectionMatrix(); }
     // the map covers the view: leave the last frame up rather than draw what nobody can see
-    if (!this.nav.open) this.renderer.render(this.scene, cam);
+    if (!this.nav.open) { this.feeds.frame(performance.now() / 1000); this.renderer.render(this.scene, cam); }
     this.drawLabels(P, blind || this.nav.open || (this.mode === 'inside' && !this.visit.at?.cupola));
     this.radar.draw();
     this.nav.draw(dtReal);
@@ -1597,6 +1605,7 @@ export class View3D {
     // what is in reach
     this.prompt = null;
     sh.boardable = false;
+    this.visit.baseLights();
     if (this.mode === 'walk') {
       const f = this.foot;
       if (f.seat) this.prompt = { label: 'Stand up', act: () => { f.seat = null; } };
@@ -1612,7 +1621,8 @@ export class View3D {
       else this.prompt = this.visit.wayIn();
     } else if (this.mode === 'surface') {
       const foot = this.ladderFoot();
-      const way = this.kit.ride ? { label: `Get off the ${this.kit.ride === 'hover' ? 'hover bike' : 'buggy'}`, act: () => { this.kit.ride = null; } } : this.visit.wayIn();
+      const way = this.kit.ride ? { label: `Get off the ${this.kit.ride === 'hover' ? 'hover bike' : 'buggy'}`, act: () => { this.kit.ride = null; } } : this.visit.baseSpot() ?? this.visit.wayIn();
+      this.visit.screens(dt);
       if (foot && this.ground.spec && arc(foot, this.surf.n) * this.ground.spec.R < 4.5) { this.prompt = { label: 'Climb the ladder and board', act: () => this.board() }; sh.boardable = true; }
       else if (way) this.prompt = way;
       else if (this.shuttle.near(this.surf.b, this.surf.n)) this.prompt = { label: 'Board Lander 1', act: () => this.shuttle.board() };

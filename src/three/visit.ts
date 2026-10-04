@@ -3,7 +3,8 @@ import { AU_M } from '../physics/units';
 import type { V3 } from '../pixel/sprites';
 import type { View3D } from './view3d';
 import type { Craft } from './fleet';
-import { Interior, STATION, BASE, stationInterior, baseInterior } from './interior';
+import { Interior, STATION, stationInterior } from './interior';
+import { BASE, BUILDINGS, at, baseGround } from './basecamp';
 import { HATCH_OUT } from './hull';
 import { gravity, atmosphere } from './science';
 import { bodyQuat, latLonOf } from './ground';
@@ -39,41 +40,27 @@ export class Visit {
   }
 
   private ensure(c: Craft) {
-    if (!c.inside) { c.inside = c.kind === 'station' ? stationInterior(c.name) : baseInterior(c.name, c.id); c.mesh.add(c.inside.group); }
+    if (!c.inside) { c.inside = stationInterior(c.name); c.mesh.add(c.inside.group); this.v.fleet.onInterior(c); }
     c.inside.group.visible = true;
     return c.inside;
   }
 
-  /** in: through a station's docking port or its airlock, a base's airlock or its garage door */
-  enter(c: Craft, how: 'dock' | 'airlock' | 'door' | 'gate') {
+  /** in: through a station's docking port or its airlock */
+  enter(c: Craft, how: 'dock' | 'airlock') {
     const I = this.ensure(c);
     const p = I.spawn.p.clone();
     let yaw = I.spawn.yaw;
     if (how === 'airlock') { p.set(STATION.airlock.x - 1.2, 0, STATION.airlock.z); yaw = Math.PI / 2; }
-    if (how === 'gate') { p.set(BASE.gate.x, BASE.floor, BASE.gate.z + 2.5); yaw = Math.PI; }
     this.at = { c, I, p, yaw, pitch: 0, vel: new THREE.Vector3(), y: 0, vy: 0, cupola: false };
     this.v.mode = 'inside';
     this.v.foot.seat = null;
     this.toast(I.zeroG ? `Aboard ${c.name}: you float. W A S D and Space / C to move, F to use` : `Inside ${c.name}`);
   }
 
-  /** out of a base onto the ground, at a point of its layout, facing away from it */
-  private outside(x: number, z: number, away: number) {
-    const a = this.at!, c = a.c, f = this.v.fleet;
-    const n = f.onBase(c, x, z), n2 = f.onBase(c, x + Math.sin(away) * 5, z + Math.cos(away) * 5);
-    // the way out, as a compass heading at n
-    const [e, nn] = tangent(n), d = [n2[0] - n[0], n2[1] - n[1], n2[2] - n[2]];
-    const yaw = Math.atan2(-(d[0] * e[0] + d[1] * e[1] + d[2] * e[2]), d[0] * nn[0] + d[1] * nn[1] + d[2] * nn[2]);
-    this.at = null;
-    this.lamps.forEach(l => { l.intensity = 0; });
-    this.v.toSurface(n, yaw);
-  }
-
   leave() {
     const a = this.at;
     if (!a) return;
-    if (a.c.kind === 'base') this.outside(BASE.door.x, BASE.door.z + 1.5, 0);
-    else if (this.docked === a.c) this.backAboard();
+    if (this.docked === a.c) this.backAboard();
     else this.spacewalk();
   }
 
@@ -164,14 +151,63 @@ export class Visit {
     if (a.cupola) return { label: 'Back into the station', act: () => { a.cupola = false; a.pitch = 0; } };
     const dir = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(a.pitch, a.yaw, 0, 'YXZ'));
     const s = a.I.facing(this.eye(), dir);
-    return s ? { label: s.label, act: () => this.use(s.id) } : null;
+    return s ? { label: s.label, act: () => this.use(s.id, a.c) } : null;
+  }
+
+  /** on foot in a base: the console, monitor or fitting you are looking at */
+  baseSpot(): { label: string; act: () => void } | null {
+    const c = this.baseNear(40);
+    if (!c?.inside) return null;
+    const cam = this.v.camera, m = c.mesh, qi = m.quaternion.clone().invert();
+    const eye = m.position.clone().negate().applyQuaternion(qi), dir = cam.getWorldDirection(new THREE.Vector3()).applyQuaternion(qi);
+    const s = c.inside.facing(eye, dir);
+    return s ? { label: s.label, act: () => this.use(s.id, c) } : null;
+  }
+
+  /** on foot in one of a base's buildings: its ceiling lights nearest you on (the two lamps the station uses) */
+  baseLights() {
+    if (this.at) return;
+    const c = this.baseNear(30);
+    let on = false;
+    if (c?.inside) {
+      const m = c.mesh, q = m.quaternion, eye = m.position.clone().negate().applyQuaternion(q.clone().invert());
+      const g = baseGround(eye.x, eye.z);
+      if (g.building && g.floor !== null && eye.y < g.floor + 3) {
+        on = true;
+        const near = c.inside.lamps.map(p => ({ p, d: p.distanceToSquared(eye) })).sort((x, y) => x.d - y.d).slice(0, 2);
+        this.lamps.forEach((l, k) => {
+          const n = near[k];
+          l.intensity = n ? 14 : 0;
+          l.distance = 14;
+          if (n) l.position.copy(n.p).applyQuaternion(q).add(m.position);
+        });
+      }
+    }
+    if (!on && this.lit) this.lamps.forEach(l => { l.intensity = 0; });
+    this.lit = on;
+  }
+  private lit = false;
+
+  /** a built base within `d` m of you on foot */
+  baseNear(d: number): Craft | null {
+    const v = this.v;
+    if (v.mode !== 'surface' || !v.surf.b) return null;
+    for (const c of v.fleet.crafts) if (c.kind === 'base' && c.b === v.surf.b && c.build >= 1 && c.mesh.position.length() < d + 30) return c;
+    return null;
   }
 
   /** the part you are in, for the readout */
   room() { const a = this.at; return a ? (a.cupola ? 'The Cupola' : a.I.where(a.p.clone().setY(a.I.zeroG ? a.p.y : a.I.floor + 1))) : ''; }
 
-  private use(id: string) {
-    const a = this.at!, c = a.c, v = this.v, b = c.b;
+  private use(id: string, c: Craft) {
+    const a = this.at!, v = this.v, b = c.b;
+    if (id.startsWith('monitor:')) {
+      v.feeds.target = `${c.id}:${id.slice(8)}`;
+      const on = v.feeds.showing(v.feeds.target), cr = on !== null ? v.fleet.byId(on) : null;
+      v.panels.show('mission');
+      this.toast(cr ? `${v.feeds.label(v.feeds.target)} shows ${cr.name}'s camera. 📺 buttons change it` : `Put a craft's camera on ${v.feeds.label(v.feeds.target)} with its 📺 button`);
+      return;
+    }
     const pick = (l: string[]) => l[Math.floor(Math.random() * l.length)];
     const air = atmosphere(b, v.stars()), R = b.r * AU_M;
     switch (id) {
@@ -195,9 +231,8 @@ export class Visit {
       case 'arm': this.toast('The robotic arm walks end over end along the station to wherever it is needed, and catches visiting cargo ships out of the sky'); break;
       case 'suit': v.suitRefill?.(); this.toast('Suit topped up: oxygen, battery, coolant water. Ready to go outside'); break;
       // ---- the base
-      case 'out': this.outside(BASE.door.x, BASE.door.z + 1.5, 0); break;
-      case 'gate': this.outside(BASE.gate.x, BASE.gate.z - 3, Math.PI); break;
-      case 'vehicle': this.roverOut(); break;
+      case 'mission': v.feeds.target = null; v.panels.show('mission'); break;
+      case 'vehicle': this.roverOut(c); break;
       case 'callship': this.callToPad(c); break;
       case 'holo': v.openMap(); break;
       case 'command': this.toast(`${c.name}: crew of six, power ${air.bar > 0.5 ? 'solar and fuel cells' : 'solar, 140 kW'}, oxygen for 90 days, water recycling at 94%`); break;
@@ -221,14 +256,16 @@ export class Visit {
     return `${alt.toFixed(0)} km up, ${sp.toFixed(2)} km/s, an orbit every ${per.toFixed(0)} minutes`;
   }
 
-  /** the base's rover out through the garage door, and you at its controls */
-  private roverOut() {
-    const a = this.at!, c = a.c, f = this.v.fleet;
-    const n = f.onBase(c, BASE.gate.x, BASE.gate.z - 6);
+  /** the base's rover out of the hangar's open end, and you at its controls */
+  private roverOut(c: Craft) {
+    const f = this.v.fleet, H = BUILDINGS[2];
+    // out past the end of the apron, heading away from the hangar
+    const p = at(H, 13, 0, 0), p2 = at(H, 17, 0, 0);
+    const n = f.onBase(c, p.x, p.z), n2 = f.onBase(c, p2.x, p2.z);
     const r = f.launch('rover', c.b, new THREE.Vector3(), n);
-    r.state = 'surface'; r.n = n; r.head = c.head + Math.PI; r.status = 'driving'; r.name = `${c.name} rover`;
-    this.at = null;
-    this.lamps.forEach(l => { l.intensity = 0; });
+    const [e, nn] = tangent(n), dd = [n2[0] - n[0], n2[1] - n[1], n2[2] - n[2]];
+    r.state = 'surface'; r.n = n; r.status = 'driving'; r.name = `${c.name} rover`;
+    r.head = Math.atan2(dd[0] * e[0] + dd[1] * e[1] + dd[2] * e[2], dd[0] * nn[0] + dd[1] * nn[1] + dd[2] * nn[2]);
     this.v.viewCraft(r.id);
     this.toast('Out through the big door. W S to drive, A D to steer; F to get out');
   }
@@ -305,16 +342,6 @@ export class Visit {
   /** on the ground near a base's doors, or outside a station's airlock: the way in */
   wayIn(): { label: string; act: () => void } | null {
     const v = this.v, f = v.fleet;
-    if (v.mode === 'surface' && v.surf.b && v.ground.spec) {
-      const R = v.ground.spec.R;
-      for (const c of f.crafts) {
-        if (c.kind !== 'base' || c.b !== v.surf.b || c.build < 1) continue;
-        const dd = (n: V3) => Math.acos(Math.min(1, n[0] * v.surf.n[0] + n[1] * v.surf.n[1] + n[2] * v.surf.n[2])) * R;
-        if (dd(c.n) > 120) continue;
-        if (dd(f.onBase(c, BASE.door.x, BASE.door.z + 1)) < 4) return { label: `Through the airlock into ${c.name}`, act: () => this.enter(c, 'door') };
-        if (dd(f.onBase(c, BASE.gate.x, BASE.gate.z - 2)) < 6) return { label: `Into ${c.name}'s garage`, act: () => this.enter(c, 'gate') };
-      }
-    }
     if (v.mode === 'eva') {
       for (const c of f.crafts) {
         if (c.kind !== 'station' || c.state !== 'orbit') continue;
@@ -325,15 +352,16 @@ export class Visit {
     return null;
   }
 
-  /** the screens inside, a few times a second */
+  /** the screens inside, a few times a second (or a base's, on foot near it) */
   screens(dt: number) {
-    const a = this.at;
-    if (!a) return;
+    const a = this.at, near = a ? null : this.baseNear(60);
+    const c = a?.c ?? near, I = a?.I ?? near?.inside;
+    if (!c || !I) return;
     this.screenT -= dt;
-    a.I.update(performance.now() / 1000);
+    I.update(performance.now() / 1000);
     if (this.screenT > 0) return;
     this.screenT = 0.5;
-    const c = a.c, v = this.v, I = a.I, b = c.b;
+    const v = this.v, b = c.b;
     const t = new Date();
     const hhmm = `${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')} UTC`;
     if (c.kind === 'station') {
@@ -349,10 +377,14 @@ export class Visit {
     } else {
       const air = atmosphere(b, v.stars());
       const ship = v.landing?.phase === 'landed' && v.landing.b === b ? (this.distToPad(c) < 30 ? 'on the pad' : 'landed nearby') : v.travel?.name.endsWith('pad') ? 'on its way to the pad' : 'away';
-      I.drawScreen('base', [c.name.toUpperCase(), 'crew 6 · power 140 kW', 'O₂ reserve 90 days', 'water 94 % recycled', hhmm]);
-      I.drawScreen('ship', ['THE SHIP', ship, 'F at the console calls', 'it to the pad']);
-      I.drawScreen('weather', ['OUTSIDE', air.bar > 1e-4 ? `${air.bar.toPrecision(3)} bar` : 'vacuum', `${Math.round(air.T - 273.15)} °C`, `${(gravity(b) / 9.81).toFixed(2)} g`]);
+      const rovers = v.fleet.crafts.filter(r => r.kind === 'rover' && r.b === b && r.state !== 'lost');
+      const cam = ['CAMERA', 'no craft on this screen', 'F: Mission Control,', 'then a craft\'s 📺'];
+      I.drawScreen('base', [c.name.toUpperCase(), 'crew 6 · power 140 kW', 'O₂ reserve 90 days', `water 94 % recycled · ${hhmm}`]);
+      I.drawScreen('ship', ['THE SHIP', ship, 'the flight desk calls', 'it to the pad']);
+      I.drawScreen('weather', ['OUTSIDE', air.bar > 1e-4 ? `${air.bar.toPrecision(3)} bar · ${Math.round(air.T - 273.15)} °C` : `vacuum · ${Math.round(air.T - 273.15)} °C`, `${(gravity(b) / 9.81).toFixed(2)} g`, hhmm]);
+      I.drawScreen('rover', ['ROVERS', rovers.length ? `${rovers.length} out on ${b.name}` : 'all in the hangar', rovers[0] ? `${rovers[0].name}: ${rovers[0].status}` : 'bay 1: charged', 'F at the rover: drive']);
       I.drawScreen('spec', ['SPECTROMETER', `${v.logbook.finds.length} finds logged`, 'ready for samples']);
+      for (const id of ['feed', 'lab', 'dcam', 'hcam']) I.drawScreen(id, cam);
     }
   }
 }

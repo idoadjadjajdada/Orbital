@@ -138,6 +138,11 @@ export class Panels {
     else if (a === 'site') { /* handled above */ }
     else if (a === 'gosite') { const t = v.missionTarget(); if (t) { v.goToSite(t, id); this.close(); return; } }
     else if (a === 'lhang') v.hangLamp();
+    else if (a === 'feed' && v.feeds.target) {
+      const n = Number(id), t = v.feeds.target;
+      v.feeds.assign(t, n >= 0 ? n : null);
+      v.app.onToast(n >= 0 ? `${v.fleet.byId(n)?.name ?? 'The craft'}'s camera is on ${v.feeds.label(t)}` : `${v.feeds.label(t)} is back to its readouts`);
+    }
     else if (a.startsWith('l') && a.length > 1) {
       // a lamp in the sky: id, then what to do with it
       const [lid, arg] = id.split(':');
@@ -287,7 +292,7 @@ export class Panels {
       const lander = c.kind === 'lander' && c.state === 'surface' && !f.crafts.some(x => x.parent === c.id);
       h += `<div class="prow"><div><div class="pnm">${esc(c.name)} <span class="pdim">· ${esc(c.b.name)} · ${esc(c.status)}</span></div><div class="pdim">${esc(last)}</div></div><span class="pbtns">`
         + `${c.state !== 'lost' ? `<button data-act="cview" data-id="${c.id}">${c.kind === 'rover' && c.state === 'surface' ? 'Drive' : 'View'}</button>` : ''}`
-        + `<button data-act="clog" data-id="${c.id}">Data</button>${lander ? `<button data-act="crover" data-id="${c.id}">Rover</button>` : ''}</span></div>`;
+        + `<button data-act="clog" data-id="${c.id}">Data</button>${lander ? `<button data-act="crover" data-id="${c.id}">Rover</button>` : ''}${c.state !== 'lost' && c.kind !== 'base' && c.kind !== 'pad' ? v.feeds.buttonFor(c) : ''}</span></div>`;
     }
     return h;
   }
