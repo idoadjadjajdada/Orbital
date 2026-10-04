@@ -8,6 +8,9 @@
 <meta name="apple-mobile-web-app-title" content="Orbital notes">
 <meta name="theme-color" content="#0b0f17">
 <title>Orbital notes</title>
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="manifest" href="manifest.webmanifest">
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
 <style>
@@ -27,6 +30,8 @@
   header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px; padding: 10px var(--pad); background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
   header h1 { font-size: 17px; margin: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   header h1 b { color: var(--accent); }
+  #home { padding: 5px; }
+  #home img { display: block; border-radius: 6px; }
   button, .btn { font: inherit; font-size: 15px; color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
   button.primary { background: var(--accent); color: #1a1205; border-color: transparent; font-weight: 600; }
   button:disabled { opacity: 0.5; }
@@ -73,7 +78,7 @@
 </head>
 <body>
 <header>
-  <button id="home" aria-label="Home">🪐</button>
+  <button id="home" aria-label="Home"><img src="apple-touch-icon.png" alt="" width="22" height="22"></button>
   <h1 id="title"><b>Orbital</b> notes</h1>
   <button id="editBtn" hidden>Edit</button>
   <button id="settingsBtn" aria-label="Settings">⚙︎</button>
