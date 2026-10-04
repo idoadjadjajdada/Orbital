@@ -211,8 +211,15 @@ export function groundAt(s: GroundSpec, n: V3, fine: number, out: GroundSample, 
       // the bearing round the summit, for a horn's ridges
       const [e, nn] = pk.t, mx = n[0] - c[0], my = n[1] - c[1], mz = n[2] - c[2];
       const th = Math.atan2(mx * nn[0] + my * nn[1] + mz * nn[2], mx * e[0] + my * e[1] + mz * e[2]);
-      const rise = pk.rise ?? (pk.h! - peakBase(s, pk, fine, paint, det));
-      h += Math.max(0, rise) * peakShape(pk.shape, q, th + pk.spin);
+      const base = pk.rise === undefined ? peakBase(s, pk, fine, paint, det) : 0;
+      const rise = Math.max(0, pk.rise ?? (pk.h! - base)), shp = peakShape(pk.shape, q, th + pk.spin);
+      h += rise * shp;
+      // nothing on its slopes stands over the summit: the ground is held under an envelope a little above
+      // the mountain's own shape (a neighbouring top can come close, as Lhotse does to Everest)
+      if (pk.h !== undefined && q < 1) {
+        const cap = pk.h - rise * (1 - shp) * 0.3 * (1 - smooth01(0.7, 1, q)) + smooth01(0.7, 1, q) * 1e4;
+        if (h > cap) h = cap + (h - cap) * 0.08;
+      }
     }
   }
   if (!out.sea) zones(s, n, h, out);
@@ -378,6 +385,8 @@ function groundBase(s: GroundSpec, n: V3, fine: number, out: GroundSample, paint
     h += s.dunes * sandy * 25 * ridge * (0.5 + 0.5 * fbm(px / 9000, py / 9000 + seed, pz / 9000, 2));
   }
   if (sea) h = 0;
+  // the Earth's only tops over 8 km are its named 8000ers: the fractal does not make new ones
+  if (s.look.real === 'Earth' && h > 8000) h = 8000 + (h - 8000) * 0.3;
   // ground colour: the map's, with the grain of the soil and rock
   const grain = fbm(px / 37 + seed, py / 37, pz / 37, 3) - 0.5;
   const k = 1 + grain * 0.18;
