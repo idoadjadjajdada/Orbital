@@ -159,13 +159,18 @@ export class Hull {
     // ---- the outside
     this.box(-4, 4, -1.9, -T, -23.5, 4.25, M.dark, true);
     this.box(-5.6, 5.6, -1.6, -T, -7.6, 3.6, M.hull, true);
-    const nose = new THREE.Mesh(new THREE.ConeGeometry(4.4, 8, 4), M.hull);
-    nose.geometry.rotateY(Math.PI / 4);
-    nose.geometry.rotateX(-Math.PI / 2);
-    nose.scale.set(1, 0.42, 1);
-    nose.position.set(0, -0.75, -28.2);
+    // the prow: a long faceted wedge under the bridge's glass, its chin swept up to a point
+    const prow = new THREE.LatheGeometry([0.02, 1.2, 2.4, 3.3, 3.9, 4.2, 4.3].map((r, k) => new THREE.Vector2(r, -k * 1.7)), 10);
+    prow.rotateX(-Math.PI / 2);
+    prow.scale(1, 0.36, 1);
+    const nose = new THREE.Mesh(prow, M.hull);
+    nose.position.set(0, -0.85, -34.2);
     g.add(nose);
+    const keel = new THREE.Mesh(prow.clone().scale(0.55, 0.6, 0.98), M.dark);
+    keel.position.set(0, -1.35, -33.8);
+    g.add(keel);
     this.solids.push(new THREE.Box3(new THREE.Vector3(-3.5, -2, -32), new THREE.Vector3(3.5, 0.6, -24)));
+    this.dress(glow);
     // a spine and stripes
     this.box(-0.7, 0.7, 3 + T, 3.6, -13.5, -8.5, M.accent, false);
     for (const s of [1, -1]) this.box(s > 0 ? 6 + T : -6.3, s > 0 ? 6.3 : -6 - T, 2.55, 2.75, -8, 4, M.accent, false);
@@ -181,9 +186,8 @@ export class Hull {
       w.position.set(s * 4.7, 0.9, 0);
       g.add(w);
       this.solids.push(new THREE.Box3(new THREE.Vector3(s > 0 ? 4.7 : -16.2, 0.4, 10), new THREE.Vector3(s > 0 ? 16.2 : -4.7, 1.0, 18.4)));
-      this.box(s * 15.6 - 0.5, s * 15.6 + 0.5, 0.2, 1.6, 13.5, 19, M.accent, true);
       const nl = new THREE.Sprite(new THREE.SpriteMaterial({ map: glow, color: s > 0 ? 0x40ff70 : 0xff3030, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
-      nl.position.set(s * 16.3, 0.9, 13.4);
+      nl.position.set(s * 17.4, 0.9, 12.4);
       nl.scale.setScalar(2.4);
       g.add(nl);
       this.navLights.push(nl);
@@ -730,6 +734,100 @@ export class Hull {
     }
   }
 
+  /**
+   * the outside's dressing, none of it over a window or a door: the canopy's
+   * frame round the bridge glass, a dorsal spine with a glass bubble over the
+   * commons' skylight, the wings' leading edges and the engine nacelles at
+   * their tips, the shroud round the main engines with their exhaust cones,
+   * canted tail fins, RCS blocks, sensor domes, antennas, running lights,
+   * and the ship's name along its flanks
+   */
+  private dress(glow: THREE.Texture) {
+    const g = this.group, M = this.mat;
+    const mesh = (geo: THREE.BufferGeometry, m: THREE.Material, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) => {
+      const o = new THREE.Mesh(geo, m);
+      o.position.set(x, y, z);
+      o.rotation.set(rx, ry, rz);
+      g.add(o);
+      return o;
+    };
+    // the canopy frame: a dark bezel round the bridge's front glass, and a visor ridge over it
+    for (const [x0, x1, y0, y1] of [[-4.6, 4.6, 2.85, 3.2], [-4.6, 4.6, 0.25, 0.5], [-4.6, -4.25, 0.25, 3.2], [4.25, 4.6, 0.25, 3.2], [-0.1, 0.1, 0.5, 2.85]]) {
+      const b = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, 0.3), M.trim);
+      b.position.set((x0 + x1) / 2, (y0 + y1) / 2, -24.2);
+      g.add(b);
+    }
+    mesh(new THREE.BoxGeometry(9.4, 0.35, 1.6), M.dark, 0, 3.35, -23.6, 0.12, 0, 0);
+    // the dorsal spine, fore and aft of the commons' skylight, and a glass bubble over the skylight
+    const spine = (z0: number, z1: number) => {
+      const sp = mesh(new THREE.CylinderGeometry(1.5, 1.5, z1 - z0, 10, 1, false, -Math.PI / 2, Math.PI), M.hull, 0, 3.0 + 0.25, (z0 + z1) / 2, Math.PI / 2, 0, 0);
+      sp.scale.set(1, 1, 0.55);
+      return sp;
+    };
+    spine(-13.6, -6.2);
+    spine(2.2, 18);
+    const bubble = mesh(new THREE.SphereGeometry(3.4, 24, 10, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x9cc4e6, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide }), 0, 3.0 + 0.25, -2);
+    bubble.scale.set(1, 0.42, 1.05);
+    mesh(new THREE.TorusGeometry(3.4, 0.12, 6, 32), M.trim, 0, 3.3, -2, Math.PI / 2, 0, 0).scale.set(1, 1.05, 1);
+    // the wings' leading edges, a darker strip, and a fence
+    for (const s of [1, -1]) {
+      const le = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, Math.hypot(11.5, 6.5), 8), M.dark);
+      le.position.set(s * (4.7 + 5.75), 0.73, 11.25);
+      le.rotation.set(Math.PI / 2, 0, 0);
+      le.rotateX(0);
+      le.rotation.z = 0;
+      le.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(s * 11.5, 0, 6.5).normalize());
+      g.add(le);
+      mesh(new THREE.BoxGeometry(0.12, 0.6, 5), M.accent, s * 10, 1.1, 15.5);
+      // the nacelle at the tip: a long pod with an intake ring at the front and a glowing nozzle at the back
+      const nx = s * 16.6;
+      mesh(new THREE.CylinderGeometry(1.1, 1.25, 9, 14), M.hull, nx, 0.75, 15.5, Math.PI / 2, 0, 0);
+      mesh(new THREE.CylinderGeometry(0.6, 1.1, 2.2, 14), M.hull, nx, 0.75, 9.9, Math.PI / 2, 0, 0);
+      mesh(new THREE.TorusGeometry(1.15, 0.12, 6, 16), M.accent, nx, 0.75, 11.1);
+      mesh(new THREE.CylinderGeometry(1.0, 0.85, 1.2, 14, 1, true), new THREE.MeshLambertMaterial({ color: 0x3a3f4a, side: THREE.DoubleSide }), nx, 0.75, 20.6, Math.PI / 2, 0, 0);
+      mesh(new THREE.CircleGeometry(0.8, 14), M.cyan, nx, 0.75, 20.3, 0, Math.PI, 0);
+      const f = new THREE.Sprite(new THREE.SpriteMaterial({ map: glow, color: 0x7fb4ff, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+      f.position.set(nx, 0.75, 21.4);
+      g.add(f);
+      this.flames.push(f);
+      this.solids.push(new THREE.Box3(new THREE.Vector3(nx - 1.3, -0.5, 8.8), new THREE.Vector3(nx + 1.3, 2.0, 21)));
+      // a canted tail fin over each side of the engines
+      const fin = new THREE.Shape();
+      fin.moveTo(0, 0); fin.lineTo(5.5, 0); fin.lineTo(6.8, 4.6); fin.lineTo(4.6, 4.6); fin.lineTo(0, 0);
+      const fg = new THREE.ExtrudeGeometry(fin, { depth: 0.25, bevelEnabled: false });
+      const fm = mesh(fg, M.hull, s * 3.4, 3.6, 13.5, 0, -Math.PI / 2, s * 0.45);
+      fm.scale.z = s;
+      // RCS blocks: four nozzles on each corner of the hull
+      for (const [y, z] of [[2.6, -20], [-1.2, -20], [2.6, 15], [-1.2, 15]]) {
+        mesh(new THREE.BoxGeometry(0.7, 0.7, 0.7), M.dark, s * 4.85, y, z);
+        for (const [dy, dz] of [[0.42, 0], [-0.42, 0], [0, 0.42], [0, -0.42]]) mesh(new THREE.CylinderGeometry(0.08, 0.14, 0.2, 6), M.steel, s * 4.85, y + dy, z + dz, dz ? Math.PI / 2 : 0, 0, 0);
+      }
+      // the ship's name along the flank, on the engineering section
+      const tex = nameplate();
+      if (tex) {
+        const plate = mesh(new THREE.PlaneGeometry(7, 1.1), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }), s * (4.5 + 0.27), 2.1, 13, 0, s * Math.PI / 2, 0);
+        plate.renderOrder = 1;
+      }
+      // running lights along the flank
+      for (const z of [-20, -10, 6, 17]) {
+        const l = new THREE.Sprite(new THREE.SpriteMaterial({ map: glow, color: 0xfff2c0, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+        l.position.set(s * 4.8, 3.05, z);
+        l.scale.setScalar(0.6);
+        g.add(l);
+      }
+    }
+    // the shroud round the main engines: an octagonal cowling with a lip, open at the back
+    const shroud = new THREE.CylinderGeometry(4.3, 4.0, 6.2, 8, 1, true);
+    mesh(shroud, M.dark, 0, 1.2, 21.3, Math.PI / 2, 0, Math.PI / 8).material = new THREE.MeshLambertMaterial({ color: 0x5a6274, flatShading: true, side: THREE.DoubleSide });
+    mesh(new THREE.TorusGeometry(4.35, 0.2, 6, 8), M.accent, 0, 1.2, 24.4, 0, 0, Math.PI / 8);
+    // exhaust cones in the nozzles
+    for (const [x, y] of [[-2.6, 0.6], [2.6, 0.6], [0, 2.6]] as const) mesh(new THREE.ConeGeometry(0.45, 1.2, 10), M.steel, x, y, 24.9, -Math.PI / 2, 0, 0);
+    // sensor domes under the prow and on the spine, and a pair of antennas
+    mesh(new THREE.SphereGeometry(0.7, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), M.steel, 0, -2.2, -21, Math.PI, 0, 0);
+    mesh(new THREE.SphereGeometry(0.5, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), M.steel, 0, 4.6, 10);
+    for (const x of [-1.2, 1.2]) mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.6, 4), M.steel, x, 5.4, 15, 0, 0, x * 0.15);
+  }
+
   /** a slab of hull: plating outside, `inner` (a box face: +x −x +y −y +z −z) panelled, and the face opposite too if it is `two`-sided */
   private slab(x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, inner: number, m: THREE.Material, two = false) {
     const mats: THREE.Material[] = Array(6).fill(this.mat.hull);
@@ -1246,4 +1344,20 @@ function graphTexture(seed: number, title: string) {
   for (let x = 0; x < 180; x += 3) g.lineTo(12 + x, 70 + 18 * Math.sin(x * 0.09 * seed));
   g.stroke();
   return canvasTex(cv);
+}
+
+/** the ship's name, stencilled, for its flanks */
+function nameplate() {
+  if (typeof document === 'undefined') return null;
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 80;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#d8643a'; g.fillRect(0, 62, 512, 8);
+  g.font = 'bold 54px sans-serif';
+  g.fillStyle = '#2a303c';
+  g.textBaseline = 'middle';
+  g.fillText('ORBITAL  ·  NX-01', 12, 32);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
 }

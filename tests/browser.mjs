@@ -340,8 +340,10 @@ try {
   await page.evaluate(() => window.orbital.v3.launch('rover'));
   ok('the rover lands and reports', await page.waitForFunction(() => window.orbital.v3.fleet.crafts.some(c => c.kind === 'rover' && c.state === 'surface' && c.log.some(r => /Soil/.test(r.msg))), null, { timeout: 90000 }).then(() => true, () => false));
   await page.evaluate(() => window.orbital.v3.viewCraft(window.orbital.v3.fleet.crafts.find(c => c.kind === 'rover').id));
-  await page.keyboard.down('KeyW'); await page.waitForTimeout(1200); await page.keyboard.up('KeyW');
-  ok('you can drive it', await page.evaluate(() => window.orbital.v3.mode === 'craft' && window.orbital.v3.fleet.crafts.find(c => c.kind === 'rover').odo > 1));
+  // (held until it has gone a metre: frames can be slow in a software renderer)
+  await page.keyboard.down('KeyW');
+  ok('you can drive it', await until(page, () => window.orbital.v3.mode === 'craft' && window.orbital.v3.fleet.crafts.find(c => c.kind === 'rover').odo > 1));
+  await page.keyboard.up('KeyW');
   await page.keyboard.press('KeyF');
   ok('F comes back from the rover', await page.evaluate(() => window.orbital.v3.mode === 'surface'));
   await page.evaluate(() => { const v = window.orbital.v3; v.surf.n = v.ladderFoot(); });
