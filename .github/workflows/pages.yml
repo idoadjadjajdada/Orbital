@@ -13,9 +13,11 @@ permissions:
   pages: write
   id-token: write
 
+# On main every commit gets its own result: a newer push waits for the run before it rather
+# than cancelling it (a cancelled run reads as a failure). Pull requests drop stale runs.
 concurrency:
   group: pages-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Everything that can run side by side does: the build, the unit tests, and the browser
 # suite cut into parts, one job each. The browser jobs use the Chrome already on the
