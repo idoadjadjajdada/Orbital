@@ -3,7 +3,7 @@
 What's next, in order. Move things up or down; tick them when done.
 
 ## Next
-- [ ] The ship: better looking, outside and inside ([message](Feedback/2026-10-04.md#gravity-the-ships-looks-and-the-map))
+- [x] The ship: better looking, outside and inside (6039531) ([message](Feedback/2026-10-04.md#gravity-the-ships-looks-and-the-map))
 - [x] Call the two views 2D and 3D (09cc9fd) ([message](Feedback/2026-10-04.md#gravity-the-ships-looks-and-the-map))
 - [ ] Rockets: open and close the doors and hatches when boarding (the models carry the animations)
 - [ ] Rockets: a cockpit or cabin camera while riding (the models have a cockpit camera socket)

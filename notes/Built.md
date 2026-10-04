@@ -2,6 +2,7 @@
 
 What's in the game, newest first. The README has the full description.
 
+- **The ship's new look**: shining plates with their seams in relief, a darker belly, strobes, roof fittings; inside, guide lights, rails, ribs and cove lights (6039531); [pictures](Feedback/2026-10-04.md#gravity-the-ships-looks-and-the-map)
 - **Held by the world you are over**: near a world the ship, Lander 1 and a spacewalker turn with it, so the ground stays put under you; low over it a spacewalker sinks to the ground (09cc9fd)
 - **2D and 3D**: the button between the views says which one it takes you to (09cc9fd)
 - **The ground close up**: lit pixel by pixel over its relief; rock in strata, stones and pebbles, sand ripples, cracked and glinting ice, pitted lava rock (fa4f147, 4d02d5c); [before and after](Feedback/2026-10-04.md#feature-better-textures-in-general-and-specifically-on-the-land-of-planets-and-things)

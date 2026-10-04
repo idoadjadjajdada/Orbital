@@ -224,7 +224,7 @@ can use; `H` shows every control for every place.
 At the helm, `L` (or `X` near the ground) lands and lifts off, and `K` anywhere
 aboard opens **Mission control**.
 
-`V` (or Menu) goes back to the map from anywhere.
+`V` (or Menu) goes back to 2D from anywhere; the button at the top says **2D** or **3D**, whichever it takes you to.
 
 **Touch.** Put your left thumb down anywhere on the left of the screen and a
 stick appears under it, to fly or walk; drag anywhere else to look (the view
@@ -620,6 +620,16 @@ The ship has a long prow under the bridge glass, a dorsal spine with a glass
 bubble over the commons' skylight, swept wings with engine nacelles at their
 tips, a shroud round the main engines, canted tail fins, RCS blocks, sensor
 domes, running lights and its name on its flanks — none of it over a window.
+Its plates are painted and bare metal that catch the light and reflect a dark
+sky with a few lights in it, with their seams and rivets in relief and a darker
+belly; white strobes flash on the fin, the belly and the chin, and the roofs
+carry vents, boxes and conduits. Inside, every wall has a kick plate with a
+line of guide light along the floor, a rail at waist height, ribs at its ends
+and a cove of light under the ceiling.
+
+Near a world, the ship (and Lander 1, and you on a spacewalk) turns with it, so
+the ground holds still under you while you come down; low over the ground a
+spacewalker sinks to it under its gravity, slowed by the suit's thrusters.
 
 Each of the Earth's animals is built to its own body plan — the elephant's
 trunk, tusks and ears, the giraffe's neck and patches, the zebra's stripes,

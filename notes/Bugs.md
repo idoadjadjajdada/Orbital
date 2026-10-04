@@ -6,11 +6,13 @@ What looks wrong, and where: the world and the latitude and longitude from the r
 - [ ] 
 
 ## Known limits
+- From inside the ship, its outside (seen through the windows) is drawn in plain paint, not shining metal: a software renderer would light it behind every wall.
 - Rocket flights, landings and descents run on frame time, so they are slower when frames are slow.
 - The jetpack can fly up through a base building's roof.
 - Locally, the browser test's touch part times out when run after other parts in the same process (CI runs each part separately, where it passes).
 
 ## Fixed
+- [x] The ship's dorsal spine was built upside down, hanging into the aft passage and engineering; the tail fins dipped into engineering; the hull's plating showed above engineering's door (6039531)
 - [x] Near a world, the ship and you on a spacewalk were not carried round with it: the ground slid away underneath while you came down to land (09cc9fd). ([message](Feedback/2026-10-04.md#gravity-the-ships-looks-and-the-map))
 - [x] Going from 3D to the map left the 3D picture frozen over it, with only the labels drawn (09cc9fd). ([message](Feedback/2026-10-04.md#gravity-the-ships-looks-and-the-map))
 - [x] The deploy failing since the ground's close-up textures: they made CI's frames too slow for Lander 1's landing test (9ea26d0)
