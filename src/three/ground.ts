@@ -35,7 +35,8 @@ import { apolloMesh, flagMesh, lrvMesh, landerMesh, roverMesh, veneraMesh, huyge
  */
 
 const FRAG_NOISE = /* glsl */ `
-float h3(vec3 p) { p = mod(p, 256.0); p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+// (a hash without the streaks the simpler ones leave at high frequencies: Dave Hoskins' hash13)
+float h3(vec3 p) { p = mod(p, 289.0); vec3 q = fract(p * 0.1031); q += dot(q, q.zyx + 31.32); return fract((q.x + q.y) * q.z); }
 float n3(vec3 x) {
   vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
   return mix(mix(mix(h3(i), h3(i + vec3(1, 0, 0)), f.x), mix(h3(i + vec3(0, 1, 0)), h3(i + vec3(1, 1, 0)), f.x), f.y),
@@ -162,7 +163,8 @@ void main() {
     float e = 0.05;
     float stones = smoothstep(0.7, 0.76, n3(vLocal * 2.3 + 11.0));
     float pebbles = smoothstep(0.66, 0.7, n3(vLocal * 7.1 + 5.0));
-    #define RELIEF(p) (n3((p) * 1.7) * 0.5 + n3((p) * 4.3) * 0.25 + n3((p) * 11.0) * 0.12)
+    // (clods and hummocks, stones' worth of bumps, then grit that only shows at your feet)
+    #define RELIEF(p) (n3((p) * 1.7) * 0.3 + n3((p) * 4.3) * 0.22 + n3((p) * 11.0) * 0.14 + n3((p) * 29.0) * 0.06 * (1.0 - smoothstep(3.0, 12.0, d)))
     float h0 = RELIEF(vLocal), h1 = RELIEF(vLocal + vT1 * e), h2 = RELIEF(vLocal + vT2 * e);
     float amp = kind == 2.0 ? 0.05 : kind == 1.0 ? 0.06 : 0.11;
     vec2 g = vec2(h1 - h0, h2 - h0) / e * amp;
