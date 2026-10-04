@@ -90,7 +90,7 @@ export class NebulaLook {
       vertexShader: NEB_VERT, fragmentShader: NEB_FRAG, side: THREE.BackSide, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
       uniforms: {
         camL: { value: new THREE.Vector3() }, invProj: { value: new THREE.Matrix4() }, viewToLocal: { value: new THREE.Matrix3() }, res: { value: new THREE.Vector2(1, 1) },
-        thick: { value: pne ? 0.13 : 0.08 }, bright: { value: pne ? 2.2 : 2.6 }, fill: { value: pne ? 0.35 : 0.05 },
+        thick: { value: pne ? 0.13 : 0.08 }, bright: { value: pne ? 1.3 : 1.5 }, fill: { value: pne ? 0.35 : 0.05 },
         inner: { value: pne ? new THREE.Color(0.25, 0.85, 0.8) : new THREE.Color(0.55, 0.7, 1.0) },
         rim: { value: pne ? new THREE.Color(1.0, 0.32, 0.28) : new THREE.Color(1.0, 0.45, 0.35) },
         time: { value: 0 },

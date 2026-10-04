@@ -115,3 +115,61 @@ function gas(phi: number, lr: number) {
   const cx = Math.cos(phi), sy = Math.sin(phi);
   return vnoise(cx * 3.5 + 11, sy * 3.5, lr * 9) * 0.55 + vnoise(cx * 9 + 3, sy * 9, lr * 26) * 0.3 + vnoise(cx * 22, sy * 22 + 5, lr * 60) * 0.15;
 }
+
+// ------------------------------------------------------------------ a nebula's shell, on the map
+interface Shell { cv: HTMLCanvasElement; img: ImageData }
+const shells = new WeakMap<Body, Shell>();
+const SRES = 160;
+
+/**
+ * a planetary nebula's or a supernova remnant's shell, seen from above: the light of a thin glowing
+ * shell summed along each line of sight (brightest at the rim, where the sight line runs along it, as
+ * the Ring and Helix nebulae are), ripped into knots and threads, a planetary nebula's blue-green
+ * oxygen inside a red rim, a remnant's blue-white filaments shot with red
+ */
+export function drawNebula(ctx: CanvasRenderingContext2D, b: Body, x: number, y: number, rPx: number, pne: boolean, now: number) {
+  if (rPx < 3) return;
+  let s = shells.get(b);
+  if (!s) {
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = SRES;
+    s = { cv, img: cv.getContext('2d')!.createImageData(SRES, SRES) };
+    shells.set(b, s);
+    // the shell barely changes: painted once, when first seen
+    const data = s.img.data, seed = (b.id % 97) * 3.1;
+    const inner = pne ? [0.25, 0.85, 0.8] : [0.55, 0.7, 1.0], rim = pne ? [1.0, 0.32, 0.28] : [1.0, 0.45, 0.35];
+    const thick = pne ? 0.13 : 0.08, fill = pne ? 0.35 : 0.05;
+    for (let j = 0; j < SRES; j++) for (let i = 0; i < SRES; i++) {
+      const u = ((i + 0.5) / SRES * 2 - 1) * 1.3, v = ((j + 0.5) / SRES * 2 - 1) * 1.3;
+      const q = Math.hypot(u, v);
+      const o = (j * SRES + i) * 4;
+      if (q > 1.3) { data[o + 3] = 0; continue; }
+      let R = 0, G = 0, B = 0;
+      const zMax = Math.sqrt(Math.max(0, 1.69 - q * q)), N = 24, dz = (2 * zMax) / N;
+      for (let k = 0; k < N; k++) {
+        const z = -zMax + (k + 0.5) * dz;
+        const r = Math.hypot(q, z);
+        const wob = (vnoise(u * 2.2 + seed, v * 2.2, z * 2.2) - 0.5) * 0.25;
+        const shell = Math.exp(-(((r - 1 - wob) / thick) ** 2));
+        const a = 1 - Math.abs(2 * vnoise(u * 3 + seed, v * 3, z * 3) - 1), bb = 1 - Math.abs(2 * vnoise(u * 7 + 4.1, v * 7 + seed, z * 7) - 1);
+        const th = a ** 3 * 0.65 + bb ** 4 * 0.35;
+        const dens = shell * (0.35 + 1.6 * th) + fill * Math.max(0, Math.min(1, (1.05 - r) / 0.85)) * (0.5 + 0.7 * vnoise(u * 4, v * 4 + seed, z * 4));
+        const m = Math.max(0, Math.min(1, (r + wob * 0.5 - 0.85) / 0.27));
+        R += (inner[0] + (rim[0] - inner[0]) * m) * dens * dz;
+        G += (inner[1] + (rim[1] - inner[1]) * m) * dens * dz;
+        B += (inner[2] + (rim[2] - inner[2]) * m) * dens * dz;
+      }
+      const k = pne ? 1.3 : 1.5;
+      data[o] = 255 * (1 - Math.exp(-R * k)); data[o + 1] = 255 * (1 - Math.exp(-G * k)); data[o + 2] = 255 * (1 - Math.exp(-B * k)); data[o + 3] = 255;
+    }
+    s.cv.getContext('2d')!.putImageData(s.img, 0, 0);
+  }
+  void now;
+  const prevSmooth = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = true;
+  ctx.globalCompositeOperation = 'lighter';
+  const R = rPx * 1.3;
+  ctx.drawImage(s.cv, x - R, y - R, R * 2, R * 2);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.imageSmoothingEnabled = prevSmooth;
+}

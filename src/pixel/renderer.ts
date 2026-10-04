@@ -8,7 +8,7 @@ import { bakeSprite, bodyFrame, starRGB, type V3 } from './sprites';
 import { paintCrater, cloneMap, lookKey, type SurfaceMap } from './surface';
 import { maps, MapService } from './maps';
 import { bayer } from './noise';
-import { drawAccretion } from './accretion';
+import { drawAccretion, drawNebula } from './accretion';
 import { bakeShaped } from './shaped';
 import { drawFlash, drawJet, drawPulsar, drawWhiteHole, drawWormhole, drawCraft } from './phenomena';
 import { chip } from '../physics/materials';
@@ -334,8 +334,11 @@ export class Renderer {
     const compact = s.sources.filter(b => b.compact);
     const emitters = s.sources.filter(b => b.cls === 'star');
     let any = false;
+    // gas a drawn shell already shows (a nebula's) is not drawn again as dots over it
+    const shells = s.sources.filter(b => (b.kind === 'pne' || b.kind === 'snr') && (this.discExt.get(b)?.r ?? 0) > 0);
     for (const b of s.bodies) {
       if (b.source || !b.alive || !b.isParticle) continue;
+      if (b.cls === 'gasp' && shells.some(h => Math.hypot(b.x - h.x, b.y - h.y, b.z - h.z) < this.discExt.get(h)!.r * 2)) continue;
       const x = this.sx(b.x), y = this.sy(b.y);
       if (x < -8 || y < -8 || x > W + 8 || y > H + 8) continue;
       let near: Body | null = null, nd = Infinity;
@@ -512,6 +515,18 @@ export class Renderer {
     const sz = cached.size * k;
     ctx.drawImage(cached.canvas, Math.round(d.sx - sz / 2), Math.round(d.sy - sz / 2), Math.round(sz), Math.round(sz));
 
+    // ---- a nebula's shell round its star: as far out as most of its gas ----
+    if (b.kind === 'pne' || b.kind === 'snr') {
+      let ext = this.discExt.get(b);
+      if (!ext || s.timeReal - ext.t > 3) {
+        const ds: number[] = [];
+        for (const p of s.bodies) if (p.alive && p.isParticle) ds.push(Math.hypot(p.x - b.x, p.y - b.y, p.z - b.z));
+        ds.sort((u, v) => u - v);
+        ext = { t: s.timeReal, r: ds.length > 30 ? ds[Math.floor(ds.length * 0.6)] : 0 };
+        this.discExt.set(b, ext);
+      }
+      if (ext.r) drawNebula(ctx, b, d.sx, d.sy, ext.r * this.scale, b.kind === 'pne', s.timeReal);
+    }
     // ---- jets: along the spin of what has fallen in, as bright as the feeding ----
     if (b.look.pulsar) drawPulsar(ctx, d.sx, d.sy, d.r, s.timeReal * 3 + b.id, !!b.look.magnetar);
     if (b.cls === 'bh' || b.cls === 'ns') this.drawJets(b, d, s);
