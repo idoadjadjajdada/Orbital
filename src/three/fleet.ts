@@ -567,7 +567,7 @@ export class Fleet {
       if (c.state === 'lost' && c.kind !== 'base') continue;
       const p = this.local(c);
       const at = new THREE.Vector3(c.b.x - P[0], c.b.y - P[1], c.b.z - P[2]).multiplyScalar(AU_M).add(p);
-      if (at.length() > Math.max(5e7, c.b.r * AU_M * 20)) continue;
+      if (at.length() > (c.state === 'surface' ? 2e5 : Math.max(5e7, c.b.r * AU_M * 20))) continue;
       out.push({ key: `craft:${c.id}`, text: `${c.name} · ${c.status}`, at });
     }
     return out;

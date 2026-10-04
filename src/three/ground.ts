@@ -6,6 +6,7 @@ import { bodyAxis } from '../pixel/renderer';
 import { groundSpec, groundAt, tangent, groundPainter, type GroundSpec, type GroundSample } from './terrain';
 import { TileSet } from './tiles';
 import { FormSet, type Form } from './landforms';
+import { earthAnimal, alienAnimal, type Beast } from './fauna';
 import { detailFor } from '../pixel/surface';
 import { LIGHT_GLSL } from './lightglsl';
 import { atmosphere, life, gravity, rng, type Atmosphere, type Life } from './science';
@@ -174,7 +175,7 @@ const solid = (b: Body) => !b.look.craft && !b.look.wormhole && !b.look.white &&
   && !['gas', 'icegiant', 'hotjupiter', 'browndwarf'].includes(b.look.style) && b.r * AU_M > 2000;
 
 interface Placed { obj: THREE.Object3D; key: string }
-interface Critter { obj: THREE.Object3D; n: V3; head: number; speed: number; fly: number; name: string; t: number }
+interface Critter { obj: THREE.Object3D; n: V3; head: number; speed: number; fly: number; name: string; t: number; beast: Beast }
 
 export class Ground {
   /** at the body's centre, in its turning frame: everything on the ground hangs off it */
@@ -615,8 +616,8 @@ export class Ground {
       if (arc(c.n, n) * R > 250) c.head += Math.PI;
       this.stand(c.obj, c.n, c.fly);
       c.obj.rotateY(-c.head + Math.PI / 2);
-      // a bob as it walks
-      c.obj.children[0].position.y = Math.abs(Math.sin(this.t * 6 * c.speed)) * 0.08 * c.obj.scale.y;
+      // legs, head, tail, wings
+      c.beast.animate(this.t + c.n[0] * 100, c.fly ? 3 : c.speed);
       const d = arc(c.n, n) * R;
       if (d < 40 && !this.found.has(c.name)) { this.found.add(c.name); this.onFind(c.name, 'Life form, seen up close.'); }
     }
@@ -679,12 +680,14 @@ export class Ground {
     const nF = fauna.length ? Math.min(14, 4 + Math.floor(r() * 10)) : 0;
     for (let k = 0; k < nF; k++) {
       const f = fauna[Math.floor(r() * fauna.length)];
-      const obj = critterMesh(f.color, f.fly);
-      obj.scale.setScalar(Math.max(0.3, f.size));
+      // its own body plan, scaled so its length or height (whichever is greater) is the animal's size
+      const beast = earth ? earthAnimal(f.name, f.color, f.fly) : alienAnimal(Math.floor(r() * 1e6) + f.name.length * 977, f.color, f.fly);
+      const obj = beast.obj, bb = new THREE.Box3().setFromObject(obj), sz = bb.getSize(new THREE.Vector3());
+      obj.scale.setScalar(Math.max(0.3, f.size) / Math.max(0.3, sz.y, sz.z));
       const rad = 20 + 160 * r(), ang = r() * Math.PI * 2, th = rad / R;
       const cn: V3 = [Math.cos(th) * n[0] + Math.sin(th) * (Math.cos(ang) * e[0] + Math.sin(ang) * nn[0]), Math.cos(th) * n[1] + Math.sin(th) * (Math.cos(ang) * e[1] + Math.sin(ang) * nn[1]), Math.cos(th) * n[2] + Math.sin(th) * (Math.cos(ang) * e[2] + Math.sin(ang) * nn[2])];
       this.root.add(obj);
-      this.critters.push({ obj, n: cn, head: r() * 6.28, speed: 0.5 + r(), fly: f.fly ? 8 + 20 * r() : 0, name: f.name, t: r() * 3 });
+      this.critters.push({ obj, n: cn, head: r() * 6.28, speed: 0.5 + r(), fly: f.fly ? 8 + 20 * r() : 0, name: f.name, t: r() * 3, beast });
     }
   }
 
@@ -792,21 +795,3 @@ function summitCairn() {
   return g;
 }
 
-/** an animal: a body, four legs and a head; or wings for a flyer */
-function critterMesh(color: number, fly: boolean) {
-  const g = new THREE.Group();
-  const inner = new THREE.Group();
-  g.add(inner);
-  const m = new THREE.MeshLambertMaterial({ color, flatShading: true });
-  const add = (geo: THREE.BufferGeometry, x: number, y: number, z: number) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); inner.add(o); return o; };
-  if (fly) {
-    add(new THREE.BoxGeometry(0.2, 0.15, 0.5), 0, 0, 0);
-    const w1 = add(new THREE.BoxGeometry(0.8, 0.02, 0.25), -0.45, 0.05, 0), w2 = add(new THREE.BoxGeometry(0.8, 0.02, 0.25), 0.45, 0.05, 0);
-    w1.rotation.z = 0.3; w2.rotation.z = -0.3;
-  } else {
-    add(new THREE.BoxGeometry(0.4, 0.35, 0.9), 0, 0.6, 0);
-    add(new THREE.BoxGeometry(0.25, 0.25, 0.3), 0, 0.85, -0.55);
-    for (const x of [-0.15, 0.15]) for (const z of [-0.32, 0.32]) add(new THREE.BoxGeometry(0.08, 0.45, 0.08), x, 0.22, z);
-  }
-  return g;
-}
