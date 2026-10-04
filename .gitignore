@@ -5,3 +5,6 @@ dist/
 notes/.obsidian/workspace*.json
 notes/.obsidian/cache
 notes/.trash/
+.obsidian/workspace*.json
+.obsidian/cache
+.trash/
