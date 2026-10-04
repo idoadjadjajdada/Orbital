@@ -20,6 +20,7 @@ import { gravity, atmosphere } from './science';
 import { Fleet, type CraftKind, type Craft } from './fleet';
 import { Visit } from './visit';
 import { Placer } from './placer';
+import { Suit } from './suit';
 import { Shuttle } from './shuttle';
 import { Giant, HULL_BAR } from './giant';
 import { starMaterial, tickStar, dropStar } from './star';
@@ -455,6 +456,8 @@ export class View3D {
   visit!: Visit;
   /** choosing where a base or launch pad goes */
   placer!: Placer;
+  /** your suit's air, power and kit, and what you ride on the ground */
+  kit!: Suit;
   /** the suit's top-up and the lab's analyser (the suit's own module fills these in) */
   suitRefill?: () => void;
   analyseSamples?: () => void;
@@ -508,6 +511,9 @@ export class View3D {
     this.shuttle = new Shuttle(this);
     this.visit = new Visit(this);
     this.placer = new Placer(this);
+    this.kit = new Suit(this);
+    this.suitRefill = () => this.kit.refill();
+    this.analyseSamples = () => this.kit.analyse();
     this.scene.add(this.camera);
     this.base = this.ship.nav;
     this.controls = new Controls3D(this);
@@ -803,6 +809,7 @@ export class View3D {
       case 'globe': this.panels.show('survey'); break;
       case 'bunk': this.goToSleep(); break;
       case 'samples': {
+        if (this.kit.samples.length) { this.kit.analyse(); break; }
         const n = this.logbook.firsts.length;
         toast(n ? `${Math.min(12, n)} vial${n > 1 ? 's' : ''} of orbital scans, one per world. Real samples will need the lander.` : 'Twelve empty vials. Each world you fly close to fills one with scans; real samples will need the lander.');
         break;
@@ -901,6 +908,9 @@ export class View3D {
 
   /** back in through the airlock */
   board() {
+    this.kit.refill();
+    this.kit.ride = null;
+    this.kit.jet = false;
     this.surf.b = null;
     this.mode = 'walk';
     this.foot.deck = 0;
@@ -1287,6 +1297,12 @@ export class View3D {
     if (!b || !b.alive || this.ground.body !== b || !this.ground.spec) { this.mode = 'eva'; this.suit.nav = { ...S.nav, vel: [0, 0, 0] }; return; }
     const R = this.ground.spec.R, g = gravity(b);
     const inp = this.controls.walkInput();
+    if (this.kit.ride) {
+      S.y = this.kit.rideStep(dt, inp, R);
+      S.vy = 0;
+      this.placeSurf();
+      return;
+    }
     // a bounding lope in low gravity, a walk otherwise
     const sp = (inp.run ? 6 : 2.5) * (g < 3 ? 1.3 : 1);
     const [e, nn] = tangent(S.n);
@@ -1306,7 +1322,10 @@ export class View3D {
     }
     S.speed = Math.hypot(inp.f, inp.s) * sp;
     if (inp.jump && !air) S.vy = 3.4;
+    // the jetpack: thrust up while Space is held, a little more than the world's weight
+    if (this.kit.jet && inp.jump && this.kit.power > 0) S.vy += (g + 4) * dt;
     S.vy -= g * dt;
+    if (this.kit.jet && S.y > 250) { S.y = 250; S.vy = Math.min(0, S.vy); }
     S.y = Math.max(0, S.y + S.vy * dt);
     if (S.y <= 0) S.vy = 0;
     // under a roof, your head stops you
@@ -1350,6 +1369,7 @@ export class View3D {
     if (this.mode === 'walk') this.walk(dtReal);
     if (this.mode === 'eva') this.spacewalk(dtReal);
     if (this.mode === 'surface') this.surfaceStep(dtReal);
+    this.kit.frame(dtReal);
     this.shuttle.step(dtReal, this.mode === 'shuttle');
     // the craft move on before the viewer is placed: inside one, you go where it goes
     this.fleet.step(dtReal);
@@ -1592,7 +1612,7 @@ export class View3D {
       else this.prompt = this.visit.wayIn();
     } else if (this.mode === 'surface') {
       const foot = this.ladderFoot();
-      const way = this.visit.wayIn();
+      const way = this.kit.ride ? { label: `Get off the ${this.kit.ride === 'hover' ? 'hover bike' : 'buggy'}`, act: () => { this.kit.ride = null; } } : this.visit.wayIn();
       if (foot && this.ground.spec && arc(foot, this.surf.n) * this.ground.spec.R < 4.5) { this.prompt = { label: 'Climb the ladder and board', act: () => this.board() }; sh.boardable = true; }
       else if (way) this.prompt = way;
       else if (this.shuttle.near(this.surf.b, this.surf.n)) this.prompt = { label: 'Board Lander 1', act: () => this.shuttle.board() };
@@ -1939,7 +1959,7 @@ export class View3D {
     else if (this.mode === 'surface') {
       const S = this.surf, [la, lo] = latLonOf(S.n);
       where = `On ${S.b?.name ?? 'the ground'} · ${Math.abs(la).toFixed(3)}°${la >= 0 ? 'N' : 'S'} ${Math.abs(lo).toFixed(3)}°${lo >= 0 ? 'E' : 'W'}`;
-      speed = `${S.speed.toFixed(1)} m/s on foot`;
+      speed = `${S.speed.toFixed(1)} m/s ${this.kit.ride === 'buggy' ? 'in the buggy' : this.kit.ride === 'hover' ? 'on the hover bike' : this.kit.jet && S.y > 0.5 ? `on the jetpack, ${S.y.toFixed(0)} m up` : 'on foot'}`;
     }
     else {
       const d = relM(this.suit.nav, sh.nav).length();
@@ -1960,7 +1980,7 @@ export class View3D {
     if (gs) near = gs;
     return {
       mode: this.mode, where, speed, drive, target: tgt,
-      near,
+      near, suit: this.kit.line(),
       riding: sh.nav.anchor?.name ?? '', throttle: this.controls.throttle, charge: sh.charge, flash: sh.flash,
       prompt: this.prompt?.label ?? '', tunnel: w?.phase === 'tunnel', od: sh.od, view: sh.view,
     };

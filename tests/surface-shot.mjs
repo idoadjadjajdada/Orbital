@@ -3,7 +3,7 @@ import { chromium } from 'playwright';
 import { createServer } from 'vite';
 
 const [name = 'Earth', lat = '28.57', lon = '-80.65', out = 'surface.png', yaw = '0', preset = 'earth', when = 'day'] = process.argv.slice(2);
-const server = await createServer({ server: { port: 4176, strictPort: true }, logLevel: 'error' });
+const server = await createServer({ server: { port: Number(process.env.PORT || 4176), strictPort: true }, logLevel: 'error' });
 await server.listen();
 const launch = { args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] };
 if (process.env.CHROMIUM_PATH) launch.executablePath = process.env.CHROMIUM_PATH;
@@ -11,7 +11,7 @@ const browser = await chromium.launch(launch);
 try {
   const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
   page.on('pageerror', e => console.log('pageerror', e.message));
-  await page.goto('http://localhost:4176/');
+  await page.goto(`http://localhost:${process.env.PORT || 4176}/`);
   await page.waitForFunction(() => window.orbital && window.orbital.world.time > 0, null, { timeout: 30000 });
   await page.evaluate(([p, n]) => { const a = window.orbital; a.loadPreset(p); a.select(a.world.sources.find(b => b.name === n)); }, [preset, name]);
   await page.keyboard.press('KeyV');

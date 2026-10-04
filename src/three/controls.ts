@@ -70,6 +70,9 @@ const BINDS: Record<Mode, Bind[]> = {
     { k: ['R'], p: ['Y'], t: 'Scan here', bar: true },
     { k: ['G'], p: ['B'], t: 'Call the ship down', bar: true },
     { k: ['N'], p: [], t: 'Helmet lamp', bar: true },
+    { k: ['B'], p: [], t: 'Buggy · hover bike', bar: true },
+    { k: ['J'], p: [], t: 'Jetpack (then Space)' },
+    { k: ['T'], p: [], t: 'Take a sample' },
     { k: ['K'], p: [], t: 'Mission control' },
     { k: ['M'], p: ['View'], t: 'Nav map', bar: true },
     { k: ['V'], p: ['Menu'], t: 'Back to the 2D map' },
@@ -127,7 +130,7 @@ const RAIL: Record<Mode, [string, string, string][]> = {
   pilot: [['go', '◎', 'Go to'], ['od', '⏩', 'Overdrive'], ['worm', '🌀', 'Wormhole'], ['land', '🛬', 'Land'], ['mission', '🛰', 'Craft'], ['light', '🔦', 'Light'], ['map', '🗺', 'Map'], ['view', '🎥', 'Camera'], ['leave', '🚶', 'Leave helm'], ['help', '?', 'Help']],
   walk: [['mission', '🛰', 'Craft'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
   inside: [['use', '👆', 'Use'], ['mission', '🛰', 'Craft'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
-  surface: [['scan', '🔬', 'Scan'], ['mission', '🛰', 'Craft'], ['light', '🔦', 'Lamp'], ['call', '📡', 'Call ship'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
+  surface: [['scan', '🔬', 'Scan'], ['ride', '🛞', 'Ride'], ['jet', '🚀', 'Jetpack'], ['sample', '🧪', 'Sample'], ['mission', '🛰', 'Craft'], ['light', '🔦', 'Lamp'], ['call', '📡', 'Call ship'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
   shuttle: [['sland', '🛬', 'Land'], ['use', '👆', 'Use'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
   craft: [['prev', '◀', 'Prev'], ['next', '▶', 'Next'], ['mission', '🛰', 'Mission'], ['leave', '↩', 'Back'], ['help', '?', 'Help']],
   eva: [['call', '📡', 'Call ship'], ['light', '🔦', 'Lamp'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
@@ -390,6 +393,9 @@ export class Controls3D {
     if (k === 'sland') v.shuttle.land();
     if (k === 'use') v.prompt?.act();
     if (k === 'scan') v.panels.show('scan');
+    if (k === 'ride') v.kit.cycleRide();
+    if (k === 'jet') v.kit.toggleJet();
+    if (k === 'sample') v.kit.sample();
     if (k === 'zin') this.zoom(2);
     if (k === 'zout') this.zoom(0.5);
     if (k === 'track') v.scope.track = !v.scope.track;
@@ -436,6 +442,9 @@ export class Controls3D {
         if (e.code === 'KeyF' || e.code === 'KeyE') v.prompt?.act();
         if (e.code === 'KeyR') v.panels.show('scan');
         if (e.code === 'KeyG') v.callShip();
+        if (e.code === 'KeyB') v.kit.cycleRide();
+        if (e.code === 'KeyJ') v.kit.toggleJet();
+        if (e.code === 'KeyT') v.kit.sample();
         break;
       case 'shuttle':
         if (e.code === 'KeyF' || e.code === 'KeyE') v.prompt?.act();
@@ -581,7 +590,7 @@ export class Controls3D {
     const thr = r.throttle >= 1 ? `×${r.throttle.toFixed(r.throttle < 10 ? 1 : 0)}` : `÷${(1 / r.throttle).toFixed(1)}`;
     const top = `<div class="mode3">${r.where}</div><b>${r.speed}</b> <span>${mode === 'scope' ? '' : `throttle ${thr}`}</span>`
       + `<div class="drv${r.tunnel ? ' worm' : ''}">${r.drive}</div><div class="jmp">wormhole ${bar}</div>`
-      + `${r.target ? `<div class="tgt">◎ ${r.target}</div>` : ''}${r.near ? `<div class="dim">near ${r.near}</div>` : ''}`;
+      + `${r.target ? `<div class="tgt">◎ ${r.target}</div>` : ''}${r.near ? `<div class="dim">near ${r.near}</div>` : ''}${r.suit ? `<div class="dim suit">${r.suit}</div>` : ''}`;
     if (this.topEl.innerHTML !== top) this.topEl.innerHTML = top;
 
     // what you can use, under the crosshair

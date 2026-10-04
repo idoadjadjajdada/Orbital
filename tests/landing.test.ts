@@ -155,3 +155,19 @@ describe('the sites', () => {
     expect(speciesIn('desert').some(s => s.name === 'Dromedary')).toBe(true);
   });
 });
+
+describe('the suit', () => {
+  it('reads what is outside: fit to breathe on the Earth, crushing and hot on Venus, thin and toxic on Mars, deadly radiation on Io', async () => {
+    const { environment } = await import('../src/three/suit');
+    const env = (n: string) => environment(body(n), atmosphere(body(n), stars));
+    expect(env('Earth').breathable).toBe(true);
+    const venus = env('Venus');
+    expect(venus.bar).toBeGreaterThan(80);
+    expect(venus.hazards.join(' ')).toMatch(/bar/);
+    expect(venus.T).toBeGreaterThan(400);
+    expect(venus.hazards.join(' ')).toMatch(/SO₂|CO₂/);
+    expect(env('Mars').hazards.join(' ')).toMatch(/too thin|vacuum/);
+    expect(env('Moon').hazards).toContain('vacuum');
+    expect(env('Io').hazards).toContain('lethal radiation');
+  });
+});
