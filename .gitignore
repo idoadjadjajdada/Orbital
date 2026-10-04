@@ -1,2 +1,7 @@
 node_modules/
 dist/
+
+# Obsidian: window layout and caches, not notes
+notes/.obsidian/workspace*.json
+notes/.obsidian/cache
+notes/.trash/

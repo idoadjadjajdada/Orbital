@@ -1,0 +1,19 @@
+# Roadmap
+
+What's next, in order. Move things up or down; tick them when done.
+
+## Next
+- [ ] Rockets: open and close the doors and hatches when boarding (the models carry the animations)
+- [ ] Rockets: a cockpit or cabin camera while riding (the models have a cockpit camera socket)
+- [ ] Rockets: fly back to where it came from, and repeat runs (a supply route)
+- [ ] Bases: crew and stores used up over time, so supply flights matter
+- [ ] Ruins: something to find inside them (an artefact for the log, a scan of who built them)
+- [ ] The hangar's own rover model stays visible after the rover drives out: hide it while it's out
+
+## Later
+- [ ] Interiors you can walk through in the rockets (cabins, ladders, cargo decks)
+- [ ] Growth lab: harvests become food in the base's stores
+- [ ] More building types for bases
+
+## Done
+See [[Built]].

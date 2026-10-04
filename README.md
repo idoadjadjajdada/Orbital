@@ -17,6 +17,8 @@ python3 tools/bake-sun.py      # the Sun's surface from the photograph in tools/
 python3 tools/pack-models.py   # the bases, trees, ruins and rockets (GLB) in tools/data, textures cut down
 ```
 
+The project's notebook (roadmap, ideas, bugs, the model packs) is in `notes/`, an Obsidian vault: start at `notes/Home.md`.
+
 Runs in any current browser, iPad and iPhone Safari included: touch to throw
 and select, double-tap to follow, pinch to zoom, drag to slide the view. On a
 small screen what is not needed folds away: the less-used buttons sit behind
