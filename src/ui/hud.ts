@@ -107,7 +107,8 @@ export class Hud {
     $('helpBtn').onclick = () => { $('help').hidden = !$('help').hidden; };
     $('modeBtn').onclick = () => void app.toggle3D();
     app.onMode = () => {
-      $('modeBtn').textContent = app.mode3d ? 'Map' : '3D';
+      $('modeBtn').textContent = app.mode3d ? '2D' : '3D';
+      $('modeBtn').title = app.mode3d ? 'Back to the 2D view (V)' : 'Fly through it in 3D (V)';
       $('modeBtn').classList.toggle('on', app.mode3d);
       // on a touch screen the 3D view needs its room: the inspector folds to its name
       if (app.mode3d && matchMedia('(pointer: coarse)').matches) $('inspector').classList.add('min');

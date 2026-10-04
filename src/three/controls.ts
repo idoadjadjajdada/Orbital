@@ -127,13 +127,13 @@ const THUMB: Record<Mode, [string, string][]> = {
 };
 /** touch: the rail of commands, tapped: key, icon, name */
 const RAIL: Record<Mode, [string, string, string][]> = {
-  pilot: [['go', '◎', 'Go to'], ['od', '⏩', 'Overdrive'], ['worm', '🌀', 'Wormhole'], ['land', '🛬', 'Land'], ['mission', '🛰', 'Craft'], ['light', '🔦', 'Light'], ['map', '🗺', 'Map'], ['view', '🎥', 'Camera'], ['leave', '🚶', 'Leave helm'], ['help', '?', 'Help']],
-  walk: [['mission', '🛰', 'Craft'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
-  inside: [['use', '👆', 'Use'], ['mission', '🛰', 'Craft'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
-  surface: [['scan', '🔬', 'Scan'], ['ride', '🛞', 'Ride'], ['jet', '🚀', 'Jetpack'], ['sample', '🧪', 'Sample'], ['mission', '🛰', 'Craft'], ['light', '🔦', 'Lamp'], ['call', '📡', 'Call ship'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
-  shuttle: [['sland', '🛬', 'Land'], ['use', '👆', 'Use'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
+  pilot: [['go', '◎', 'Go to'], ['od', '⏩', 'Overdrive'], ['worm', '🌀', 'Wormhole'], ['land', '🛬', 'Land'], ['mission', '🛰', 'Craft'], ['light', '🔦', 'Light'], ['map', '🗺', 'Nav map'], ['view', '🎥', 'Camera'], ['leave', '🚶', 'Leave helm'], ['help', '?', 'Help']],
+  walk: [['mission', '🛰', 'Craft'], ['map', '🗺', 'Nav map'], ['help', '?', 'Help']],
+  inside: [['use', '👆', 'Use'], ['mission', '🛰', 'Craft'], ['map', '🗺', 'Nav map'], ['help', '?', 'Help']],
+  surface: [['scan', '🔬', 'Scan'], ['ride', '🛞', 'Ride'], ['jet', '🚀', 'Jetpack'], ['sample', '🧪', 'Sample'], ['mission', '🛰', 'Craft'], ['light', '🔦', 'Lamp'], ['call', '📡', 'Call ship'], ['map', '🗺', 'Nav map'], ['help', '?', 'Help']],
+  shuttle: [['sland', '🛬', 'Land'], ['use', '👆', 'Use'], ['map', '🗺', 'Nav map'], ['help', '?', 'Help']],
   craft: [['prev', '◀', 'Prev'], ['next', '▶', 'Next'], ['mission', '🛰', 'Mission'], ['leave', '↩', 'Back'], ['help', '?', 'Help']],
-  eva: [['call', '📡', 'Call ship'], ['light', '🔦', 'Lamp'], ['map', '🗺', 'Map'], ['help', '?', 'Help']],
+  eva: [['call', '📡', 'Call ship'], ['light', '🔦', 'Lamp'], ['map', '🗺', 'Nav map'], ['help', '?', 'Help']],
   scope: [['track', '◎', 'Track'], ['leave', '↩', 'Step back'], ['help', '?', 'Help']],
 };
 const HELD = new Set(['up', 'down', 'boost', 'jump']);

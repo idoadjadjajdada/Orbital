@@ -688,6 +688,41 @@ export class View3D {
     return c.h;
   }
 
+  /** the sandbox's time when the movers were last turned with their worlds */
+  private spinT = -1;
+  /**
+   * near a world, what flies over it is held by it and turns with it: the
+   * ship, Lander 1 and you on a spacewalk keep your place over the ground,
+   * rather than the world turning away under you (at the Earth's equator,
+   * 465 m/s). Fully within a radius of the surface, less and less out to
+   * three radii up, where you are left to the stars.
+   */
+  private corotate() {
+    const t = this.app.world.time, dt = t - this.spinT;
+    this.spinT = t;
+    if (!(dt > 0)) return;
+    const movers: { m: Mover; q: THREE.Quaternion }[] = [];
+    if (!this.landing && !this.ship.worm) movers.push({ m: this.ship.nav, q: this.ship.quat });
+    if (this.mode === 'eva') movers.push({ m: this.suit.nav, q: this.suit.quat });
+    if (this.shuttle.state === 'flying') movers.push({ m: this.shuttle.nav, q: this.shuttle.quat });
+    for (const { m, q } of movers) {
+      const b = m.anchor;
+      if (!b || !b.alive || !b.spin) continue;
+      const x = Math.hypot(m.off[0], m.off[1], m.off[2]) / b.r, k = x <= 2 ? 1 : x >= 4 ? 0 : (4 - x) / 2;
+      const turn = b.spin * dt * k;
+      // (a jump in time — a preset loaded, the clock wound on — moves nothing)
+      if (k === 0 || Math.abs(turn) > 1) continue;
+      const s = b.spinAngle;
+      b.spinAngle = s - turn;
+      const q0 = bodyQuat(b);
+      b.spinAngle = s;
+      const dq = bodyQuat(b).multiply(q0.invert());
+      const o = new THREE.Vector3(...m.off).applyQuaternion(dq), v = new THREE.Vector3(...m.vel).applyQuaternion(dq);
+      m.off = [o.x, o.y, o.z]; m.vel = [v.x, v.y, v.z];
+      q.premultiply(dq);
+    }
+  }
+
   /** ride with whatever pulls hardest where a mover is */
   private pickAnchor(m: Mover) {
     if (m.anchor && !m.anchor.alive) m.anchor = null;
@@ -1430,6 +1465,7 @@ export class View3D {
     this.frameNo++;
     if (!this.landing && (!sh.worm || sh.worm.phase !== 'tunnel')) this.pickAnchor(sh.nav);
     if (this.mode === 'eva') this.pickAnchor(this.suit.nav);
+    this.corotate();
     this.controls.update(dtReal);
     this.panels.tick(dtReal);
     this.sleepStep(dtReal);
@@ -1949,6 +1985,13 @@ export class View3D {
     const s = this.suit.nav, v = s.vel, sh = this.ship;
     const want = this.controls.thrust(4 * this.controls.throttle, this.suit.quat);
     for (let k = 0; k < 3; k++) v[k] += (want[k] - v[k]) * Math.min(1, dt * 1.5);
+    // low over a world with ground, its gravity pulls you down to it (the thrusters, holding you still, slow the
+    // fall to a few metres a second: about six and a half on the Earth, one on the Moon)
+    const near = this.nearest(posOf(s));
+    if (near.b && near.b === this.ground.body && near.alt < 1e5) {
+      const p = posOf(s), d = new THREE.Vector3(p[0] - near.b.x, p[1] - near.b.y, p[2] - near.b.z).normalize(), g = gravity(near.b) * dt;
+      v[0] -= d.x * g; v[1] -= d.y * g; v[2] -= d.z * g;
+    }
     for (let k = 0; k < 3; k++) s.off[k] += (v[k] * dt) / AU_M;
     this.clear(s, 2);
     // down onto the ground: on your feet

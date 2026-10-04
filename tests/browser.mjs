@@ -184,7 +184,7 @@ try {
   await page.evaluate(() => { const a = window.orbital; a.loadPreset('earth'); a.select(a.world.sources.find(b => b.name === 'Earth')); });
   await page.keyboard.press('KeyV');
   await page.waitForTimeout(2500);
-  ok('V opens the 3D view at real time', await page.evaluate(() => window.orbital.mode3d && Math.abs(window.orbital.warp * 31557600 - 1) < 1e-6 && !document.getElementById('c3').hidden));
+  ok('V opens the 3D view at real time', await page.evaluate(() => window.orbital.mode3d && Math.abs(window.orbital.warp * 31557600 - 1) < 1e-6 && !document.getElementById('c3').hidden && document.getElementById('modeBtn').textContent === '2D'));
   const p0 = await page.evaluate(() => window.orbital.v3.where());
   await page.keyboard.down('KeyW');
   const flew = await until(page, p => { const q = window.orbital.v3.where(); return Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) > 0; }, p0);
@@ -297,14 +297,14 @@ try {
   await hold(1, () => document.querySelector('.nav3').hidden);
   await hold(15, () => !!window.orbital.selected);
   ok('B closes the map and the d-pad picks a target', await page.evaluate(() => document.querySelector('.nav3').hidden && window.orbital.v3.mode === 'pilot' && !!window.orbital.selected));
-  ok('Menu goes back to the 2D map', await hold(9, () => !window.orbital.mode3d));
+  ok('Menu goes back to 2D', await hold(9, () => !window.orbital.mode3d));
   await page.evaluate(() => { window.__s0 = window.orbital.view.scale; });
   ok('RT zooms the 2D map in', await hold(7, () => window.orbital.view.scale > window.__s0 * 1.5));
   ok('Menu steps back into 3D', await hold(9, () => window.orbital.mode3d));
   await page.evaluate(() => { window.__pad.connected = false; });
   await page.keyboard.press('KeyV');
-  await page.waitForTimeout(300);
-  ok('V goes back to the map', await page.evaluate(() => !window.orbital.mode3d && document.getElementById('c3').hidden));
+  // (and the 3D picture is gone, not left frozen over the 2D view; the button offers 3D again)
+  ok('V goes back to 2D', await until(page, () => !window.orbital.mode3d && getComputedStyle(document.getElementById('c3')).display === 'none' && document.getElementById('modeBtn').textContent === '3D'));
   clean('ship');
   }
 
@@ -382,6 +382,16 @@ try {
     v.travel = null; v.ship.nav.anchor = b; v.ship.nav.off = [w.x / AU, w.y / AU, w.z / AU]; v.ship.nav.vel = [0, 0, 0];
   });
   await page.waitForFunction(() => window.orbital.v3.ground.ready, null, { timeout: 90000 }).catch(() => {});
+  // hovering over the base, the ship turns with the Earth: the ground under it stays put (it used to slide past at 400 m/s)
+  const overGround = () => page.evaluate(() => {
+    const a = window.orbital, v = a.v3, b = a.world.sources.find(x => x.name === 'Earth'), n = v.ship.nav, A = n.anchor;
+    const p = new v.camera.position.constructor(A.x + n.off[0] - b.x, A.y + n.off[1] - b.y, A.z + n.off[2] - b.z).applyQuaternion(window.__bodyQuat(b).invert()).normalize();
+    return { p: [p.x, p.y, p.z], t: a.world.time * 31557600 };
+  });
+  const g0 = await overGround();
+  await page.waitForFunction(t => window.orbital.world.time * 31557600 > t + 5, g0.t, { timeout: 60000 });
+  const g1 = await overGround();
+  ok('hovering, the ship keeps its place over the turning Earth', Math.hypot(g1.p[0] - g0.p[0], g1.p[1] - g0.p[1], g1.p[2] - g0.p[2]) * 6.371e6 < 5);
   // on foot at a point of the base (its frame, m), facing toward another
   const stand = (x, z, x2, z2, pitch = 0) => page.evaluate(([x, z, x2, z2, pitch]) => {
     const v = window.orbital.v3, f = v.fleet, c = f.crafts.find(q => q.name === 'Canaveral Base');
