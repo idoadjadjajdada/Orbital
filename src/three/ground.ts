@@ -9,6 +9,7 @@ import { FormSet, type Form } from './landforms';
 import { earthAnimal, alienAnimal, type Beast } from './fauna';
 import { Flora, type PlantKind } from './flora';
 import { Grass } from './grass';
+import { Ruins } from './ruins';
 import { detailFor } from '../pixel/surface';
 import { LIGHT_GLSL } from './lightglsl';
 import { atmosphere, life, gravity, rng, type Atmosphere, type Life } from './science';
@@ -246,6 +247,7 @@ export class Ground {
   /** the trees and plants round you */
   readonly flora = new Flora();
   readonly grass = new Grass();
+  readonly ruins = new Ruins();
   private plants: { kinds: PlantKind[]; density: number; tint: THREE.Color | null; grass: { lush: number; leaf: THREE.Color | null } } = { kinds: [], density: 0, tint: null, grass: { lush: 0, leaf: null } };
   private floraAt: V3 | null = null;
   private critters: Critter[] = [];
@@ -256,7 +258,7 @@ export class Ground {
   constructor(scene: THREE.Scene, lightUniforms: Record<string, THREE.IUniform> = {}) {
     this.root.name = 'ground';
     scene.add(this.root);
-    this.root.add(this.flora.group, this.grass.group);
+    this.root.add(this.flora.group, this.grass.group, this.ruins.group);
     this.mat = new THREE.ShaderMaterial({
       vertexShader: GROUND_VERT, fragmentShader: GROUND_FRAG, vertexColors: true,
       uniforms: {
@@ -323,6 +325,12 @@ export class Ground {
     const h = this.heightAt(n, 0.3), sea = this.sample.sea;
     if (!this.spec) return { h, sea, roof: Infinity, solid: false, inside: null as Form | null, dark: 0 };
     const g = this.forms.ground(this.spec, n, foot);
+    // a ruin: its steps and plinths to stand on, its stone in the way
+    const rs = this.ruins.near.length && g.floor === null ? this.ruins.structureAt(n, this.spec.R) : null;
+    if (rs) {
+      const fl = rs.floor !== null && rs.floor > h ? rs.floor : null;
+      if (fl !== null || rs.solid) return { h: fl ?? h, sea, roof: Infinity, solid: rs.solid || (fl !== null && fl > foot), inside: null, dark: 0 };
+    }
     // a base's buildings: their floors, their walls and furniture
     const st = this.structureAt(n);
     // (a floor more than a step over your feet is a wall to you: you climb to it by its stairs)
@@ -372,6 +380,7 @@ export class Ground {
     for (const p of this.placed.values()) { this.root.remove(p.obj); disposeTree(p.obj); }
     this.placed.clear();
     this.forms.clear();
+    this.ruins.clear();
     this.flora.clear();
     this.floraAt = null;
     for (const c of this.critters) { this.root.remove(c.obj); disposeTree(c.obj); }
@@ -429,12 +438,29 @@ export class Ground {
     (u.fogCol.value as THREE.Vector3).set(fog.r, fog.g, fog.b);
     // things on the ground, near enough to matter
     if (alt < 60e3) this.placeSites(n, alt);
+    if (alt < 20e3) this.ruinsFrame(n);
+    else if (this.ruins.near.length) this.ruins.clear();
     if (alt < 4000) {
       this.forms.frame(spec, n, alt, this.formSample);
       for (const f of this.forms.near(spec, n, 80)) if (!this.found.has(f.key)) { this.found.add(f.key); this.onFind(f.name, f.about); }
     } else this.forms.clear();
     if (alt < 3000) this.life(dt, n, alt);
     else if (this.floraAt || this.critters.length) this.clearLife();
+  }
+
+  /** the ruins round you: drawn near, labelled further, logged when you reach one */
+  private ruinsFrame(n: V3) {
+    const b = this.body!, spec = this.spec!, L = this.lifeInfo;
+    if (b.cls === 'gas' || ['gas', 'icegiant', 'hotjupiter', 'browndwarf'].includes(b.look.style) || spec.R < 2e5) return;
+    // rare everywhere; a little less rare on worlds with a past, and where a people lives now
+    const rate = L?.tier === 'intelligent' ? 0.04 : b.look.real === 'Earth' ? 0.003 : 0.006;
+    const people = L?.tier === 'intelligent' ? L.forms.find(f => f.kind === 'people')?.name ?? null : null;
+    this.ruins.frame({ R: spec.R, seed: Math.floor(b.look.seed % 9973) + 17, rate, people, built: m => this.platformAt(m) > -Infinity, sampleAt: m => { const h = groundAt(spec, m, 1, this.sample, this.paint ?? undefined, this.det), q = this.sample; return { h: q.sea ? 0 : h, sea: q.sea, r: q.r, g: q.g, b: q.b }; } }, n);
+    const first = this.ruins.near[0];
+    if (first && first.d < 80 && !this.found.has(first.r.key)) {
+      this.found.add(first.r.key);
+      this.onFind(`Ruins: ${first.r.name}`, people ? `Built by ${people}, long ago: they remember who, if not why.` : 'Who built it, and when, nobody knows. Its stone is the stone of the ground round it.');
+    }
   }
 
   /** the sky: its colour from the air, how much of it there is above you, and the sun's height */
@@ -737,6 +763,13 @@ export class Ground {
       if (gap > seeing || gap > Math.sqrt(Math.max(0, rv * rv - R * R)) + Math.sqrt(Math.max(0, rs * rs - R * R)) + 200) continue;
       const p = new THREE.Vector3(sn[0] * rs, sn[1] * rs, sn[2] * rs).applyQuaternion(this.q).add(this.root.position);
       out.push({ key: `site:${s.name}`, text: `${s.name} · ${d < 1000 ? `${d.toFixed(0)} m` : `${(d / 1000).toFixed(d < 1e4 ? 1 : 0)} km`}`, at: p });
+    }
+    // the nearest ruins, once you are close enough to have seen them
+    for (const { r, d } of this.ruins.near.slice(0, 2)) {
+      if (d < 25) continue;
+      const rr = R + r.h + 8 * r.s;
+      const p = new THREE.Vector3(r.n[0] * rr, r.n[1] * rr, r.n[2] * rr).applyQuaternion(this.q).add(this.root.position);
+      out.push({ key: `ruin:${r.key}`, text: `Ruins · ${d < 1000 ? `${d.toFixed(0)} m` : `${(d / 1000).toFixed(1)} km`}`, at: p });
     }
     return out;
   }

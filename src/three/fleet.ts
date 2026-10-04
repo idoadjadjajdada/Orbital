@@ -5,7 +5,8 @@ import type { V3 } from '../pixel/sprites';
 import { groundSpec, groundAt, tangent, type GroundSpec, type GroundSample } from './terrain';
 import { atmosphere, composition, interior, life, gravity, airAt, giantPressure, giantTemp, cloudDecks, rng, type Atmosphere } from './science';
 import { bodyQuat, dirOf, latLonOf, arc } from './ground';
-import { probeMesh, orbiterMesh, landerMesh, roverMesh, stationMesh, baseMesh, padMesh } from './craftmesh';
+import { probeMesh, orbiterMesh, landerMesh, roverMesh, stationMesh, baseMesh, padMesh, PAD } from './craftmesh';
+import { ROCKETS, HOLD_DAYS, plan, phase, rocketMesh, type RocketModel, type RocketState } from './rocketry';
 import { sitesOn } from './sites';
 import { Interior, stationInterior } from './interior';
 import { baseLayer, baseGround, BASE } from './basecamp';
@@ -31,7 +32,7 @@ import { baseLayer, baseGround, BASE } from './basecamp';
  * orbit while the world turns under them.
  */
 
-export type CraftKind = 'probe' | 'orbiter' | 'lander' | 'rover' | 'station' | 'base' | 'pad';
+export type CraftKind = 'probe' | 'orbiter' | 'lander' | 'rover' | 'station' | 'base' | 'pad' | 'rocket';
 export const KINDS: { k: CraftKind; name: string; about: string }[] = [
   { k: 'probe', name: 'Probe', about: 'Falls through the atmosphere reading it, to the ground or until it is crushed' },
   { k: 'orbiter', name: 'Orbiter', about: 'Maps the world from a polar orbit: what it is made of, inside and out' },
@@ -45,7 +46,7 @@ export const KINDS: { k: CraftKind; name: string; about: string }[] = [
 export interface Reading { t: number; msg: string }
 export interface Craft {
   id: number; kind: CraftKind; name: string; b: Body;
-  state: 'cruise' | 'orbit' | 'descent' | 'surface' | 'lost';
+  state: 'cruise' | 'orbit' | 'descent' | 'surface' | 'lost' | 'flight';
   /** seconds in this state, and in all */
   t: number; age: number;
   /** cruise: where it set off from (m, from the world's centre, the sandbox's axes) and how long the trip takes */
@@ -72,10 +73,14 @@ export interface Craft {
   inside?: Interior;
   /** where a base stands: level, at the highest ground under it (m over the datum), worked out once */
   h0?: number;
+  /** a rocket's: where it stands, what it carries, its flight */
+  rocket?: RocketState;
+  /** a base's or a station's crew, and the supplies it has (days) */
+  crew?: number; stores?: number;
 }
 
 let nextId = 1;
-const NAMES: Record<CraftKind, string> = { probe: 'Probe', orbiter: 'Orbiter', lander: 'Lander', rover: 'Rover', station: 'Station', base: 'Base', pad: 'Launch pad' };
+const NAMES: Record<CraftKind, string> = { probe: 'Probe', orbiter: 'Orbiter', lander: 'Lander', rover: 'Rover', station: 'Station', base: 'Base', pad: 'Launch pad', rocket: 'Rocket' };
 /** how much pressure a probe stands, bar, and heat, K */
 const PROBE_BAR = 120, PROBE_K = 900;
 
@@ -223,6 +228,8 @@ export class Fleet {
 
   private model(k: CraftKind): THREE.Object3D {
     const g = new THREE.Group();
+    // (a rocket's model goes in when it is stacked: which one depends on the rocket)
+    if (k === 'rocket') return g;
     g.add(k === 'probe' ? probeMesh(true) : k === 'orbiter' ? orbiterMesh() : k === 'lander' ? landerMesh() : k === 'rover' ? roverMesh() : k === 'station' ? stationMesh() : k === 'pad' ? padMesh() : baseMesh(nextId));
     g.traverse(o => { o.frustumCulled = false; });
     return g;
@@ -237,6 +244,7 @@ export class Fleet {
   /** where a craft is, m from its world's centre, sandbox axes */
   local(c: Craft, out = new THREE.Vector3()): THREE.Vector3 {
     const b = c.b, R = b.r * AU_M;
+    if (c.rocket && (c.state === 'flight' || c.rocket.docked)) { const P = this.rocketPos(c); return out.set((P.x - b.x) * AU_M, (P.y - b.y) * AU_M, (P.z - b.z) * AU_M); }
     if (c.state === 'cruise') {
       const end = this.arrival(c);
       const k = smooth(Math.min(1, c.t / c.cruiseT));
@@ -271,6 +279,7 @@ export class Fleet {
     for (const c of this.crafts) {
       if (!c.b.alive && c.state !== 'lost') { c.state = 'lost'; c.status = `${c.b.name} is gone`; this.note(c, `Lost: ${c.b.name} no longer exists`, true); }
       c.t += dt; c.age += dt;
+      if (c.rocket) { this.rocketStep(c, dt); continue; }
       if (c.state === 'cruise' && c.t >= c.cruiseT) this.arrive(c);
       else if (c.state === 'orbit') this.orbitStep(c, dt);
       else if (c.state === 'descent') this.descend(c, dt);
@@ -279,7 +288,8 @@ export class Fleet {
   }
 
   /** the way a craft is turned (world): along its orbit with its top away from the world, or standing on the ground */
-  quat(c: Craft, q = new THREE.Quaternion()) {
+  quat(c: Craft, q = new THREE.Quaternion()): THREE.Quaternion {
+    if (c.rocket && (c.state === 'flight' || c.rocket.docked)) return this.rocketQuat(c, q);
     const p = this.local(c), up = p.clone().normalize();
     if (c.state === 'orbit' || c.state === 'cruise') {
       const fwd = c.orbit && c.state === 'orbit' ? new THREE.Vector3(-Math.sin(c.orbit.ph), Math.cos(c.orbit.ph), 0).applyQuaternion(c.orbit.plane) : this.arrival(c).sub(c.from).normalize();
@@ -311,6 +321,14 @@ export class Fleet {
       const chute = m.getObjectByName('chute');
       if (chute) chute.visible = c.state === 'descent' && this.air(c.b).bar > 0.005 && c.vz < 200;
       if (c.kind === 'base' || c.kind === 'pad') m.scale.setScalar(0.05 + 0.95 * c.build);
+      if (c.rocket) {
+        const tr = c.rocket.trip, ph = tr ? phase(tr) : null;
+        const burn = !!ph && (ph.part !== 'cruise' || (tr!.hop ? ph.u < 0.08 || ph.u > 0.92 : tr!.t - tr!.Ta < 4));
+        const plume = m.getObjectByName('plume');
+        if (plume) { plume.visible = burn; if (burn) plume.scale.set(1, 0.85 + 0.3 * Math.random(), 1); }
+        const body = m.getObjectByName('rocket-body');
+        if (body) body.scale.y = 0.05 + 0.95 * c.build;
+      }
       // a pad's rocket is gone for a while after it launches, until the next is stacked
       if (c.kind === 'pad') { const r = m.getObjectByName('rocket'); if (r) r.visible = c.age >= c.odo; }
     }
@@ -476,6 +494,8 @@ export class Fleet {
         const pad = this.make('pad', b, name.replace('Base', 'Launch Pad'));
         pad.state = 'surface'; pad.n = this.offset(c.n, 260, head + 1.2, R); pad.head = head; pad.build = 1; pad.status = 'ready';
         this.note(pad, 'A launch pad, with a rocket on the stand');
+        // and a rocket of the fleet on each pad's landing circle, ready to fly
+        this.stack(name.startsWith('Canaveral') ? 'wayfarer' : 'mammoth', pad, true);
       }
     }
   }
@@ -524,6 +544,141 @@ export class Fleet {
     c.h0 = hi;
     return hi;
   }
+
+  // ---------------------------------------------------------------- rockets
+  /** where a rocket stands at a site (body-frame direction): a pad's landing circle, a base's pad */
+  spot(site: Craft): V3 { return site.kind === 'pad' ? this.onBase(site, PAD.land.x, PAD.land.z) : this.onBase(site, BASE.pad.x, BASE.pad.z); }
+  /** the rocket standing at a pad or base (or docked at a station), if one is */
+  rocketAt(site: Craft) { return this.crafts.find(c => c.rocket && c.rocket.at === site.id && !c.rocket.trip) ?? null; }
+  /** where rockets can go: built pads and bases, and stations in orbit */
+  sites(): Craft[] { return this.crafts.filter(c => ((c.kind === 'pad' || c.kind === 'base') && c.state === 'surface' && c.build >= 1) || (c.kind === 'station' && c.state === 'orbit')); }
+
+  /** stack a rocket on a pad or base: it goes up over fifteen seconds */
+  stack(kind: RocketModel, site: Craft, fixed = false): Craft | string {
+    if (site.kind !== 'pad' && site.kind !== 'base') return 'Rockets are stacked on a launch pad or a base’s pad';
+    if (site.build < 1) return `${site.name} is still being built`;
+    if (this.rocketAt(site)) return `There is a rocket on ${site.name} already`;
+    const k = this.crafts.filter(c => c.rocket?.kind === kind).length + 1;
+    const c = this.make('rocket', site.b, `${ROCKETS[kind].name.split(' ')[1]} ${k}`);
+    c.mesh.add(rocketMesh(kind));
+    c.fixed = fixed;
+    c.rocket = { kind, at: site.id, docked: false, load: { crew: 0, supplies: 0, rover: false }, trip: null, aboard: false, flights: 0 };
+    c.n = this.spot(site); c.head = site.head; c.state = 'surface';
+    c.build = fixed ? 1 : 0;
+    c.status = fixed ? `on ${site.name}` : 'stacking';
+    this.note(c, fixed ? `${ROCKETS[kind].name}, on ${site.name}` : `Stacking on ${site.name}`);
+    return c;
+  }
+
+  /** send a rocket to a pad, base or station: '' if it goes, or why not */
+  fly(c: Craft, dest: Craft): string {
+    const r = c.rocket;
+    if (!r) return 'Not a rocket';
+    if (r.trip) return `${c.name} is in flight`;
+    if (c.build < 1) return `${c.name} is still being stacked`;
+    if (r.at === dest.id) return `${c.name} is there already`;
+    if (dest.kind !== 'station' && this.rocketAt(dest)) return `${dest.name} has a rocket on it`;
+    const from = r.at !== null ? this.byId(r.at) : null;
+    if (!from) return `${c.name} has nowhere to fly from`;
+    const fromGround = !r.docked, toGround = dest.kind !== 'station', hop = fromGround && toGround && from.b === dest.b;
+    const dist = hop ? arc(c.n, this.spot(dest)) * c.b.r * AU_M : this.rocketPos(c).distanceTo(toGround ? this.spotPos(dest, 0) : this.dockPos(dest)) * AU_M;
+    r.trip = { from: { site: from.id }, to: { site: dest.id }, t: 0, ...plan(hop, dist, fromGround, toGround) };
+    r.at = null; r.docked = false; r.flights++;
+    c.state = 'flight'; c.t = 0;
+    c.status = `flying to ${dest.name}`;
+    const L = r.load, what = [L.crew ? `${L.crew} crew` : '', L.supplies ? `${L.supplies * HOLD_DAYS} days of supplies` : '', L.rover ? 'a rover' : ''].filter(Boolean).join(', ');
+    this.note(c, `Lift-off from ${from.name} for ${dest.name}${dest.b !== from.b ? `, on ${dest.b.name}` : ''}${what ? `, carrying ${what}` : ''}`, true);
+    return '';
+  }
+
+  /** a site's rocket spot in the sandbox (AU), `up` m over it */
+  private spotPos(site: Craft, up: number) {
+    const b = site.b, n = this.spot(site), r = b.r * AU_M + this.heightAt(b, n, 0.5) + up;
+    return new THREE.Vector3(n[0] * r, n[1] * r, n[2] * r).applyQuaternion(bodyQuat(b)).divideScalar(AU_M).add(new THREE.Vector3(b.x, b.y, b.z));
+  }
+  /** where a rocket docks at a station: alongside it (sandbox, AU) */
+  private dockPos(st: Craft, k = 0) {
+    const off = new THREE.Vector3(0, -30, 70 + 25 * k).applyQuaternion(this.quat(st)).divideScalar(AU_M);
+    return new THREE.Vector3(...this.pos(st)).add(off);
+  }
+
+  /** where a rocket is in the sandbox (AU): on its pad, docked, or along its flight */
+  private rocketPos(c: Craft): THREE.Vector3 {
+    const r = c.rocket!, tr = r.trip;
+    if (!tr) {
+      const st = r.at !== null ? this.byId(r.at) : null;
+      if (r.docked && st) return this.dockPos(st, this.crafts.filter(x => x.rocket?.docked && x.rocket.at === st.id && x.id < c.id).length);
+      const p = this.localGround(c);
+      return p.divideScalar(AU_M).add(new THREE.Vector3(c.b.x, c.b.y, c.b.z));
+    }
+    const from = this.byId(tr.from.site), to = this.byId(tr.to.site);
+    if (!from || !to) return new THREE.Vector3(c.b.x, c.b.y, c.b.z);
+    const ph = phase(tr);
+    if (ph.part === 'climb') return from.kind === 'station' ? this.dockPos(from) : this.spotPos(from, ph.alt);
+    if (ph.part === 'descent') return to.kind === 'station' ? this.dockPos(to) : this.spotPos(to, ph.alt);
+    if (tr.hop) {
+      // over the ground, along the great circle, the arc rising over the climb's top and falling to the descent's
+      const n1 = this.spot(from), n2 = this.spot(to), u = ph.u, th = Math.max(1e-9, arc(n1, n2));
+      const k1 = Math.sin((1 - u) * th) / Math.sin(th), k2 = Math.sin(u * th) / Math.sin(th);
+      const n = new THREE.Vector3(n1[0] * k1 + n2[0] * k2, n1[1] * k1 + n2[1] * k2, n1[2] * k1 + n2[2] * k2).normalize();
+      const b = from.b, h = (1 - u) * (this.heightAt(b, n1, 2) + tr.A1) + u * (this.heightAt(b, n2, 2) + tr.A2) + tr.apex * Math.sin(Math.PI * u);
+      return n.multiplyScalar(b.r * AU_M + h).applyQuaternion(bodyQuat(b)).divideScalar(AU_M).add(new THREE.Vector3(b.x, b.y, b.z));
+    }
+    const a = from.kind === 'station' ? this.dockPos(from) : this.spotPos(from, tr.A1);
+    const z = to.kind === 'station' ? this.dockPos(to) : this.spotPos(to, tr.A2);
+    return a.lerp(z, ph.u);
+  }
+  /** on the ground: the plain way (m from its world's centre) */
+  private localGround(c: Craft) {
+    const R = c.b.r * AU_M + this.heightAt(c.b, c.n, 0.5);
+    return new THREE.Vector3(c.n[0] * R, c.n[1] * R, c.n[2] * R).applyQuaternion(bodyQuat(c.b));
+  }
+
+  /** a rocket's attitude: nose up off the pad and down onto it, along its way between */
+  private rocketQuat(c: Craft, q: THREE.Quaternion): THREE.Quaternion {
+    const r = c.rocket!, tr = r.trip;
+    if (!tr) { const st = r.at !== null ? this.byId(r.at) : null; return st ? this.quat(st, q) : q.identity(); }
+    const ph = phase(tr), up = this.local(c).normalize();
+    let dir = up;
+    if (ph.part === 'cruise') {
+      const t0 = tr.t;
+      const a = this.rocketPos(c); tr.t = t0 + 0.25; const b = this.rocketPos(c); tr.t = t0;
+      const v = b.sub(a);
+      // (tipping over from the climb, and back upright for the descent)
+      const w = Math.min(1, Math.min(ph.u, 1 - ph.u) / 0.12);
+      if (v.lengthSq() > 0) dir = up.clone().lerp(v.normalize(), w).normalize();
+    }
+    return q.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+  }
+
+  /** a rocket's frame: stacking, or along its flight; at the end, landed (or docked) and unloaded */
+  private rocketStep(c: Craft, dt: number) {
+    const r = c.rocket!;
+    if (!r.trip) {
+      if (c.build < 1) { c.build = Math.min(1, c.build + dt / 15); if (c.build >= 1) { const st = r.at !== null ? this.byId(r.at) : null; c.status = `on ${st?.name ?? 'the pad'}`; this.note(c, 'Stacked: ready to fly', true); } }
+      return;
+    }
+    const tr = r.trip, from = this.byId(tr.from.site), to = this.byId(tr.to.site);
+    if (!from || !to) { r.trip = null; c.state = 'lost'; c.status = 'lost'; return; }
+    tr.t += dt;
+    // its world: where it left until half way, then where it is going
+    const T = tr.Ta + tr.Tc + tr.Td;
+    c.b = tr.t < tr.Ta + tr.Tc / 2 ? from.b : to.b;
+    if (tr.t < T) return;
+    // there
+    r.trip = null; r.at = to.id; c.t = 0;
+    if (to.kind === 'station') { r.docked = true; c.state = 'orbit'; c.status = `docked at ${to.name}`; }
+    else { r.docked = false; c.state = 'surface'; c.b = to.b; c.n = this.spot(to); c.head = to.head; c.status = `on ${to.name}`; }
+    const L = r.load, got: string[] = [];
+    if (L.crew) { to.crew = (to.crew ?? 6) + L.crew; got.push(`${L.crew} crew aboard ${to.name} (now ${to.crew})`); }
+    if (L.supplies) { to.stores = (to.stores ?? 90) + L.supplies * HOLD_DAYS; got.push(`${L.supplies * HOLD_DAYS} days of supplies unloaded (${to.stores} in store)`); }
+    if (L.rover && c.state === 'surface') { const rv = this.launch('rover', to.b, new THREE.Vector3(), null, c); rv.name = `${to.name} rover`; got.push(`${rv.name} rolled out`); }
+    r.load = { crew: 0, supplies: 0, rover: false };
+    this.note(c, `${to.kind === 'station' ? 'Docked at' : 'Landed on'} ${to.name}${to.b !== from.b ? `, on ${to.b.name}` : ''}${got.length ? `: ${got.join('; ')}` : ''}`, true);
+    this.onRocket(c, to);
+  }
+  /** a rocket has arrived (for the view: you step out of it, if you were aboard) */
+  onRocket: (c: Craft, at: Craft) => void = () => {};
 
   /** the nearest base on a world to a point on it (body frame), and how far, m */
   nearestBase(b: Body, n: V3) {

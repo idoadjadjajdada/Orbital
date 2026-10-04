@@ -50,7 +50,7 @@ const OPEN: Partial<Record<ModelName, [number, number, number, number][]>> = { '
 export const GROW = { x: 1.0, z: -2.65, w: 3.0, d: 0.6 };
 const ADDED: Partial<Record<ModelName, [number, number, number, number][]>> = { 'dome-habitat': [[GROW.x, GROW.z, GROW.w / 2 + 0.05, GROW.d / 2 + 0.05]] };
 
-function gridOf(name: ModelName, root: THREE.Object3D): Grid {
+export function gridOf(name: ModelName, root: THREE.Object3D): Grid {
   const had = grids.get(name);
   if (had) return had;
   root.updateMatrixWorld(true);
@@ -128,6 +128,18 @@ function gridOf(name: ModelName, root: THREE.Object3D): Grid {
   const g = { x0, z0, nx, nz, floor, solid };
   grids.set(name, g);
   return g;
+}
+
+/** what is underfoot at a point of a model's own frame (its grid made): its floor there, or something in the way; null if the point is off the model */
+export function gridAt(name: ModelName, x: number, z: number): { floor: number | null; solid: boolean } | null {
+  const g = grids.get(name);
+  if (!g) return null;
+  const i = Math.floor((x - g.x0) / RES), j = Math.floor((z - g.z0) / RES);
+  if (i < 1 || j < 1 || i >= g.nx - 1 || j >= g.nz - 1) return null;
+  let solid = false;
+  for (let dj = -1; dj <= 1 && !solid; dj++) for (let di = -1; di <= 1; di++) if (g.solid[(j + dj) * g.nx + i + di]) { solid = true; break; }
+  const f = g.floor[j * g.nx + i];
+  return { floor: Number.isNaN(f) ? null : f, solid };
 }
 
 /** a point of the base's frame in a building's own */

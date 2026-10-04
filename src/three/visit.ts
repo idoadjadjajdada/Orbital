@@ -237,7 +237,7 @@ export class Visit {
       case 'vehicle': this.roverOut(c); break;
       case 'callship': this.callToPad(c); break;
       case 'holo': v.openMap(); break;
-      case 'command': this.toast(`${c.name}: crew of six, power ${air.bar > 0.5 ? 'solar and fuel cells' : 'solar, 140 kW'}, oxygen for 90 days, water recycling at 94%`); break;
+      case 'command': this.toast(`${c.name}: crew of ${c.crew ?? 6}, stores for ${c.stores ?? 90} days, power ${air.bar > 0.5 ? 'solar and fuel cells' : 'solar, 140 kW'}, water recycling at 94%`); break;
       case 'weather': {
         const [la, lo] = latLonOf(c.n);
         this.toast(air.bar > 1e-4 ? `Outside: ${air.bar.toPrecision(3)} bar of ${air.gases[0]?.name ?? 'air'}, ${Math.round(air.T - 273.15)} °C, ${gravity(b).toFixed(2)} m/s² · ${la.toFixed(2)}°, ${lo.toFixed(2)}°` : `Outside: vacuum, ${Math.round(air.T - 273.15)} °C in the sun, ${gravity(b).toFixed(2)} m/s²`);
@@ -387,7 +387,7 @@ export class Visit {
     const hhmm = `${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')} UTC`;
     if (c.kind === 'station') {
       const loc = v.fleet.local(c).applyQuaternion(bodyQuat(b).invert()).normalize(), [la, lo] = latLonOf([loc.x, loc.y, loc.z]);
-      I.drawScreen('status', [c.name.toUpperCase(), this.orbitLine(c), `over ${Math.abs(la).toFixed(1)}°${la >= 0 ? 'N' : 'S'} ${Math.abs(lo).toFixed(1)}°${lo >= 0 ? 'E' : 'W'}`, `crew 6 + you · ${hhmm}`, this.docked === c ? 'ship docked at the forward port' : 'forward port free']);
+      I.drawScreen('status', [c.name.toUpperCase(), this.orbitLine(c), `over ${Math.abs(la).toFixed(1)}°${la >= 0 ? 'N' : 'S'} ${Math.abs(lo).toFixed(1)}°${lo >= 0 ? 'E' : 'W'}`, `crew ${c.crew ?? 6} + you · ${hhmm}`, this.docked === c ? 'ship docked at the forward port' : 'forward port free']);
       I.drawScreen('orbit', ['GROUND TRACK', `${b.name} below`, `inclination ${c.name === 'ISS' ? '51.6' : '51.6'}°`, `${(c.orbit ? 86400 / (2 * Math.PI / c.orbit.w) : 0).toFixed(1)} orbits a day`, 'next reboost: in 12 days']);
       I.drawScreen('life', ['LIFE SUPPORT', 'O₂ 21.2 %  CO₂ 0.31 %', 'cabin 101.3 kPa · 22.4 °C', 'humidity 48 %', 'water recovered 98 %']);
       I.drawScreen('comms', ['COMMS', 'Ku band: link up', 'S band: link up', 'ground: Houston / Moscow', 'next pass: 4 min']);
@@ -400,7 +400,7 @@ export class Visit {
       const ship = v.landing?.phase === 'landed' && v.landing.b === b ? (this.distToPad(c) < 30 ? 'on the pad' : 'landed nearby') : v.travel?.name.endsWith('pad') ? 'on its way to the pad' : 'away';
       const rovers = v.fleet.crafts.filter(r => r.kind === 'rover' && r.b === b && r.state !== 'lost');
       const cam = ['CAMERA', 'no craft on this screen', 'F: Mission Control,', 'then a craft\'s 📺'];
-      I.drawScreen('base', [c.name.toUpperCase(), 'crew 6 · power 140 kW', 'O₂ reserve 90 days', `water 94 % recycled · ${hhmm}`]);
+      I.drawScreen('base', [c.name.toUpperCase(), `crew ${c.crew ?? 6} · power 140 kW`, `stores ${c.stores ?? 90} days`, `water 94 % recycled · ${hhmm}`]);
       I.drawScreen('ship', ['THE SHIP', ship, 'the flight desk calls', 'it to the pad']);
       I.drawScreen('weather', ['OUTSIDE', air.bar > 1e-4 ? `${air.bar.toPrecision(3)} bar · ${Math.round(air.T - 273.15)} °C` : `vacuum · ${Math.round(air.T - 273.15)} °C`, `${(gravity(b) / 9.81).toFixed(2)} g`, hhmm]);
       I.drawScreen('rover', ['ROVERS', rovers.length ? `${rovers.length} out on ${b.name}` : 'all in the hangar', rovers[0] ? `${rovers[0].name}: ${rovers[0].status}` : 'bay 1: charged', 'F at the rover: drive']);

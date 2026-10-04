@@ -3,10 +3,11 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 /**
  * The modelled things: the bases' buildings (a dome habitat, a modular
- * outpost, a vault hangar — each a body and a roof that lifts off to show
- * the rooms inside) and the trees (oak, birch, maple, palm, pine). Baked by
- * tools/pack-models.py, fetched the first time something asks for one and
- * never again; until then whoever asked draws its own simple stand-in.
+ * outpost, a vault hangar, each a body and a roof), the trees (oak, birch,
+ * maple, palm, pine), the ruins (an arch, a colonnade, an obelisk, a shrine,
+ * a tower, a wall) and the rockets (a courier, a crew carrier, a freighter).
+ * Baked by tools/pack-models.py, fetched the first time something asks for
+ * one and never again; until then whoever asked draws its own stand-in.
  */
 const URLS = {
   'dome-habitat': new URL('./models/dome-habitat.glb', import.meta.url).href,
@@ -17,9 +18,21 @@ const URLS = {
   maple: new URL('./models/maple.glb', import.meta.url).href,
   palm: new URL('./models/palm.glb', import.meta.url).href,
   pine: new URL('./models/pine.glb', import.meta.url).href,
+  'ruin-arch': new URL('./models/ruin-arch.glb', import.meta.url).href,
+  'ruin-columns': new URL('./models/ruin-columns.glb', import.meta.url).href,
+  'ruin-obelisk': new URL('./models/ruin-obelisk.glb', import.meta.url).href,
+  'ruin-shrine': new URL('./models/ruin-shrine.glb', import.meta.url).href,
+  'ruin-tower': new URL('./models/ruin-tower.glb', import.meta.url).href,
+  'ruin-wall': new URL('./models/ruin-wall.glb', import.meta.url).href,
+  'rocket-courier': new URL('./models/rocket-courier.glb', import.meta.url).href,
+  'rocket-wayfarer': new URL('./models/rocket-wayfarer.glb', import.meta.url).href,
+  'rocket-mammoth': new URL('./models/rocket-mammoth.glb', import.meta.url).href,
 };
 export type ModelName = keyof typeof URLS;
 export const TREES: ModelName[] = ['oak', 'birch', 'maple', 'palm', 'pine'];
+export const RUINS: ModelName[] = ['ruin-arch', 'ruin-columns', 'ruin-obelisk', 'ruin-shrine', 'ruin-tower', 'ruin-wall'];
+/** a model's own animations (the rockets' doors and hatches), once it is in */
+export const clips = new Map<ModelName, THREE.AnimationClip[]>();
 
 const got = new Map<ModelName, THREE.Group>();
 const asked = new Map<ModelName, Promise<THREE.Group | null>>();
@@ -54,6 +67,7 @@ export function load(name: ModelName): Promise<THREE.Group | null> {
       }
     });
     got.set(name, root);
+    clips.set(name, g.animations);
     return root;
   }).catch(() => null);
   asked.set(name, p);

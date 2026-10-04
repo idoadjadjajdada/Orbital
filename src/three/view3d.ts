@@ -18,6 +18,7 @@ import { Ground, bodyQuat, latLonOf, arc } from './ground';
 import { tangent } from './terrain';
 import { gravity, atmosphere } from './science';
 import { Fleet, type CraftKind, type Craft } from './fleet';
+import { ROCKETS, type RocketModel } from './rocketry';
 import { Visit } from './visit';
 import { Placer } from './placer';
 import { Suit } from './suit';
@@ -519,6 +520,7 @@ export class View3D {
     this.placer = new Placer(this);
     this.kit = new Suit(this);
     this.feeds = new Feeds(this);
+    this.fleet.onRocket = (c, at) => this.rocketIn(c, at);
     this.fleet.onInterior = c => { for (const m of c.inside?.monitors ?? []) this.feeds.register(`${c.id}:${m.id}`, m.mesh, `${c.name}: ${m.label}`); };
     this.ground.structureAt = n => (this.ground.body ? this.fleet.structureAt(this.ground.body, n) : null);
     this.suitRefill = () => this.kit.refill();
@@ -1084,12 +1086,64 @@ export class View3D {
     this.app.onToast(`${c.name} rolls off ${L.name}`);
   }
 
+  // ---------------------------------------------------------------- the rockets
+  /** a rocket standing within a few metres of you on foot */
+  rocketNear() {
+    const S = this.surf;
+    if (this.mode !== 'surface' || !S.b) return null;
+    const R = S.b.r * AU_M;
+    return this.fleet.crafts.find(c => c.rocket && !c.rocket.trip && !c.rocket.docked && c.b === S.b && c.build >= 1 && arc(c.n, S.n) * R < 9) ?? null;
+  }
+
+  /** stack a rocket on the nearest free pad or base of the mission's world (nearest you) */
+  stackRocket(kind: RocketModel) {
+    const b = this.missionTarget();
+    if (!b) { this.app.onToast('Pick a world'); return; }
+    const me = this.mode === 'surface' && this.surf.b === b ? this.surf.n : null;
+    const sites = this.fleet.sites().filter(c => c.b === b && c.kind !== 'station' && !this.fleet.rocketAt(c));
+    if (!sites.length) { this.app.onToast(`No free launch pad or base on ${b.name}: build one first`); return; }
+    const site = me ? sites.sort((x, y) => arc(x.n, me) - arc(y.n, me))[0] : sites[0];
+    const c = this.fleet.stack(kind, site);
+    this.app.onToast(typeof c === 'string' ? c : `${c.name}: stacking on ${site.name}, about fifteen seconds`);
+  }
+
+  /** send a rocket off; with you aboard, if you are going too */
+  flyRocket(c: Craft, dest: Craft, ride: boolean) {
+    const why = this.fleet.fly(c, dest);
+    if (why) { this.app.onToast(why); return; }
+    this.panels.close();
+    if (ride) { c.rocket!.aboard = true; this.viewCraft(c.id); this.app.onToast(`Strapped in. ${c.name} for ${dest.name}: lift-off`); }
+    else this.app.onToast(`${c.name} is on its way to ${dest.name}`);
+  }
+
+  /** a rocket has come in: if you were aboard, you climb out (onto the pad, or into the station) */
+  private rocketIn(c: Craft, at: Craft) {
+    const r = c.rocket!;
+    if (!r.aboard) return;
+    r.aboard = false;
+    if (at.kind === 'station') { this.craftView = null; this.visit.enter(at, 'dock'); return; }
+    this.climbOut = { id: c.id, at: at.id };
+  }
+  /** waiting to climb out of a rocket that has landed, until the ground there is ready */
+  private climbOut: { id: number; at: number } | null = null;
+  private tryClimbOut() {
+    const w = this.climbOut, c = w ? this.fleet.byId(w.id) : null, at = w ? this.fleet.byId(w.at) : null;
+    if (!w || !c || !at) { this.climbOut = null; return; }
+    if (this.ground.body !== at.b || !this.ground.spec || !this.ground.ready) return;
+    this.climbOut = null;
+    this.craftView = null;
+    // down the ladder, a few metres from its legs, facing away from it
+    const out = this.fleet.offset(c.n, 7, c.head + Math.PI / 2, at.b.r * AU_M);
+    this.toSurface(out, c.head + Math.PI / 2);
+    this.app.onToast(`${c.name} is down on ${at.name}. Out you climb`);
+  }
+
   /** watch a craft (drive it, if it is a rover on the ground) */
   viewCraft(id: number) {
     const c = this.fleet.byId(id);
     if (!c) return;
     const back = this.mode === 'craft' ? this.craftView?.back ?? 'pilot' : this.mode;
-    const dist = c.kind === 'station' ? 160 : c.kind === 'base' ? 110 : c.kind === 'orbiter' ? 30 : c.kind === 'lander' ? 16 : c.kind === 'rover' ? 10 : 14;
+    const dist = c.kind === 'station' ? 160 : c.kind === 'base' ? 110 : c.kind === 'rocket' ? 42 : c.kind === 'orbiter' ? 30 : c.kind === 'lander' ? 16 : c.kind === 'rover' ? 10 : 14;
     // from orbit, looking down past it to the world
     this.craftView = { id, back, yaw: 0, pitch: c.state === 'orbit' || c.state === 'cruise' ? 0.75 : 0.35, dist };
     this.mode = 'craft';
@@ -1099,6 +1153,9 @@ export class View3D {
 
   leaveCraft() {
     const v = this.craftView;
+    // strapped into a rocket in flight: you stay with it
+    const rc = v ? this.fleet.byId(v.id) : null;
+    if (rc?.rocket?.aboard && rc.rocket.trip) { this.app.onToast(`Strapped in until ${rc.name} is down`); return; }
     if (v) { const c = this.fleet.byId(v.id); if (c) c.drive = { f: 0, s: 0 }; }
     this.mode = v?.back ?? 'pilot';
     this.craftView = null;
@@ -1118,6 +1175,8 @@ export class View3D {
     if (!c) { this.leaveCraft(); return false; }
     if (c.kind === 'rover') { const inp = this.controls.walkInput(); c.drive = { f: inp.f, s: -inp.s }; }
     const loc = this.fleet.local(c), U = loc.clone().normalize();
+    // (a rocket is watched round its middle, not its feet)
+    if (c.rocket) loc.addScaledVector(new THREE.Vector3(0, 1, 0).applyQuaternion(c.mesh.quaternion), ROCKETS[c.rocket.kind].height * 0.45);
     // a horizontal reference: the craft's heading on the ground, or its way along the orbit
     let fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(c.mesh.quaternion);
     fwd.addScaledVector(U, -fwd.dot(U));
@@ -1555,6 +1614,7 @@ export class View3D {
       this.base = this.shuttle.view(cam);
       this.eye.set(0, 0, 0);
     } else if (this.mode === 'craft' && this.craftView && this.placeCraft()) {
+      if (this.climbOut) this.tryClimbOut();
       // placed
     } else {
       if (this.mode === 'craft') this.mode = 'pilot';
@@ -1629,6 +1689,7 @@ export class View3D {
       if (foot && this.ground.spec && arc(foot, this.surf.n) * this.ground.spec.R < 4.5) { this.prompt = { label: 'Climb the ladder and board', act: () => this.board() }; sh.boardable = true; }
       else if (way) this.prompt = way;
       else if (this.shuttle.near(this.surf.b, this.surf.n)) this.prompt = { label: 'Board Lander 1', act: () => this.shuttle.board() };
+      else if (this.rocketNear()) { const r = this.rocketNear()!; this.prompt = { label: `The ${r.name}: load it, fly it, ride it`, act: () => this.panels.show('rocket', r.id) }; }
       else this.prompt = { label: 'Scan here', act: () => this.panels.show('scan') };
     } else if (this.mode === 'shuttle') this.prompt = this.shuttle.prompt();
     else if (this.mode === 'inside') { this.prompt = this.visit.prompt(); this.visit.screens(dt); }

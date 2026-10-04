@@ -11,6 +11,7 @@ import { latLonOf } from './ground';
 import { speciesIn } from './sites';
 import { MAX_SKY_LAMPS } from './lights';
 import { PLANTS, AMENDS, amended, type Amend, type Soil } from './growlab';
+import { ROCKETS, HOLD_DAYS, phase, type RocketModel } from './rocketry';
 
 /**
  * The ship's consoles, as panels over the view: the comms log and the sensor
@@ -20,11 +21,11 @@ import { PLANTS, AMENDS, amended, type Amend, type Soil } from './growlab';
  * closes them.
  */
 
-export type PanelKind = 'comms' | 'sensors' | 'log' | 'survey' | 'power' | 'bay' | 'mission' | 'craft' | 'scan' | 'growlab';
+export type PanelKind = 'comms' | 'sensors' | 'log' | 'survey' | 'power' | 'bay' | 'mission' | 'craft' | 'scan' | 'growlab' | 'rocket';
 
 const TITLE: Record<PanelKind, string> = {
   comms: 'Comms log', sensors: 'Sensor sweep', log: "Captain's log", survey: 'Science survey', power: 'Power routing', bay: 'Hangar · landing survey',
-  mission: 'Mission control', craft: 'Craft telemetry', scan: 'Field scan', growlab: 'Growth lab',
+  mission: 'Mission control', craft: 'Craft telemetry', scan: 'Field scan', growlab: 'Growth lab', rocket: 'Rocket',
 };
 
 const esc = (s: string | undefined) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
@@ -140,6 +141,9 @@ export class Panels {
     else if (a === 'gosite') { const t = v.missionTarget(); if (t) { v.goToSite(t, id); this.close(); return; } }
     else if (a === 'lhang') v.hangLamp();
     else if (a.startsWith('g') && this.kind === 'growlab') this.growAct(a, id);
+    else if (a === 'rstack') v.stackRocket(id as RocketModel);
+    else if (a === 'rpanel') { this.ride = !!v.rocketNear(); this.show('rocket', Number(id)); return; }
+    else if (a.startsWith('r') && this.kind === 'rocket') this.rocketAct(a, id);
     else if (a === 'feed' && v.feeds.target) {
       const n = Number(id), t = v.feeds.target;
       v.feeds.assign(t, n >= 0 ? n : null);
@@ -172,6 +176,50 @@ export class Panels {
     else if (a === 'gcancel') gl.draft = null;
     else if (a === 'gsow') { const r = gl.sow(v.app.world.time); if (r) v.app.onToast(`${r.p.name} sown in ${r.s.name}. The chamber runs at a day a minute`); }
     else if (a === 'gclear') gl.clear(gl.base, Number(id));
+  }
+
+  // ---------------------------------------------------------------- a rocket
+  /** going along on the next flight (you are beside it) */
+  private ride = false;
+
+  private rocketAct(a: string, id: string) {
+    const v = this.v, c = v.fleet.byId(this.craftId), r = c?.rocket;
+    if (!c || !r || r.trip) return;
+    const spec = ROCKETS[r.kind], L = r.load, room = spec.holds - (L.rover ? 2 : 0);
+    if (a === 'rcrew') L.crew = Math.max(0, Math.min(spec.seats, L.crew + Number(id)));
+    else if (a === 'rsup') L.supplies = Math.max(0, Math.min(room, L.supplies + Number(id)));
+    else if (a === 'rrover' && r.kind === 'mammoth') { L.rover = !L.rover; L.supplies = Math.min(L.supplies, spec.holds - (L.rover ? 2 : 0)); }
+    else if (a === 'rride') this.ride = !this.ride && v.rocketNear() === c;
+    else if (a === 'rfly') { const d = v.fleet.byId(Number(id)); if (d) v.flyRocket(c, d, this.ride && v.rocketNear() === c); }
+  }
+
+  private rocket() {
+    const v = this.v, f = v.fleet, c = f.byId(this.craftId), r = c?.rocket;
+    if (!c || !r) return '<p class="pdim">No such rocket.</p>';
+    const spec = ROCKETS[r.kind], L = r.load;
+    let h = `<div class="phero"><div><div class="pbig">${esc(c.name)}</div><div class="pdim">${esc(spec.name)} · ${esc(c.b.name)} · ${esc(c.status)} · ${r.flights} flight${r.flights === 1 ? '' : 's'}</div></div><span class="pbtns"><button data-act="cview" data-id="${c.id}">View</button><button data-act="mission">Back</button></span></div>`;
+    h += `<p class="pdim">${esc(spec.about)}.</p>`;
+    if (r.trip) {
+      const to = f.byId(r.trip.to.site), ph = phase(r.trip), T = r.trip.Ta + r.trip.Tc + r.trip.Td;
+      return h + `<div class="pland ok">${ph.part === 'climb' ? 'Climbing off the pad' : ph.part === 'cruise' ? (r.trip.hop ? 'Coasting over the top of its arc' : 'Cruising between the worlds') : 'Burning down onto the pad'} · for ${esc(to?.name ?? '?')} · ${Math.round((r.trip.t / T) * 100)}%</div>`;
+    }
+    if (c.build < 1) return h + `<div class="pland maybe">Stacking: ${Math.round(c.build * 100)}%</div>`;
+    // what it carries
+    h += '<div class="psub">Load</div>';
+    if (spec.seats) h += `<div class="prow"><div><div class="pnm">Crew: ${L.crew} of ${spec.seats}</div><div class="pdim">joining the base or station it flies to</div></div><span class="pbtns"><button data-act="rcrew" data-id="-1">−</button><button data-act="rcrew" data-id="1">+</button></span></div>`;
+    h += `<div class="prow"><div><div class="pnm">Supplies: ${L.supplies} hold${L.supplies === 1 ? '' : 's'} (${L.supplies * HOLD_DAYS} days)</div><div class="pdim">food, water, oxygen and parts, for the base or station it flies to</div></div><span class="pbtns"><button data-act="rsup" data-id="-1">−</button><button data-act="rsup" data-id="1">+</button></span></div>`;
+    if (r.kind === 'mammoth') h += `<div class="prow"><div><div class="pnm">A rover: ${L.rover ? 'loaded' : 'no'}</div><div class="pdim">takes a deck; it drives off where it lands</div></div><span class="pbtns"><button data-act="rrover"${L.rover ? ' class="on"' : ''}>${L.rover ? '✓ Rover' : 'Rover'}</button></span></div>`;
+    const near = v.rocketNear() === c;
+    h += `<div class="prow"><div><div class="pnm">Ride along: ${near && this.ride ? 'yes' : 'no'}</div><div class="pdim">${near ? 'you are beside it: climb in and go too' : 'stand beside it to go too'}</div></div><span class="pbtns"><button data-act="rride"${near ? '' : ' disabled'}${near && this.ride ? ' class="on"' : ''}>${near && this.ride ? '✓ Aboard' : 'Go too'}</button></span></div>`;
+    // where it can go: the nearest first
+    const P = f.pos(c);
+    const dests = f.sites().filter(d => d.id !== r.at).map(d => { const q = f.pos(d); return { d, km: Math.hypot(q[0] - P[0], q[1] - P[1], q[2] - P[2]) * AU_M / 1000 }; }).sort((x, y) => x.km - y.km).slice(0, 24);
+    h += '<div class="psub">Fly to</div>';
+    h += dests.map(({ d, km }) => {
+      const busy = d.kind !== 'station' && f.rocketAt(d);
+      return `<div class="prow tight"><div><div class="pnm">${esc(d.name)} <span class="pdim">· ${esc(d.b.name)}${d.kind === 'station' ? ' · in orbit' : ''}</span></div><div class="pdim">${km < 1000 ? `${km.toFixed(km < 10 ? 1 : 0)} km` : fmtLength(km * 1000 / AU_M)}${busy ? ` · ${esc(busy.name)} is on its pad` : ''}</div></div><span class="pbtns"><button data-act="rfly" data-id="${d.id}"${busy ? ' disabled' : ''}>Fly</button></span></div>`;
+    }).join('') || '<p class="pdim">Nowhere to go: build another pad or base.</p>';
+    return h;
   }
 
   /** a soil's analysis, as the lab reads it */
@@ -323,6 +371,7 @@ export class Panels {
       const site = this.sites(b)[this.site % this.sites(b).length];
       h += `<div class="phero"><div><div class="pbig">${esc(b.name)}</div><div class="pdim">target · ${fmtLength(d / AU_M)} from the ship${b === v.app.selected ? ' · selected' : ' · nearest'}</div></div></div>`;
       h += `<div class="plaunch">${KINDS.map(k => { const why = v.launchBlock(k.k); return `<button data-act="launch" data-id="${k.k}"${why ? ` disabled title="${esc(why)}"` : ''}><b>${k.name}</b><span>${why ? esc(why) : esc(k.about)}</span></button>`; }).join('')}<button data-act="lhang"><b>Orbital lamp</b><span>A lamp hung in orbit over where you are, lighting the ground at night</span></button></div>`;
+      h += `<div class="psub">Rockets</div><div class="plaunch">${(Object.keys(ROCKETS) as RocketModel[]).map(k => `<button data-act="rstack" data-id="${k}"><b>${ROCKETS[k].name}</b><span>${esc(ROCKETS[k].about)}. Stacked on a free pad or base</span></button>`).join('')}</div>`;
       h += `<div class="prow"><div class="pdim">Landers and rovers set down at</div><button data-act="site">${esc(site)} ▸</button></div>`;
       const all = v.ground.siteListFor(b);
       const row = (x: (typeof all)[number]) => `<div class="prow tight"><div><div class="pnm">${esc(x.name)}${x.year ? ` <span class="pdim">· ${x.year}</span>` : ''}</div><div class="pdim">${esc(x.about)}</div></div><span class="pbtns"><button data-act="gosite" data-id="${esc(x.name)}"${v.goBlock() ? ` disabled title="${esc(v.goBlock())}"` : ''}>Fly there</button></span></div>`;
@@ -338,7 +387,7 @@ export class Panels {
       const lander = c.kind === 'lander' && c.state === 'surface' && !f.crafts.some(x => x.parent === c.id);
       h += `<div class="prow"><div><div class="pnm">${esc(c.name)} <span class="pdim">· ${esc(c.b.name)} · ${esc(c.status)}</span></div><div class="pdim">${esc(last)}</div></div><span class="pbtns">`
         + `${c.state !== 'lost' ? `<button data-act="cview" data-id="${c.id}">${c.kind === 'rover' && c.state === 'surface' ? 'Drive' : 'View'}</button>` : ''}`
-        + `<button data-act="clog" data-id="${c.id}">Data</button>${lander ? `<button data-act="crover" data-id="${c.id}">Rover</button>` : ''}${c.state !== 'lost' && c.kind !== 'base' && c.kind !== 'pad' ? v.feeds.buttonFor(c) : ''}</span></div>`;
+        + `<button data-act="clog" data-id="${c.id}">Data</button>${c.rocket && c.state !== 'lost' ? `<button data-act="rpanel" data-id="${c.id}">${c.rocket.trip ? 'Flight' : 'Fly'}</button>` : ''}${lander ? `<button data-act="crover" data-id="${c.id}">Rover</button>` : ''}${c.state !== 'lost' && c.kind !== 'base' && c.kind !== 'pad' ? v.feeds.buttonFor(c) : ''}</span></div>`;
     }
     return h;
   }

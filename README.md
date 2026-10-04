@@ -10,11 +10,11 @@ npm install
 npm run dev        # http://localhost:5173
 npm test           # physics tests (vitest)
 npm run build      # static site in dist/
-npm run test:browser   # smoke test in Chromium, desktop and iPad (PARTS=map,ship,land,giant,touch picks parts)
+npm run test:browser   # smoke test in Chromium, desktop and iPad (PARTS=map,ship,land,base,rocket,giant,touch picks parts)
 python3 tools/fetch-moons.py   # refresh the moon table from JPL
 python3 tools/bake-mars.py     # Mars' heights and colour from the MOLA map and mosaic in tools/data
 python3 tools/bake-sun.py      # the Sun's surface from the photograph in tools/data
-python3 tools/pack-models.py   # the base buildings and trees (GLB) in tools/data, textures cut to 512 px
+python3 tools/pack-models.py   # the bases, trees, ruins and rockets (GLB) in tools/data, textures cut down
 ```
 
 Runs in any current browser, iPad and iPhone Safari included: touch to throw
@@ -371,6 +371,18 @@ leaves a shade lighter or darker. Further off they become simple trunks and
 crowns, and past a few hundred metres they are not drawn at all; each kind of
 tree is one instanced draw, so a forest costs a handful of draws.
 
+**Ruins** stand here and there on the worlds with ground: an arch, a
+colonnade, an obelisk, a shrine, a fallen tower, a length of wall. They are
+rare: a site every fifty kilometres or so on a world without a people, rarer
+still on the Earth, more often where a civilisation lives. Like the trees they
+are fixed to the world, so a site you found is there when you come back. Each
+is cut from the stone of the ground under it, tinted to its colour (grey on
+the Moon, rust on Mars, pale on ice), and set down at the lowest ground under
+its footprint so it never floats. You walk round them, under their arches and
+up their steps: where you can stand comes from the models, as in the bases.
+They are drawn within three kilometres and labelled within six. Coming within
+eighty metres of one logs it.
+
 **Grass** grows where the ground is grassy. On the Earth that is ground with
 more green in it than red or blue; on a made-up world, ground the colour of its
 plants; never on a cliff or bare rock. From afar it is a texture in the
@@ -436,6 +448,29 @@ walk and land on.
 
 Each reports as it goes. **View** any of them and the camera goes to it; a
 rover you can drive. Their labels show in the view.
+
+**Rockets** carry people and cargo from pad to pad. There are three:
+- the **C-01 Courier**: a pilot and one cargo bay;
+- the **P-06 Wayfarer**: two pilots, four passengers and a service bay;
+- the **H-12 Mammoth**: two cargo decks, two boosters, and room for a rover.
+
+Mission Control stacks one on a free launch pad's landing circle or a base's
+pad, which takes about fifteen seconds; Canaveral and Baikonur start with a
+Wayfarer and a Mammoth on their pads. Its panel, from Mission Control or `F`
+beside it on foot, loads it:
+- **crew** for the base or station it flies to;
+- **supplies**, thirty days a hold;
+- for the Mammoth, a **rover**, which drives off where it lands.
+
+Then it sends the rocket to any pad, base or station, on the same world or
+another. Standing beside it, you can **ride along**: the camera stays on it,
+and when it is down you climb out onto the pad, or into the station. A flight
+is a vertical climb off the pad, then the cruise, then a burn down onto the
+destination pad, slowing to nothing at the legs, its plume burning on the way
+up and down. On one world the cruise is a ballistic arc; between worlds it is
+a straight run between two moving worlds. Each is shown faster than real: a
+hop across a continent takes about a minute. What a rocket brings changes
+where it lands: the base's console shows its crew and stores.
 
 **Lander 1** is the ship's own crewed lander, and you fly it. Walk down to the
 hangar and use it: it drops out of the bay doors with you at the controls —

@@ -124,7 +124,7 @@ export class Feeds {
     fw.addScaledVector(U, -fw.dot(U));
     if (fw.lengthSq() < 1e-8) fw = new THREE.Vector3(1, 0, 0).addScaledVector(U, -U.x);
     fw.normalize();
-    const dist = ({ rover: 9, lander: 11, probe: 9, orbiter: 16, station: 85, base: 70, pad: 60 } as Record<string, number>)[c.kind] ?? 12;
+    const dist = ({ rover: 9, lander: 11, probe: 9, orbiter: 16, station: 85, base: 70, pad: 60, rocket: 40 } as Record<string, number>)[c.kind] ?? 12;
     this.cam.position.copy(fw).multiplyScalar(-dist).addScaledVector(U, dist * 0.38);
     this.cam.up.copy(U);
     this.cam.lookAt(0, 0, 0);

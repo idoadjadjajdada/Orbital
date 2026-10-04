@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Pack the low-poly models (tools/data/models/*.glb) for the game: src/three/models/.
 
-The bases (dome-habitat, modular-outpost, vault-hangar) and the trees (oak,
-birch, maple, palm, pine) come as GLB files with 1024-pixel textures. Seen at
+The bases (dome-habitat, modular-outpost, vault-hangar), the trees (oak,
+birch, maple, palm, pine), the ruins (ruin-*) and the rockets (rocket-*)
+come as GLB files with 1024-pixel textures. Seen at
 the sizes they are in the game, 512 is plenty: each texture over that is
-scaled down and re-encoded (JPEG, quality 85), and anything nothing refers to
-is dropped, so the browser fetches a third as much.
+scaled down and re-encoded (JPEG, quality 85; the rockets' atlases, with
+their markings, stay at 1024 and only become JPEGs), and anything nothing
+refers to is dropped, so the browser fetches a third as much.
 
 Run: python3 tools/pack-models.py
 """
@@ -13,6 +15,8 @@ import glob, io, json, os, struct
 from PIL import Image
 
 MAX = 512
+# the rockets' atlases carry their labels and markings: kept sharper
+MAX_FOR = {'rocket-': 1024}
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, 'data', 'models')
@@ -47,6 +51,8 @@ def refs(j, key):
 
 def pack(path):
     j, bin_ = read(path)
+    top = next((m for k, m in MAX_FOR.items() if os.path.basename(path).startswith(k)), MAX)
+    recoded = set()
     tex_used = sorted(refs(j, 'textures'))
     img_used = sorted({j['textures'][t]['source'] for t in tex_used})
     # renumber textures and images
@@ -76,11 +82,14 @@ def pack(path):
         data = bin_[s:s + v['byteLength']]
         if o in imgview:
             im = Image.open(io.BytesIO(data))
-            if max(im.size) > MAX:
-                im = im.convert('RGB').resize((MAX, MAX * im.size[1] // im.size[0]), Image.LANCZOS)
+            # too big, or a large PNG photo-like atlas: scaled down and/or made a JPEG
+            if max(im.size) > top or (im.format == 'PNG' and len(data) > 200_000):
+                if max(im.size) > top:
+                    im = im.resize((top, top * im.size[1] // im.size[0]), Image.LANCZOS)
                 buf = io.BytesIO()
-                im.save(buf, 'JPEG', quality=85, optimize=True)
+                im.convert('RGB').save(buf, 'JPEG', quality=85, optimize=True)
                 data = buf.getvalue()
+                recoded.add(o)
         vmap[o] = dict(v, byteOffset=len(out), byteLength=len(data))
         out += data
     while len(out) % 4: out.append(0)
@@ -89,8 +98,8 @@ def pack(path):
     for a in j['accessors']:
         if 'bufferView' in a: a['bufferView'] = vnum[a['bufferView']]
     for im in j['images']:
+        if im['bufferView'] in recoded: im['mimeType'] = 'image/jpeg'
         im['bufferView'] = vnum[im['bufferView']]
-        im['mimeType'] = 'image/jpeg' if im.get('mimeType') in (None, 'image/jpeg') else im['mimeType']
     j['buffers'] = [{'byteLength': len(out)}]
     js = json.dumps(j, separators=(',', ':')).encode()
     while len(js) % 4: js += b' '

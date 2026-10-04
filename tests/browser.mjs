@@ -17,7 +17,7 @@ const ok = (name, cond, extra = '') => { if (!cond) fails++; console.log(`${cond
  * The suite is in parts, each in a page of its own, so they can run side by side (CI runs one
  * part per job): PARTS=map,ship picks some; all of them by default.
  */
-const ALL = ['map', 'ship', 'land', 'base', 'giant', 'touch'];
+const ALL = ['map', 'ship', 'land', 'base', 'rocket', 'giant', 'touch'];
 const want = new Set((process.env.PARTS || ALL.join(',')).split(',').map(x => x.trim()).filter(Boolean));
 for (const w of want) if (!ALL.includes(w)) { console.log(`unknown part ${w}: the parts are ${ALL.join(', ')}`); process.exit(2); }
 let page, errs = [];
@@ -433,6 +433,53 @@ try {
   await page.keyboard.press('KeyF');
   ok('F drives it out of the hangar', await until(page, () => window.orbital.v3.mode === 'craft' && window.orbital.v3.fleet.crafts.some(c => c.kind === 'rover' && /rover/.test(c.name))));
   clean('base');
+  }
+
+  if (await part('rocket')) {
+  // the rockets: beside the Wayfarer on Canaveral's pad, load it, ride it to the base; the Mammoth up to the ISS
+  await page.evaluate(() => { const a = window.orbital; a.loadPreset('earth'); a.select(a.world.sources.find(b => b.name === 'Earth')); });
+  await page.keyboard.press('KeyV');
+  await page.waitForFunction(() => window.orbital.v3?.active, null, { timeout: 30000 });
+  await page.evaluate(() => {
+    const a = window.orbital, v = a.v3, b = a.world.sources.find(x => x.name === 'Earth'), c = v.fleet.crafts.find(q => q.name === 'Canaveral Base');
+    const w = v.fleet.bodyPoint(c, new v.camera.position.constructor(0, 1500, 0)).applyQuaternion(window.__bodyQuat(b)), AU = 1.495978707e11;
+    v.travel = null; v.ship.nav.anchor = b; v.ship.nav.off = [w.x / AU, w.y / AU, w.z / AU]; v.ship.nav.vel = [0, 0, 0];
+  });
+  await page.waitForFunction(() => window.orbital.v3.ground.ready, null, { timeout: 90000 }).catch(() => {});
+  ok('the spaceports start with a rocket on each pad', await page.evaluate(() => { const f = window.orbital.v3.fleet; return ['Canaveral Launch Pad', 'Baikonur Launch Pad'].every(n => !!f.rocketAt(f.crafts.find(c => c.name === n))); }));
+  await page.evaluate(() => { const v = window.orbital.v3, f = v.fleet, c = f.crafts.find(x => x.rocket?.kind === 'wayfarer'); v.toSurface(f.offset(c.n, 9, c.head + Math.PI / 2, c.b.r * 1.495978707e11), c.head - Math.PI / 2); });
+  ok('beside it, it can be flown', await until(page, () => /^The Wayfarer 1: load it, fly it, ride it/.test(window.orbital.v3.prompt?.label ?? '')));
+  await page.keyboard.press('KeyF');
+  ok('F opens its panel: load and destinations', await until(page, () => !!document.querySelector('.panel3 button[data-act="rfly"]')));
+  for (const sel of ['button[data-act="rcrew"][data-id="1"]', 'button[data-act="rcrew"][data-id="1"]', 'button[data-act="rsup"][data-id="1"]']) await page.click(`.panel3 ${sel}`);
+  if (!(await page.evaluate(() => /Aboard/.test(document.querySelector('.panel3 button[data-act="rride"]').textContent)))) await page.click('.panel3 button[data-act="rride"]');
+  const base = await page.evaluate(() => window.orbital.v3.fleet.crafts.find(c => c.name === 'Canaveral Base').id);
+  await page.click(`.panel3 button[data-act="rfly"][data-id="${base}"]`);
+  ok('it lifts off with you aboard, watching it', await until(page, () => { const v = window.orbital.v3, c = v.fleet.crafts.find(x => x.rocket?.kind === 'wayfarer'); return c.state === 'flight' && c.rocket.aboard && v.mode === 'craft'; }));
+  ok('on its plume', await until(page, () => window.orbital.v3.fleet.crafts.find(x => x.rocket?.kind === 'wayfarer').mesh.getObjectByName('plume').visible));
+  // (most of the flight run on: it is shown at its own pace, slow in a software renderer)
+  await page.evaluate(() => { const r = window.orbital.v3.fleet.crafts.find(x => x.rocket?.kind === 'wayfarer').rocket.trip; r.t = r.Ta + r.Tc + r.Td - 1; });
+  ok('it lands on the base\'s pad and you climb out beside it', await page.waitForFunction(() => window.orbital.v3.mode === 'surface', null, { timeout: 60000 }).then(() => true, () => false));
+  ok('its crew and supplies are the base\'s now', await page.evaluate(() => { const c = window.orbital.v3.fleet.crafts.find(x => x.name === 'Canaveral Base'); return c.crew === 8 && c.stores === 120; }));
+  ok('the Mammoth flies up to the ISS and docks', await page.evaluate(() => {
+    const v = window.orbital.v3, f = v.fleet, m = f.crafts.find(x => x.rocket?.kind === 'mammoth'), iss = f.crafts.find(x => x.name === 'ISS');
+    m.rocket.load.supplies = 2;
+    if (f.fly(m, iss)) return false;
+    const tr = m.rocket.trip; tr.t = tr.Ta + tr.Tc + tr.Td + 0.1;
+    f.step(0.01);
+    return m.rocket.docked && iss.stores === 150 && f.local(m).distanceTo(f.local(iss)) < 200;
+  }));
+  ok('and from the station on to a pad on the Moon: a flight between worlds', await page.evaluate(() => {
+    const v = window.orbital.v3, f = v.fleet, m = f.crafts.find(x => x.rocket?.kind === 'mammoth'), moon = window.orbital.world.sources.find(b => b.name === 'Moon');
+    const pad = f.build('pad', moon, [0.0, 0.0, 1.0].map((x, k) => [Math.cos(0.3), 0, Math.sin(0.3)][k]), 0); pad.build = 1;
+    if (f.fly(m, pad)) return false;
+    const tr = m.rocket.trip, out = [!tr.hop && tr.Ta === 0 && tr.Td > 0];
+    tr.t = tr.Ta + tr.Tc * 0.75; f.step(0.01); out.push(m.b === moon && m.state === 'flight');
+    tr.t = tr.Ta + tr.Tc + tr.Td + 0.1; f.step(0.01); out.push(m.state === 'surface' && m.b === moon && f.rocketAt(pad) === m);
+    return out.every(Boolean);
+  }));
+  ok('a rocket can be stacked on a free pad', await page.evaluate(() => { const f = window.orbital.v3.fleet, pad = f.crafts.find(c => c.name === 'Canaveral Launch Pad'); const c = f.stack('courier', pad); return typeof c !== 'string' && c.state === 'surface' && c.build === 0; }));
+  clean('rocket');
   }
 
   if (await part('giant')) {
