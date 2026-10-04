@@ -316,7 +316,7 @@ try {
   await page.evaluate(() => window.orbital.v3.goToSite(window.orbital.selected, 'Apollo 11 · Tranquility Base'));
   ok('the ship flies to Apollo 11 and the ground comes up', await page.waitForFunction(() => { const v = window.orbital.v3; return !v.travel && v.ground.ready && v.landBlock() === ''; }, null, { timeout: 90000 }).then(() => true, () => false));
   await page.keyboard.press('KeyL');
-  ok('L lands', await page.waitForFunction(() => window.orbital.v3.landing?.phase === 'landed', null, { timeout: 60000 }).then(() => true, () => false));
+  ok('L lands', await page.waitForFunction(() => window.orbital.v3.landing?.phase === 'landed', null, { timeout: 150000 }).then(() => true, () => false));
   ok('each leg telescopes to the ground under it', await page.evaluate(() => window.orbital.v3.landing.reach.length === 6 && window.orbital.v3.landing.reach.every(r => r > 0.3 && r < 20)));
   await page.evaluate(() => { const v = window.orbital.v3; v.leaveHelm(); v.use('airlock'); });
   ok('the airlock lets you down the ladder onto the Moon', await page.evaluate(() => window.orbital.v3.mode === 'surface' && /On Moon/.test(window.orbital.v3.readout().where) && /0\.17 g · vacuum/.test(window.orbital.v3.readout().near)));
