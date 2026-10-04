@@ -257,28 +257,148 @@ function craters(px: number, py: number, pz: number, top: number, fine: number, 
   return dh;
 }
 
-// ------------------------------------------------------------------ the patch
-export interface PatchJob {
-  id: number;
-  spec: GroundSpec;
-  /** the middle of the patch, unit, body frame */
-  c: V3;
-  /** innermost ring spacing and the patch's ground radius, m */
-  r0: number; rMax: number;
-  rings: number; segs: number;
+// ------------------------------------------------------------------ the tiles
+/**
+ * The ground is a fixed lattice of tiles on a cube round the world, each face
+ * split into quarters, and those into quarters, as far as is needed: coarse
+ * far off, down to half a metre underfoot. A tile is always the same tile — the
+ * same corners, the same vertices, the same heights — wherever the viewer is,
+ * so nothing shifts as you walk; nearer, a tile is replaced by its four finer
+ * children. Faces: +x, −x, +y, −y, +z, −z, each with its own across (U) and up
+ * (V) axes, a and b running −1..1 over the face (tan-warped, so tiles are about
+ * as wide at the face's edge as at its middle).
+ */
+const FACES: [V3, V3, V3][] = [
+  [[1, 0, 0], [0, 1, 0], [0, 0, 1]], [[-1, 0, 0], [0, -1, 0], [0, 0, 1]],
+  [[0, 1, 0], [-1, 0, 0], [0, 0, 1]], [[0, -1, 0], [1, 0, 0], [0, 0, 1]],
+  [[0, 0, 1], [0, 1, 0], [-1, 0, 0]], [[0, 0, -1], [0, 1, 0], [1, 0, 0]],
+];
+/** quads along a tile's side */
+export const TILE_N = 32;
+
+/** the unit direction at face coordinates (a, b) of face f */
+export function faceDir(f: number, a: number, b: number): V3 {
+  const [F, U, V] = FACES[f];
+  const ta = Math.tan(a * Math.PI / 4), tb = Math.tan(b * Math.PI / 4);
+  const x = F[0] + ta * U[0] + tb * V[0], y = F[1] + ta * U[1] + tb * V[1], z = F[2] + ta * U[2] + tb * V[2];
+  const l = Math.hypot(x, y, z);
+  return [x / l, y / l, z / l];
 }
-export interface Patch {
-  id: number;
+
+/** which face a direction is on, and where on it (a, b in −1..1) */
+export function faceOf(n: V3): [number, number, number] {
+  const ax = Math.abs(n[0]), ay = Math.abs(n[1]), az = Math.abs(n[2]);
+  const f = ax >= ay && ax >= az ? (n[0] > 0 ? 0 : 1) : ay >= az ? (n[1] > 0 ? 2 : 3) : (n[2] > 0 ? 4 : 5);
+  const [F, U, V] = FACES[f];
+  const d = n[0] * F[0] + n[1] * F[1] + n[2] * F[2];
+  const u = (n[0] * U[0] + n[1] * U[1] + n[2] * U[2]) / d, v = (n[0] * V[0] + n[1] * V[1] + n[2] * V[2]) / d;
+  return [f, Math.atan(u) * 4 / Math.PI, Math.atan(v) * 4 / Math.PI];
+}
+
+/** a tile's corners in face coordinates: level L, column x, row y */
+export function tileRange(L: number, x: number, y: number) {
+  const k = 2 / 2 ** L;
+  return { a0: -1 + x * k, b0: -1 + y * k, k };
+}
+
+export interface TileJob { key: string; spec: GroundSpec; f: number; L: number; x: number; y: number }
+export interface Tile {
+  key: string; f: number; L: number; x: number; y: number;
+  /** the tile's middle (unit, body frame); vertices are relative to its point on the datum, m */
   c: V3;
-  /** vertices relative to the datum point under the middle (c·R), body frame, m */
-  pos: Float32Array; nrm: Float32Array; col: Float32Array;
-  /** extra per vertex: 1 for sea */
-  sea: Float32Array;
-  index: Uint32Array;
-  /** height of the ground at the middle, m */
-  h0: number;
-  /** boulders to scatter: positions (as pos), sizes */
+  pos: Float32Array; nrm: Float32Array; col: Float32Array; sea: Float32Array; index: Uint32Array;
+  /** vertex spacing, m */
+  spacing: number;
+  /** boulders: position (as pos), size, colour — 7 numbers each */
   rocks: Float32Array;
+}
+
+/**
+ * Build a tile: a (N+1)² grid of vertices, each as detailed as the grid's
+ * spacing allows, with a skirt round its edge dropped down out of sight to
+ * hide the seams where a finer tile meets a coarser one. Normals are taken
+ * from a ring of samples beyond the edge too, so they match across seams.
+ */
+export function buildTile(job: TileJob): Tile {
+  const { spec: s, f, L, x, y } = job;
+  const N = TILE_N, R = s.R;
+  const { a0, b0, k } = tileRange(L, x, y);
+  const c = faceDir(f, a0 + k / 2, b0 + k / 2);
+  const spacing = (R * (Math.PI / 2) / 2 ** L) / N;
+  const fine = Math.max(0.4, spacing * 0.5);
+  const paint = groundPainter(s.look), det = detailFor(1024);
+  const out: GroundSample = { h: 0, r: 0, g: 0, b: 0, sea: false, rock: 0 };
+  // samples on a grid one wider all round, for the normals
+  const M = N + 3;
+  const P = new Float64Array(M * M * 3), C = new Float32Array(M * M * 3), SEA = new Float32Array(M * M), ROCK = new Float32Array(M * M);
+  const cx = c[0] * R, cy = c[1] * R, cz = c[2] * R;
+  for (let j = 0; j < M; j++) for (let i = 0; i < M; i++) {
+    const n = faceDir(f, a0 + (i - 1) / N * k, b0 + (j - 1) / N * k);
+    const h = groundAt(s, n, fine, out, paint, det);
+    const q = j * M + i, rr = R + h;
+    P[q * 3] = n[0] * rr - cx; P[q * 3 + 1] = n[1] * rr - cy; P[q * 3 + 2] = n[2] * rr - cz;
+    C[q * 3] = out.r; C[q * 3 + 1] = out.g; C[q * 3 + 2] = out.b;
+    SEA[q] = out.sea ? 1 : 0; ROCK[q] = out.sea ? 0 : out.rock;
+  }
+  // the grid proper, and the skirt: one more ring of vertices under the edge
+  const nv = (N + 1) * (N + 1), ns = 4 * N;
+  const pos = new Float32Array((nv + ns) * 3), nrm = new Float32Array((nv + ns) * 3), col = new Float32Array((nv + ns) * 3), sea = new Float32Array(nv + ns);
+  const rocks: number[] = [];
+  const at = (i: number, j: number) => ((j + 1) * M + (i + 1)) * 3;
+  for (let j = 0; j <= N; j++) for (let i = 0; i <= N; i++) {
+    const v = j * (N + 1) + i, q = at(i, j);
+    pos[v * 3] = P[q]; pos[v * 3 + 1] = P[q + 1]; pos[v * 3 + 2] = P[q + 2];
+    const e = at(i + 1, j), w = at(i - 1, j), nN = at(i, j + 1), sS = at(i, j - 1);
+    const rx = P[e] - P[w], ry = P[e + 1] - P[w + 1], rz = P[e + 2] - P[w + 2];
+    const tx = P[nN] - P[sS], ty = P[nN + 1] - P[sS + 1], tz = P[nN + 2] - P[sS + 2];
+    let nx = ry * tz - rz * ty, ny = rz * tx - rx * tz, nz = rx * ty - ry * tx;
+    const ox = P[q] + cx, oy = P[q + 1] + cy, oz = P[q + 2] + cz;
+    if (nx * ox + ny * oy + nz * oz < 0) { nx = -nx; ny = -ny; nz = -nz; }
+    const l = Math.hypot(nx, ny, nz) || 1;
+    nrm[v * 3] = nx / l; nrm[v * 3 + 1] = ny / l; nrm[v * 3 + 2] = nz / l;
+    const qq = q / 3;
+    col[v * 3] = C[q]; col[v * 3 + 1] = C[q + 1]; col[v * 3 + 2] = C[q + 2];
+    sea[v] = SEA[qq];
+    // boulders on rocky ground, on the finest tiles (most small, a few big: a power law, as round lunar craters)
+    if (spacing < 6 && i < N && j < N && ROCK[qq] > 0.3) {
+      const hk = hash(i * 31 + 7 + x * 977, j * 17 + 3 + y * 613, f * 101 + L * 7 + Math.floor(s.look.seed));
+      if (hk < ROCK[qq] * 0.06 * Math.min(1, spacing)) {
+        const sz = Math.min(spacing * 2, 3) * (0.08 + 0.5 * Math.pow(hash(i + x, j + y, 5 + L), 3)) * ROCK[qq];
+        rocks.push(P[q] + (P[e] - P[q]) * 0.37, P[q + 1] + (P[e + 1] - P[q + 1]) * 0.37, P[q + 2] + (P[e + 2] - P[q + 2]) * 0.37, sz, C[q] * 0.7, C[q + 1] * 0.7, C[q + 2] * 0.7);
+      }
+    }
+  }
+  // the skirt: the edge's vertices again, lowered along the up, round the tile in order
+  const edge: number[] = [];
+  for (let i = 0; i < N; i++) edge.push(i);
+  for (let j = 0; j < N; j++) edge.push(j * (N + 1) + N);
+  for (let i = N; i > 0; i--) edge.push(N * (N + 1) + i);
+  for (let j = N; j > 0; j--) edge.push(j * (N + 1));
+  // deep enough to cover the step to a neighbour one level finer (the detail between the two is a few
+  // tenths of the spacing high), and no deeper: every pixel of it is shaded
+  const drop = 0.5 + spacing * 0.4;
+  edge.forEach((v, e) => {
+    const t = nv + e;
+    const ox = pos[v * 3] + cx, oy = pos[v * 3 + 1] + cy, oz = pos[v * 3 + 2] + cz, ol = Math.hypot(ox, oy, oz);
+    pos[t * 3] = pos[v * 3] - ox / ol * drop; pos[t * 3 + 1] = pos[v * 3 + 1] - oy / ol * drop; pos[t * 3 + 2] = pos[v * 3 + 2] - oz / ol * drop;
+    nrm[t * 3] = nrm[v * 3]; nrm[t * 3 + 1] = nrm[v * 3 + 1]; nrm[t * 3 + 2] = nrm[v * 3 + 2];
+    col[t * 3] = col[v * 3]; col[t * 3 + 1] = col[v * 3 + 1]; col[t * 3 + 2] = col[v * 3 + 2];
+    sea[t] = sea[v];
+  });
+  const idx = new Uint32Array(N * N * 6 + ns * 6);
+  let q = 0;
+  for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    const a = j * (N + 1) + i, b = a + 1, cc = a + (N + 1), d = cc + 1;
+    // (the diagonal alternates, so ridges do not all run one way)
+    if ((i + j) & 1) { idx[q++] = a; idx[q++] = b; idx[q++] = d; idx[q++] = a; idx[q++] = d; idx[q++] = cc; }
+    else { idx[q++] = a; idx[q++] = b; idx[q++] = cc; idx[q++] = b; idx[q++] = d; idx[q++] = cc; }
+  }
+  for (let e = 0; e < ns; e++) {
+    const v0 = edge[e], v1 = edge[(e + 1) % ns], s0 = nv + e, s1 = nv + (e + 1) % ns;
+    // facing out of the tile, toward the seam it covers
+    idx[q++] = v0; idx[q++] = s0; idx[q++] = v1; idx[q++] = v1; idx[q++] = s0; idx[q++] = s1;
+  }
+  return { key: job.key, f, L, x, y, c, pos, nrm, col, sea, index: idx.slice(0, q), spacing, rocks: Float32Array.from(rocks) };
 }
 
 /** a tangent basis at a unit vector: east, north */
@@ -290,87 +410,3 @@ export function tangent(c: V3): [V3, V3] {
   return [e, nn];
 }
 
-/**
- * Build the terrain round a point: rings at geometric spacing out from it, so
- * it is fine underfoot and coarse at the horizon, each vertex as detailed as
- * its spacing allows.
- */
-export function buildPatch(job: PatchJob): Patch {
-  const { spec: s, c, r0, rMax, rings: N, segs: S } = job;
-  const R = s.R;
-  const [e, nn] = tangent(c);
-  const paint = groundPainter(s.look), det = detailFor(1024);
-  const nv = (N + 1) * S;
-  const P = new Float64Array(nv * 3);
-  const col = new Float32Array(nv * 3), sea = new Float32Array(nv);
-  const out: GroundSample = { h: 0, r: 0, g: 0, b: 0, sea: false, rock: 0 };
-  const ratio = Math.pow(rMax / r0, 1 / (N - 1));
-  const rocks: number[] = [];
-  let h0 = 0;
-  for (let i = 0; i <= N; i++) {
-    const dist = i === 0 ? 0 : r0 * Math.pow(ratio, i - 1);
-    const step = i === 0 ? r0 : dist * (ratio - 1);
-    const fine = Math.max(0.4, 0.5 * Math.max(step, (2 * Math.PI * dist) / S));
-    const th = dist / R, ct = Math.cos(th), st = Math.sin(th);
-    for (let j = 0; j < S; j++) {
-      const ph = (j / S) * 2 * Math.PI + (i % 2) * (Math.PI / S);
-      const cp = Math.cos(ph), sp = Math.sin(ph);
-      const n: V3 = [ct * c[0] + st * (cp * e[0] + sp * nn[0]), ct * c[1] + st * (cp * e[1] + sp * nn[1]), ct * c[2] + st * (cp * e[2] + sp * nn[2])];
-      const h = groundAt(s, n, fine, out, paint, det);
-      if (i === 0 && j === 0) h0 = h;
-      const k = i * S + j, rr = R + h;
-      P[k * 3] = n[0] * rr - c[0] * R; P[k * 3 + 1] = n[1] * rr - c[1] * R; P[k * 3 + 2] = n[2] * rr - c[2] * R;
-      col[k * 3] = out.r; col[k * 3 + 1] = out.g; col[k * 3 + 2] = out.b;
-      sea[k] = out.sea ? 1 : 0;
-      // boulders on rocky ground, near the middle
-      // (most small, a few big: a power law, as the boulder counts round lunar craters go)
-      if (!out.sea && dist > 2 && dist < 400 && out.rock > 0.3 && hash(i * 31 + 7, j * 17 + 3, Math.floor(s.look.seed)) < out.rock * 0.06) {
-        rocks.push(P[k * 3], P[k * 3 + 1], P[k * 3 + 2], Math.min(step, 3) * (0.08 + 0.5 * Math.pow(hash(i, j, 5), 3)) * out.rock);
-      }
-    }
-  }
-  // normals from the neighbours across and along the rings
-  const nrm = new Float32Array(nv * 3);
-  const at = (i: number, j: number) => ((Math.max(0, Math.min(N, i)) * S + ((j % S) + S) % S) * 3);
-  for (let i = 0; i <= N; i++) for (let j = 0; j < S; j++) {
-    const a = at(i + 1, j), b = at(i - 1, j), cc = at(i, j + 1), d = at(i, j - 1);
-    let rx = P[a] - P[b], ry = P[a + 1] - P[b + 1], rz = P[a + 2] - P[b + 2];
-    let tx = P[cc] - P[d], ty = P[cc + 1] - P[d + 1], tz = P[cc + 2] - P[d + 2];
-    if (i === 0) {
-      // the middle: the plain up
-      const k = (i * S + j) * 3;
-      const ux = c[0], uy = c[1], uz = c[2];
-      const up0 = at(1, 0), up1 = at(1, Math.floor(S / 4)), up2 = at(1, Math.floor(S / 2)), up3 = at(1, Math.floor((3 * S) / 4));
-      rx = P[up0] - P[up2]; ry = P[up0 + 1] - P[up2 + 1]; rz = P[up0 + 2] - P[up2 + 2];
-      tx = P[up1] - P[up3]; ty = P[up1 + 1] - P[up3 + 1]; tz = P[up1 + 2] - P[up3 + 2];
-      let x = ry * tz - rz * ty, y = rz * tx - rx * tz, z = rx * ty - ry * tx;
-      if (x * ux + y * uy + z * uz < 0) { x = -x; y = -y; z = -z; }
-      const l = Math.hypot(x, y, z) || 1;
-      nrm[k] = x / l; nrm[k + 1] = y / l; nrm[k + 2] = z / l;
-      continue;
-    }
-    let x = ry * tz - rz * ty, y = rz * tx - rx * tz, z = rx * ty - ry * tx;
-    // outward
-    const k = (i * S + j) * 3;
-    const ox = P[k] + c[0] * R, oy = P[k + 1] + c[1] * R, oz = P[k + 2] + c[2] * R;
-    if (x * ox + y * oy + z * oz < 0) { x = -x; y = -y; z = -z; }
-    const l = Math.hypot(x, y, z) || 1;
-    nrm[k] = x / l; nrm[k + 1] = y / l; nrm[k + 2] = z / l;
-  }
-  // triangles between each ring and the next
-  const idx = new Uint32Array(N * S * 6);
-  let q = 0;
-  for (let i = 0; i < N; i++) for (let j = 0; j < S; j++) {
-    const a = i * S + j, b = i * S + ((j + 1) % S), cc = (i + 1) * S + j, d = (i + 1) * S + ((j + 1) % S);
-    idx[q++] = a; idx[q++] = cc; idx[q++] = b;
-    idx[q++] = b; idx[q++] = cc; idx[q++] = d;
-  }
-  return { id: job.id, c, pos: Float32Array.from(P), nrm, col, sea, index: idx, h0, rocks: Float32Array.from(rocks) };
-}
-
-/** the patch radius and innermost spacing for a viewer `alt` m above the ground of a world of radius R and relief */
-export function patchSize(alt: number, R: number, relief: number) {
-  const a = Math.max(1, alt);
-  const horizon = Math.sqrt(2 * R * (a + relief)) * 1.3 + 3000;
-  return { r0: Math.max(0.5, a * 0.03), rMax: Math.min(R * 1.4, horizon) };
-}

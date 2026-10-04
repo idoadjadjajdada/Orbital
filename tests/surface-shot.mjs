@@ -39,7 +39,7 @@ try {
   await page.waitForTimeout(15000);
   await page.evaluate(() => { const v = window.orbital.v3; v.surf.pitch = 0.05; });
   // EVAL: code to run in the page once on the ground (v is the 3D view, a the app)
-  if (process.env.EVAL) console.log('eval:', await page.evaluate(code => { const a = window.orbital; return String(new Function('v', 'a', code)(a.v3, a)); }, process.env.EVAL));
+  if (process.env.EVAL) console.log('eval:', await page.evaluate(async code => { const a = window.orbital; return String(await new Function('v', 'a', code)(a.v3, a)); }, process.env.EVAL));
   await page.waitForTimeout(3000);
   console.log(await page.evaluate(() => { const v = window.orbital.v3; return JSON.stringify({ mode: v.mode, fogK: v.ground.fogK, where: v.readout().where }); }));
   await page.screenshot({ path: out });

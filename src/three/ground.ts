@@ -3,8 +3,8 @@ import type { Body } from '../physics/body';
 import { AU_M } from '../physics/units';
 import { bodyFrame, type V3 } from '../pixel/sprites';
 import { bodyAxis } from '../pixel/renderer';
-import { hash } from '../pixel/noise';
-import { groundSpec, groundAt, buildPatch, patchSize, tangent, groundPainter, type GroundSpec, type Patch, type PatchJob, type GroundSample } from './terrain';
+import { groundSpec, groundAt, tangent, groundPainter, type GroundSpec, type GroundSample } from './terrain';
+import { TileSet } from './tiles';
 import { detailFor } from '../pixel/surface';
 import { LIGHT_GLSL } from './lightglsl';
 import { atmosphere, life, gravity, rng, type Atmosphere, type Life } from './science';
@@ -15,8 +15,9 @@ import { apolloMesh, flagMesh, lrvMesh, landerMesh, roverMesh, veneraMesh, huyge
  * The ground of the world you are near, and the sky over it.
  *
  * Within a few hundred kilometres of a solid world the sphere it is drawn as
- * gives way to terrain (terrain.ts) built in a worker round the point under
- * you, fine underfoot and coarse at the horizon, rebuilt as you move. It is
+ * gives way to terrain (terrain.ts): fixed tiles built in workers (tiles.ts),
+ * fine underfoot and coarse at the horizon, the same ground wherever you
+ * stand. It is
  * lit by its star, hazed by its air (or not, if it has none), and its seas
  * are flat and shine. The sky over it is the colour its air makes it — blue
  * here, butterscotch on Mars, orange on Titan, black on the Moon — fading
@@ -40,7 +41,7 @@ const GROUND_VERT = /* glsl */ `
 #include <common>
 #include <logdepthbuf_pars_vertex>
 attribute float sea;
-uniform vec3 offset;
+attribute vec3 grain;
 varying vec3 vN;
 varying vec3 vP;
 varying vec3 vCol;
@@ -52,7 +53,7 @@ void main() {
   vP = wp.xyz;
   vCol = color;
   vSea = sea;
-  vLocal = position + offset;
+  vLocal = position + grain;
   gl_Position = projectionMatrix * viewMatrix * wp;
   #include <logdepthbuf_vertex>
 }`;
@@ -169,8 +170,8 @@ export class Ground {
   /** the light on the ground: colour of the sun through the air, and the ambient from the sky */
   readonly sunCol = new THREE.Color(1, 1, 1);
   readonly skyCol = new THREE.Color(0, 0, 0);
-  /** the patch is in and the sphere can sink under it */
-  ready = false;
+  /** the tiles are in and the sphere can sink under them */
+  get ready() { return this.tiles.ready; }
   /** the haze where you are: how fast it thickens with distance (per m) and its colour, for everything else on the ground too */
   fogK = 0;
   readonly fogCol = new THREE.Color();
@@ -182,16 +183,8 @@ export class Ground {
   biome: Biome | null = null;
 
   private mat: THREE.ShaderMaterial;
-  private mesh: THREE.Mesh | null = null;
-  private patch: Patch | null = null;
-  private rocks: THREE.InstancedMesh | null = null;
-  private rockGeo = new THREE.IcosahedronGeometry(1, 0);
-  private rockMat = new THREE.MeshLambertMaterial({ flatShading: true });
-  private worker: Worker | null = null;
-  private busy = false;
-  private jobId = 0;
-  private want: PatchJob | null = null;
-  private last = { c: [0, 0, 1] as V3, r0: 0 };
+  /** the ground's tiles */
+  readonly tiles: TileSet;
   private paint: ReturnType<typeof groundPainter> | null = null;
   private det = detailFor(1024);
   private sample: GroundSample = { h: 0, r: 0, g: 0, b: 0, sea: false, rock: 0 };
@@ -212,7 +205,7 @@ export class Ground {
       vertexShader: GROUND_VERT, fragmentShader: GROUND_FRAG, vertexColors: true,
       uniforms: {
         sunDir: { value: new THREE.Vector3(0, 0, 1) }, sunCol: { value: new THREE.Vector3(1, 1, 1) }, ambient: { value: new THREE.Vector3(0.03, 0.03, 0.03) },
-        fogCol: { value: new THREE.Vector3() }, fogK: { value: 0 }, time: { value: 0 }, offset: { value: new THREE.Vector3() }, seaUp: { value: new THREE.Vector3() },
+        fogCol: { value: new THREE.Vector3() }, fogK: { value: 0 }, time: { value: 0 }, seaUp: { value: new THREE.Vector3() },
         ...lightUniforms,
       },
     });
@@ -224,17 +217,12 @@ export class Ground {
         thick: { value: 0 }, haze: { value: 0 }, inside: { value: 0 }, fogCol: { value: new THREE.Vector3() },
       },
     }));
+    this.tiles = new TileSet(this.mat);
+    this.root.add(this.tiles.group);
     this.sky.renderOrder = -1;
     this.sky.frustumCulled = false;
     this.sky.visible = false;
     scene.add(this.sky);
-    try {
-      if (typeof Worker !== 'undefined') {
-        this.worker = new Worker(new URL('./terrainworker.ts', import.meta.url), { type: 'module' });
-        this.worker.onmessage = (e: MessageEvent<Patch>) => { this.busy = false; this.take(e.data); this.next(); };
-        this.worker.onerror = () => { this.worker = null; this.busy = false; this.next(); };
-      }
-    } catch { this.worker = null; }
   }
 
   /** is this a world you can stand on? */
@@ -267,10 +255,11 @@ export class Ground {
     this.body = b;
     this.clearAll();
     this.spec = null; this.atmo = null; this.lifeInfo = null; this.paint = null;
-    if (!b) return;
+    if (!b) { this.tiles.reset(null); return; }
     this.atmo = atmosphere(b, stars);
     this.lifeInfo = life(b, stars);
     this.spec = groundSpec(b.look, b.r * AU_M, gravity(b), this.atmo.bar);
+    this.tiles.reset(this.spec);
     this.sites = sitesOn(b.look.real);
     // a civilisation's towns, seeded
     this.towns = this.sites.filter(s => s.kind === 'city').map(s => ({ name: s.name, lat: s.lat, lon: s.lon, pop: s.pop ?? 1, alien: false }));
@@ -287,8 +276,6 @@ export class Ground {
   }
 
   private clearAll() {
-    if (this.mesh) { this.root.remove(this.mesh); this.mesh.geometry.dispose(); this.mesh = null; }
-    if (this.rocks) { this.rocks.dispose(); this.rocks = null; }
     for (const p of this.placed.values()) { this.root.remove(p.obj); disposeTree(p.obj); }
     this.placed.clear();
     for (const f of this.flora) { this.root.remove(f); f.dispose(); }
@@ -296,62 +283,6 @@ export class Ground {
     this.floraAt = null;
     for (const c of this.critters) { this.root.remove(c.obj); disposeTree(c.obj); }
     this.critters = [];
-    this.patch = null;
-    this.ready = false;
-    this.want = null;
-    this.jobId++;
-  }
-
-  /** a patch from the worker: make it the mesh */
-  private take(p: Patch) {
-    if (p.id !== this.jobId || !this.spec) return;
-    this.patch = p;
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(p.pos, 3));
-    g.setAttribute('normal', new THREE.BufferAttribute(p.nrm, 3));
-    g.setAttribute('color', new THREE.BufferAttribute(p.col, 3));
-    g.setAttribute('sea', new THREE.BufferAttribute(p.sea, 1));
-    g.setIndex(new THREE.BufferAttribute(p.index, 1));
-    const R = this.spec.R;
-    if (this.mesh) { this.mesh.geometry.dispose(); this.mesh.geometry = g; }
-    else { this.mesh = new THREE.Mesh(g, this.mat); this.mesh.frustumCulled = false; this.root.add(this.mesh); }
-    this.mesh.position.set(p.c[0] * R, p.c[1] * R, p.c[2] * R);
-    // the grain's lattice, kept still as the patch moves: the middle's position, modulo its period
-    const L = 2048;
-    (this.mat.uniforms.offset.value as THREE.Vector3).set(mod(p.c[0] * R, L), mod(p.c[1] * R, L), mod(p.c[2] * R, L));
-    // boulders
-    if (this.rocks) { this.mesh.remove(this.rocks); this.rocks.dispose(); this.rocks = null; }
-    const n = p.rocks.length / 4;
-    if (n) {
-      const rk = new THREE.InstancedMesh(this.rockGeo, this.rockMat, n);
-      const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), s = new THREE.Vector3(), at = new THREE.Vector3(), c = new THREE.Color();
-      for (let k = 0; k < n; k++) {
-        const sz = p.rocks[k * 4 + 3];
-        e.set(hash(k, 1, 2) * 6, hash(k, 3, 4) * 6, hash(k, 5, 6) * 6);
-        q.setFromEuler(e);
-        s.set(sz * (0.8 + 0.6 * hash(k, 7, 1)), sz * (0.5 + 0.4 * hash(k, 8, 1)), sz * (0.8 + 0.6 * hash(k, 9, 1)));
-        at.set(p.rocks[k * 4], p.rocks[k * 4 + 1], p.rocks[k * 4 + 2]);
-        m.compose(at, q, s);
-        rk.setMatrixAt(k, m);
-        // the colour of the ground it sits on, darker
-        const vi = nearestVertex(p, at);
-        c.setRGB(p.col[vi * 3] * 0.7, p.col[vi * 3 + 1] * 0.7, p.col[vi * 3 + 2] * 0.7);
-        rk.setColorAt(k, c);
-      }
-      rk.frustumCulled = false;
-      this.rocks = rk;
-      this.mesh.add(rk);
-    }
-    this.ready = true;
-  }
-
-  private next() {
-    if (this.busy || !this.want) return;
-    const job = this.want;
-    this.want = null;
-    this.busy = true;
-    if (this.worker) this.worker.postMessage(job);
-    else setTimeout(() => { this.busy = false; this.take(buildPatch(job)); this.next(); }, 0);
   }
 
   /**
@@ -383,16 +314,8 @@ export class Ground {
     const n: V3 = [vb.x / r, vb.y / r, vb.z / r];
     const hHere = this.heightAt(n, 50);
     alt = r - spec.R - Math.max(0, hHere);
-    // a new patch when the viewer has moved far enough, or come much closer or gone further off
-    const { r0, rMax } = patchSize(alt, spec.R, spec.relief);
-    const moved = Math.acos(Math.min(1, n[0] * this.last.c[0] + n[1] * this.last.c[1] + n[2] * this.last.c[2])) * spec.R;
-    if (!this.patch && !this.busy && !this.want || moved > Math.max(8, alt * 0.4) || r0 > this.last.r0 * 2.2 || r0 < this.last.r0 / 2.2) {
-      if (!this.busy || moved > Math.max(8, alt * 0.4) * 3) {
-        this.last = { c: n, r0 };
-        this.want = { id: ++this.jobId, spec, c: n, r0, rMax, rings: 112, segs: 168 };
-        this.next();
-      }
-    }
+    // the tiles round the viewer
+    this.tiles.frame(vb);
     // the light on the ground
     const u = this.mat.uniforms;
     u.time.value = this.t;
@@ -410,7 +333,6 @@ export class Ground {
     const fog = this.horizon;
     this.fogCol.copy(fog);
     (u.fogCol.value as THREE.Vector3).set(fog.r, fog.g, fog.b);
-    this.rockMat.color.setScalar(1);
     // things on the ground, near enough to matter
     if (alt < 60e3) this.placeSites(n, alt);
     if (alt < 3000) this.life(dt, n);
@@ -726,24 +648,12 @@ export function latLonOf(n: V3): [number, number] {
   return [(Math.asin(Math.max(-1, Math.min(1, n[2]))) * 180) / Math.PI, (Math.atan2(n[1], n[0]) * 180) / Math.PI];
 }
 export const arc = (a: V3, b: V3) => Math.acos(Math.max(-1, Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2])));
-const mod = (x: number, m: number) => ((x % m) + m) % m;
 /** a star's light as it falls on the ground: its colour, but far less saturated than the map's glyph for it */
 function light(rgb: V3) {
   const m = Math.max(rgb[0], rgb[1], rgb[2], 1e-3);
   return new THREE.Color(0.8 + 0.2 * rgb[0] / m, 0.8 + 0.2 * rgb[1] / m, 0.8 + 0.2 * rgb[2] / m);
 }
 const smooth = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
-
-function nearestVertex(p: Patch, at: THREE.Vector3) {
-  // the rocks are laid out from vertices, so the nearest on its ring is close enough: search a little
-  let best = 0, bd = Infinity;
-  const n = p.pos.length / 3, step = Math.max(1, Math.floor(n / 4000));
-  for (let k = 0; k < n; k += step) {
-    const d = (p.pos[k * 3] - at.x) ** 2 + (p.pos[k * 3 + 1] - at.y) ** 2 + (p.pos[k * 3 + 2] - at.z) ** 2;
-    if (d < bd) { bd = d; best = k; }
-  }
-  return best;
-}
 
 function disposeTree(o: THREE.Object3D) {
   o.traverse(x => {

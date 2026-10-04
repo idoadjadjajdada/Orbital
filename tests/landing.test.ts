@@ -3,7 +3,7 @@ import { buildPreset } from '../src/physics/presets';
 import type { Body } from '../src/physics/body';
 import { AU_M } from '../src/physics/units';
 import { atmosphere, interior, composition, habitability, habitableZone, life, gravity, giantPressure, giantTemp, cloudDecks, airAt } from '../src/three/science';
-import { groundSpec, groundAt, buildPatch, patchSize, type GroundSample } from '../src/three/terrain';
+import { groundSpec, groundAt, buildTile, faceDir, faceOf, TILE_N, type GroundSample } from '../src/three/terrain';
 import { SITES, sitesOn, earthBiome, speciesIn } from '../src/three/sites';
 
 const solar = buildPreset('solar');
@@ -111,16 +111,27 @@ describe('the ground', () => {
     const s = spec(body('Moon'));
     expect(groundAt(s, dir(10, 20), 1, smp)).toBe(groundAt(s, dir(10, 20), 1, smp));
   });
-  it('builds a patch fine underfoot and reaching past the horizon', () => {
+  it('builds fixed tiles that meet at their edges and are the same every time', () => {
     const s = spec(body('Moon'));
-    const { r0, rMax } = patchSize(2, s.R, s.relief);
-    expect(r0).toBeLessThan(1);
-    expect(rMax).toBeGreaterThan(Math.sqrt(2 * s.R * 2));
-    const p = buildPatch({ id: 1, spec: s, c: dir(0.674, 23.47), r0, rMax, rings: 24, segs: 32 });
-    expect(p.pos.length).toBe(25 * 32 * 3);
-    expect(p.index.length).toBe(24 * 32 * 6);
-    expect(p.pos.every(x => isFinite(x))).toBe(true);
-    expect(p.nrm.every(x => isFinite(x))).toBe(true);
+    const N = TILE_N;
+    const t = buildTile({ key: 'a', spec: s, f: 0, L: 12, x: 2000, y: 2100 });
+    expect(t.pos.every(x => isFinite(x))).toBe(true);
+    expect(t.nrm.every(x => isFinite(x))).toBe(true);
+    expect(t.spacing).toBeLessThan(25);
+    const again = buildTile({ key: 'a', spec: s, f: 0, L: 12, x: 2000, y: 2100 });
+    expect(Array.from(again.pos)).toEqual(Array.from(t.pos));
+    // the tile to its right shares its right edge
+    const u = buildTile({ key: 'b', spec: s, f: 0, L: 12, x: 2001, y: 2100 });
+    const R = s.R;
+    for (let j = 0; j <= N; j += 8) {
+      const a = j * (N + 1) + N, b = j * (N + 1);
+      const pa = [t.pos[a * 3] + t.c[0] * R, t.pos[a * 3 + 1] + t.c[1] * R, t.pos[a * 3 + 2] + t.c[2] * R];
+      const pb = [u.pos[b * 3] + u.c[0] * R, u.pos[b * 3 + 1] + u.c[1] * R, u.pos[b * 3 + 2] + u.c[2] * R];
+      expect(Math.hypot(pa[0] - pb[0], pa[1] - pb[1], pa[2] - pb[2])).toBeLessThan(0.05);
+    }
+    // face coordinates go there and back
+    const [f, a, b] = faceOf(faceDir(3, 0.3, -0.7));
+    expect(f).toBe(3); expect(a).toBeCloseTo(0.3, 9); expect(b).toBeCloseTo(-0.7, 9);
   });
 });
 
