@@ -9,6 +9,7 @@ What's next, in order. Move things up or down; tick them when done.
 - [ ] Bases: crew and stores used up over time, so supply flights matter
 - [ ] Ruins: something to find inside them (an artefact for the log, a scan of who built them)
 - [ ] The hangar's own rover model stays visible after the rover drives out: hide it while it's out
+- [ ] Add interior to orbiting stations. ([message](Feedback/2026-10-04.md#feature-add-interior-to-orbiting-stations))
 
 ## Later
 - [ ] Interiors you can walk through in the rockets (cabins, ladders, cargo decks)
