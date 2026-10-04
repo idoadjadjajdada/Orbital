@@ -1,5 +1,6 @@
 import { buildMap } from './surface';
 import { marsReady } from './marsdata';
+import { earthReady } from './earthdata';
 import type { Look } from '../physics/body';
 
 // Paints surface maps off the main thread, so a big one never stalls a frame.
@@ -7,6 +8,7 @@ import type { Look } from '../physics/body';
 self.onmessage = async (e: MessageEvent<{ key: string; look: Look; w: number }>) => {
   const { key, look, w } = e.data;
   if (look.real === 'Mars') await marsReady;
+  if (look.real === 'Earth') await earthReady;
   const m = buildMap(look, w);
   const bufs = [m.rgb.buffer, m.emit.buffer, m.spec.buffer, m.height.buffer, ...(m.cloud ? [m.cloud.buffer] : [])] as ArrayBuffer[];
   (self as unknown as Worker).postMessage({ key, map: m }, bufs);

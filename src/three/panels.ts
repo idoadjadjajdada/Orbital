@@ -273,8 +273,11 @@ export class Panels {
       h += `<div class="phero"><div><div class="pbig">${esc(b.name)}</div><div class="pdim">target · ${fmtLength(d / AU_M)} from the ship${b === v.app.selected ? ' · selected' : ' · nearest'}</div></div></div>`;
       h += `<div class="plaunch">${KINDS.map(k => { const why = v.launchBlock(k.k); return `<button data-act="launch" data-id="${k.k}"${why ? ` disabled title="${esc(why)}"` : ''}><b>${k.name}</b><span>${why ? esc(why) : esc(k.about)}</span></button>`; }).join('')}</div>`;
       h += `<div class="prow"><div class="pdim">Landers and rovers set down at</div><button data-act="site">${esc(site)} ▸</button></div>`;
-      const real = v.ground.siteListFor(b);
-      if (real.length) h += `<div class="psub">Where people have landed</div>` + real.map(x => `<div class="prow tight"><div><div class="pnm">${esc(x.name)}${x.year ? ` <span class="pdim">· ${x.year}</span>` : ''}</div><div class="pdim">${esc(x.about)}</div></div><span class="pbtns"><button data-act="gosite" data-id="${esc(x.name)}"${v.goBlock() ? ` disabled title="${esc(v.goBlock())}"` : ''}>Fly there</button></span></div>`).join('');
+      const all = v.ground.siteListFor(b);
+      const row = (x: (typeof all)[number]) => `<div class="prow tight"><div><div class="pnm">${esc(x.name)}${x.year ? ` <span class="pdim">· ${x.year}</span>` : ''}</div><div class="pdim">${esc(x.about)}</div></div><span class="pbtns"><button data-act="gosite" data-id="${esc(x.name)}"${v.goBlock() ? ` disabled title="${esc(v.goBlock())}"` : ''}>Fly there</button></span></div>`;
+      const real = all.filter(x => x.kind !== 'peak'), peaks = all.filter(x => x.kind === 'peak');
+      if (real.length) h += `<div class="psub">Where people have landed</div>` + real.map(row).join('');
+      if (peaks.length) h += `<div class="psub">Mountains</div>` + peaks.map(row).join('');
     } else h += '<p class="pdim">No target. Select a world, or fly near one.</p>';
     h += this.lampsHtml(b);
     h += `<div class="psub">The fleet</div>`;

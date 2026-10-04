@@ -1,6 +1,7 @@
 import { fbm, ridged, vnoise, hash } from './noise';
 import { EARTH_RLE, EARTH_W, EARTH_H } from './data/earth';
 import { MARS, type MarsData } from './marsdata';
+import { EARTH_DEM, EARTH_M } from './earthdata';
 
 /**
  * The real worlds, painted from what is known of them. Each painter is asked
@@ -159,6 +160,32 @@ function field(f: Float32Array, latD: number, lonE: number) {
   return (f[j * SW + i] * (1 - fu) + f[j * SW + i1] * fu) * (1 - fv) + (f[(j + 1) * SW + i] * (1 - fu) + f[(j + 1) * SW + i1] * fu) * fv;
 }
 
+/** the Earth's measured elevation, m, at a latitude and longitude (degrees, east): Catmull-Rom across the texels */
+function earthHeight(latD: number, lonE: number) {
+  const E = EARTH_DEM!;
+  const x = ((lonE + 180) / 360) * E.w - 0.5, y = ((90 - latD) / 180) * E.h - 0.5;
+  const x0 = Math.floor(x), y0 = Math.floor(y);
+  const wx = cr4(x - x0, WX), wy = cr4(y - y0, WY);
+  let s = 0;
+  for (let j = 0; j < 4; j++) {
+    const row = Math.max(0, Math.min(E.h - 1, y0 - 1 + j)) * E.w;
+    let r = 0;
+    for (let i = 0; i < 4; i++) r += E.height[row + ((((x0 - 1 + i) % E.w) + E.w) % E.w)] * wx[i];
+    s += r * wy[j];
+  }
+  return Math.max(0, s * EARTH_M);
+}
+
+/** how rugged the Earth's land is about a point, m of local relief (bilinear); −1 without the measured map */
+export function earthRough(latD: number, lonE: number) {
+  const E = EARTH_DEM;
+  if (!E) return -1;
+  const x = ((lonE + 180) / 360) * E.w - 0.5, y = Math.max(0, Math.min(E.h - 1.001, ((90 - latD) / 180) * E.h - 0.5));
+  const x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0;
+  const i0 = ((x0 % E.w) + E.w) % E.w, i1 = (i0 + 1) % E.w, R = E.rough;
+  return (R[y0 * E.w + i0] * (1 - fx) + R[y0 * E.w + i1] * fx) * (1 - fy) + (R[(y0 + 1) * E.w + i0] * (1 - fx) + R[(y0 + 1) * E.w + i1] * fx) * fy;
+}
+
 /** a land surface's colour from climate: wet tropics, dry subtropics, temperate, boreal, tundra, blended smoothly; `wet` is how near the sea */
 function biome(alat: number, wet: number, n: V3, oct: number): V3 {
   const v = fbm(n[0] * 9 + 4, n[1] * 9, n[2] * 9, oct);
@@ -207,16 +234,21 @@ export function paintEarth(o: Tx, lat: number, lon: number, n: V3, d: Detail) {
     shade(o, 0.94 + 0.12 * v);
     o.h = 0.46;
     o.s = 1;
+    // a lake high in the hills (Titicaca, the Great Lakes) lies at its own height, not the sea's
+    const up = cls === 4 && EARTH_DEM ? earthHeight(latD, lonE) : 0;
+    if (up > 40) { o.h = 0.5 + up / 40000; o.s = 0; }
     // sea ice
     if (alat > 66) mixTo(o, [0.86, 0.9, 0.95], ss(70, 76, alat + (v - 0.5) * 10) * (latD < 0 ? 1 : 0.85));
   } else if (cls === 2) {
     set(o, [0.93, 0.95, 0.99]);
     shade(o, 0.94 + 0.08 * v);
-    o.h = 0.5 + 0.08 * v;
+    // the ice sheets stand two to four kilometres high
+    o.h = 0.5 + (EARTH_DEM ? earthHeight(latD, lonE) : 1500 + 1800 * v) / 40000;
   } else {
     const wet = clamp01(1 - inland * 1.15 + 0.25);
     set(o, biome(alat, wet, n, d.oct));
-    o.h = 0.47 + 0.05 * v;
+    // the land's height (painted as 0.5 + km / 40, as Mars'): measured, or from where the ranges are
+    let e = EARTH_DEM ? earthHeight(latD, lonE) : 120 + 350 * v;
     // deserts, feathered: sand, redder in Australia, paler in Arabia
     const des = ss(0.15, 0.65, field(earthDesert!, latD, lonE) + (v - 0.5) * 0.35);
     if (des > 0) {
@@ -231,9 +263,12 @@ export function paintEarth(o: Tx, lat: number, lon: number, n: V3, d: Detail) {
       const rg = ridged(n[0] * 30, n[1] * 30, n[2] * 30, d.oct);
       const t = ss(0.05, 0.6, mt);
       mixTo(o, [0.42, 0.38, 0.32], t * 0.55);
-      o.h += t * (0.08 + 0.25 * rg);
-      mixTo(o, [0.9, 0.91, 0.94], t * t * ss(0.8, 0.95, rg) * ss(30, 55, alat + 20 * rg * t) * 0.6);
+      if (!EARTH_DEM) e += t * (800 + 3500 * rg);
     }
+    // snow above the snow line: about 5 km in the tropics, coming down to the sea by 70°
+    const snowline = 5200 - 75 * Math.max(0, alat - 20) + (v - 0.5) * 900;
+    mixTo(o, [0.9, 0.91, 0.94], ss(snowline - 300, snowline + 500, e) * 0.85);
+    o.h = 0.5 + Math.max(2, e) / 40000;
     if (alat > 62) mixTo(o, [0.9, 0.92, 0.95], ss(70, 80, alat + (v - 0.5) * 12) * 0.8);
   }
   o.c = earthClouds(n, latD, d.oct);

@@ -228,6 +228,7 @@ uniform sampler2D aux;
 uniform vec3 lightDir;
 uniform vec3 lightCol;
 uniform float drift;
+uniform float fade;
 ${LIGHT_GLSL}
 varying vec3 vObj;
 varying vec3 vWorldN;
@@ -242,7 +243,7 @@ void main() {
   vec3 N = normalize(vWorldN);
   float dl = dot(N, lightDir);
   float lit = clamp((dl + 0.05) / 0.15, 0.0, 1.0) * max(dl, 0.0) * 0.9 + 0.03;
-  gl_FragColor = vec4(lightCol * lit + ambientX + lampLight(vWorldP, N) * 0.9, c * 0.95);
+  gl_FragColor = vec4(lightCol * lit + ambientX + lampLight(vWorldP, N) * 0.9, c * 0.95 * fade);
 }`;
 
 /**
@@ -415,7 +416,7 @@ export class View3D {
    */
   landing: { b: Body; n: V3; alt: number; q: THREE.Quaternion; phase: 'down' | 'landed' | 'up'; legs: number; reach: number[]; ladder: number } | null = null;
   /** on foot on a world: where (unit, body frame), which way you face, your jump */
-  surf = { nav: { anchor: null, off: [0, 0, 0], vel: [0, 0, 0] } as Mover, b: null as Body | null, n: [0, 0, 1] as V3, yaw: 0, pitch: 0, y: 0, vy: 0, speed: 0 };
+  surf = { nav: { anchor: null, off: [0, 0, 0], vel: [0, 0, 0] } as Mover, b: null as Body | null, n: [0, 0, 1] as V3, yaw: 0, pitch: 0, y: 0, vy: 0, speed: 0, foot: -Infinity, roof: Infinity, inside: null as string | null };
   /** overdrive switched on by the autopilot, to switch off on arrival */
   private autoOd = false;
 
@@ -1206,7 +1207,7 @@ export class View3D {
     const b = this.ground.body;
     if (!b) return;
     const S = this.surf;
-    S.b = b; S.n = n; S.yaw = yaw; S.pitch = 0; S.y = 0; S.vy = 0;
+    S.b = b; S.n = n; S.yaw = yaw; S.pitch = 0; S.y = 0; S.vy = 0; S.foot = -Infinity; S.inside = null;
     S.nav = { anchor: b, off: [0, 0, 0], vel: [0, 0, 0] };
     this.mode = 'surface';
     this.foot.seat = null;
@@ -1222,7 +1223,10 @@ export class View3D {
   private placeSurf() {
     const S = this.surf, b = S.b!, spec = this.ground.spec;
     if (!spec) return;
-    const h = this.ground.heightAt(S.n, 0.3), g0 = this.ground.last_sample.sea ? 0 : h;
+    // what you stand on: the ground, or a cave's floor if you are in one
+    const st = this.ground.standAt(S.n, S.foot === -Infinity ? this.ground.heightAt(S.n, 0.3) : S.foot + 0.6), g0 = st.h;
+    S.foot = g0; S.roof = st.roof;
+    if ((st.inside?.name ?? null) !== S.inside) { S.inside = st.inside?.name ?? null; if (st.inside) this.app.onToast(`In ${st.inside.name.replace(/^An? /, 'the ').toLowerCase()}: N for your helmet lamp`); }
     const r = spec.R + g0 + S.y + 1.7;
     const p = new THREE.Vector3(S.n[0] * r, S.n[1] * r, S.n[2] * r).applyQuaternion(bodyQuat(b));
     S.nav.anchor = b;
@@ -1247,8 +1251,9 @@ export class View3D {
       const m: V3 = [S.n[0] + (fwd[0] * inp.f + right[0] * inp.s) * k, S.n[1] + (fwd[1] * inp.f + right[1] * inp.s) * k, S.n[2] + (fwd[2] * inp.f + right[2] * inp.s) * k];
       const l = Math.hypot(...m);
       const next: V3 = [m[0] / l, m[1] / l, m[2] / l];
-      this.ground.heightAt(next, 0.5);
-      if (this.ground.last_sample.sea) { if (performance.now() - this.seaToast > 4000) { this.seaToast = performance.now(); this.app.onToast('The water’s edge: you would need a boat'); } }
+      const st = this.ground.standAt(next, S.foot + S.y + 0.6);
+      if (st.sea) { if (performance.now() - this.seaToast > 4000) { this.seaToast = performance.now(); this.app.onToast('The water’s edge: you would need a boat'); } }
+      else if (st.solid) { if (performance.now() - this.seaToast > 4000) { this.seaToast = performance.now(); this.app.onToast('Solid rock: find a way round'); } }
       else S.n = next;
     }
     S.speed = Math.hypot(inp.f, inp.s) * sp;
@@ -1256,6 +1261,8 @@ export class View3D {
     S.vy -= g * dt;
     S.y = Math.max(0, S.y + S.vy * dt);
     if (S.y <= 0) S.vy = 0;
+    // under a roof, your head stops you
+    if (S.foot + S.y + 1.9 > S.roof) { S.y = Math.max(0, S.roof - 1.9 - S.foot); S.vy = Math.min(0, S.vy); }
     this.placeSurf();
   }
   private seaToast = 0;
@@ -1961,7 +1968,7 @@ export class View3D {
       if (o.map.cloud) {
         const cm = new THREE.ShaderMaterial({
           vertexShader: VERT, fragmentShader: CLOUD_FRAG, transparent: true, depthWrite: false, side: THREE.DoubleSide,
-          uniforms: { aux: { value: o.aux }, lightDir: o.mat.uniforms.lightDir, lightCol: o.mat.uniforms.lightCol, drift: { value: 0 }, ...this.lights.uniforms },
+          uniforms: { aux: { value: o.aux }, lightDir: o.mat.uniforms.lightDir, lightCol: o.mat.uniforms.lightCol, drift: { value: 0 }, fade: { value: 1 }, ...this.lights.uniforms },
         });
         o.clouds = new THREE.Mesh(this.sphere, cm);
         o.clouds.scale.setScalar(1.008);
@@ -2070,7 +2077,12 @@ export class View3D {
     // with its ground built round you, the sphere sinks out of the way under it; the clouds come down to weather height
     const under = this.ground.body === b && this.ground.ready && this.ground.spec ? this.ground.spec.relief * 0.8 + 50 : 0;
     g.scale.setScalar(Rm - under);
-    if (o.clouds) o.clouds.scale.setScalar(under ? (Rm + 7000) / (Rm - under) : 1.008);
+    if (o.clouds) {
+      o.clouds.scale.setScalar(under ? (Rm + 7000) / (Rm - under) : 1.008);
+      // up a mountain, level with the cloud deck: it thins round you rather than standing edge-on like a wall
+      const off = Math.abs(g.position.length() - Rm - 7000), t = Math.max(0, Math.min(1, (off - 600) / 2400));
+      (o.clouds.material as THREE.ShaderMaterial).uniforms.fade.value = under ? t * t * (3 - 2 * t) : 1;
+    }
     let fresh = false;
     for (const c of b.craters) {
       if (o.seen.has(c) || o.map!.gas) continue;

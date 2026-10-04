@@ -1,6 +1,7 @@
 import type { Look } from '../physics/body';
 import { fbm, ridged, vnoise } from './noise';
 import { MARS } from './marsdata';
+import { EARTH_DEM } from './earthdata';
 import { REAL, paintTerran, cratered, ss, type Tx, type Detail, type V3 } from './worlds';
 
 /**
@@ -31,7 +32,7 @@ export function detailFor(w: number): Detail {
 }
 
 /** the key under which two looks paint the same map (Mars' changes when its measured maps arrive) */
-export const lookKey = (l: Look) => `${l.real ?? ''}${l.real === 'Mars' && MARS ? '*' : ''}|${l.style}|${l.c1}|${l.c2}|${l.seed % 1000}`;
+export const lookKey = (l: Look) => `${l.real ?? ''}${(l.real === 'Mars' && MARS) || (l.real === 'Earth' && EARTH_DEM) ? '*' : ''}|${l.style}|${l.c1}|${l.c2}|${l.seed % 1000}`;
 
 export interface MapJob { map: SurfaceMap; done: boolean; step(budgetMs: number): boolean }
 

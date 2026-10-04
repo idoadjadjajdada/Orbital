@@ -1,10 +1,12 @@
 /**
  * Places on real worlds where something is: the spacecraft that landed (and
  * what they left behind), the Earth's great cities, and the life you meet on
- * the Earth's ground, by biome. Latitudes north, longitudes east, degrees.
+ * the Earth's ground, by biome; and the great mountains (peaks.ts). Latitudes north, longitudes east, degrees.
  */
 
-export type SiteKind = 'apollo' | 'lander' | 'rover' | 'probe' | 'city' | 'impact';
+import { PEAKS } from './peaks';
+
+export type SiteKind = 'apollo' | 'lander' | 'rover' | 'probe' | 'city' | 'impact' | 'peak';
 export interface Site {
   body: string;
   name: string;
@@ -70,6 +72,8 @@ export const SITES: Site[] = [
   // and where people launch from
   s('Earth', 'Kennedy Space Center', 28.57, -80.65, 'lander', 1962, 'Where Apollo, the Shuttle and Artemis left from.'),
   s('Earth', 'Baikonur Cosmodrome', 45.96, 63.31, 'lander', 1957, 'Sputnik and Gagarin left from here.'),
+  // the great mountains (peaks.ts), to fly to and climb
+  ...PEAKS.map(p => s(p.body, p.name, p.lat, p.lon, 'peak', 0, p.about)),
 ];
 
 /** the sites on a world */

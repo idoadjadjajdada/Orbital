@@ -1,6 +1,8 @@
 import type { Look } from '../physics/body';
 import { pointPainter, detailFor } from '../pixel/surface';
 import { fbm, ridged, vnoise, hash } from '../pixel/noise';
+import { earthRough } from '../pixel/worlds';
+import { peaksOn, type PeakShape } from './peaks';
 import type { Tx, V3 } from '../pixel/worlds';
 
 /**
@@ -35,6 +37,8 @@ export interface GroundSpec {
   dunes: number;
   /** a body too small to be round: big lumps */
   lumpy: number;
+  /** a made-up world's mountain belts, 0 (none) – 1 (great folded ranges, as where plates meet) */
+  belts: number;
   /** painter heights: the datum (0.5 normally, sea level for a world with seas) and metres per unit */
   datum: number; scale: number;
 }
@@ -53,9 +57,9 @@ const SIGMA: Record<string, number> = { Moon: 2400, Mars: 3000, Mercury: 1500, V
  * metres per unit of painted height, set by hand where the painter's features need it (the Moon's maria
  * sit 2–3 km below its highlands), or where the painter gives real elevations (Mars: MOLA, 40 km a unit)
  */
-const SCALE: Record<string, number> = { Moon: 22000, Venus: 35000, Mars: 40000 };
+const SCALE: Record<string, number> = { Moon: 22000, Venus: 35000, Mars: 40000, Earth: 40000 };
 /** painted height of the datum, where the painter's heights are measured from one (Mars: the areoid) */
-const DATUM: Record<string, number> = { Mars: 0.5 };
+const DATUM: Record<string, number> = { Mars: 0.5, Earth: 0.5 };
 
 /** worlds with enough air to burn up small impactors and wear craters down */
 const AIRY = new Set(['Earth', 'Venus', 'Titan', 'Mars']);
@@ -75,7 +79,9 @@ export function groundSpec(look: Look, R: number, gSurf: number, bar: number): G
   const airy = real ? AIRY.has(real) : bar > 0.05;
   const craters = isGas(st) ? 0 : airy ? (real === 'Mars' ? 0.5 : 0.08) : st === 'lava' || real === 'Io' || real === 'Europa' || real === 'Enceladus' ? 0.15 : 1;
   const dunes = real === 'Titan' ? 0.8 : real === 'Mars' ? 0.35 : st === 'desert' ? 1 : real === 'Earth' ? 0.4 : 0;
-  const spec: GroundSpec = { look, R, relief, seas, craters, dunes, lumpy: R < 2e5 ? 1 : 0, datum: 0.5, scale: 0 };
+  // a made-up rocky world's ranges: folded belts where its crust is pushed together, fewer on ice, none on a rubble pile
+  const belts = real || isGas(st) || R < 2e5 ? 0 : ({ terran: 1, ocean: 0.8, desert: 0.9, lava: 0.7, iron: 0.8, ice: 0.5 } as Record<string, number>)[st] ?? 0.4;
+  const spec: GroundSpec = { look, R, relief, seas, craters, dunes, lumpy: R < 2e5 ? 1 : 0, belts, datum: 0.5, scale: 0 };
   calibrate(spec);
   return spec;
 }
@@ -99,7 +105,7 @@ function calibrate(s: GroundSpec) {
   }
   hs.sort((a, b) => a - b);
   const lo = hs[Math.floor(hs.length * 0.005)] ?? 0.4, hi = hs[Math.floor(hs.length * 0.995)] ?? 0.6;
-  if (s.seas && isFinite(seaH)) {
+  if (s.seas && isFinite(seaH) && SCALE[s.look.real ?? ''] === undefined) {
     // sea level at the sea's painted height; the land rises from it
     s.datum = seaH;
     s.scale = (0.6 * s.relief) / Math.max(1e-3, hi - seaH);
@@ -192,6 +198,136 @@ const tmp: Tx = { r: 0, g: 0, b: 0, h: 0.5, e: 0, s: 0, c: 0 };
  * detail down to `fine` metres. Fills `out` and returns its height.
  */
 export function groundAt(s: GroundSpec, n: V3, fine: number, out: GroundSample, paint = groundPainter(s.look), det = detailFor(1024)): number {
+  let h = groundBase(s, n, fine, out, paint, det);
+  const real = s.look.real, map = painted;
+  if (real && !out.sea) {
+    // the named mountains, raised to their heights
+    for (const pk of peaksFor(real)) {
+      const c = pk.c, dt = n[0] * c[0] + n[1] * c[1] + n[2] * c[2];
+      if (dt < pk.cosR) continue;
+      const d = Math.acos(Math.min(1, dt)) * s.R / 1000;
+      if (pk.name === 'Olympus Mons') { h = olympus(h, d, n, pk, map); continue; }
+      const q = d / pk.r;
+      // the bearing round the summit, for a horn's ridges
+      const [e, nn] = pk.t, mx = n[0] - c[0], my = n[1] - c[1], mz = n[2] - c[2];
+      const th = Math.atan2(mx * nn[0] + my * nn[1] + mz * nn[2], mx * e[0] + my * e[1] + mz * e[2]);
+      const rise = pk.rise ?? (pk.h! - peakBase(s, pk, fine, paint, det));
+      h += Math.max(0, rise) * peakShape(pk.shape, q, th + pk.spin);
+    }
+  }
+  if (!out.sea) zones(s, n, h, out);
+  out.h = h;
+  return h;
+}
+
+interface PeakAt { name: string; shape: PeakShape; r: number; h?: number; rise?: number; c: V3; cosR: number; t: [V3, V3]; spin: number }
+const peakCache = new Map<string, PeakAt[]>();
+function peaksFor(real: string): PeakAt[] {
+  let l = peakCache.get(real);
+  if (!l) {
+    l = peaksOn(real).map(k => {
+      const c = dirFrom(k.lat, k.lon);
+      return { name: k.name, shape: k.shape, r: k.r, h: k.h, rise: k.rise, c, cosR: Math.cos(((k.name === 'Olympus Mons' ? 1.25 : 1) * k.r * 1000) / radiusOf(real)), t: tangent(c), spin: k.lat * 7.3 + k.lon };
+    });
+    peakCache.set(real, l);
+  }
+  return l;
+}
+/** the radius of a real world, m, for the peaks' reach (the near-enough test only) */
+const radiusOf = (real: string) => ({ Earth: 6.371e6, Mars: 3.3895e6, Moon: 1.7374e6 } as Record<string, number>)[real] ?? 3e6;
+const dirFrom = (lat: number, lon: number): V3 => [Math.cos(lat * D) * Math.cos(lon * D), Math.cos(lat * D) * Math.sin(lon * D), Math.sin(lat * D)];
+
+/** the height the ground would have at a mountain's summit without it (so the summit comes out at its measured height) */
+const baseCache = new Map<string, number>();
+function peakBase(s: GroundSpec, pk: PeakAt, fine: number, paint: ReturnType<typeof groundPainter>, det: { oct: number; craters: number; res: number }) {
+  const key = `${s.look.real}|${pk.name}|${fine}`;
+  let v = baseCache.get(key);
+  if (v === undefined) {
+    v = groundBase(s, pk.c, fine, { h: 0, r: 0, g: 0, b: 0, sea: false, rock: 0 }, paint, det);
+    if (baseCache.size > 4000) baseCache.clear();
+    baseCache.set(key, v);
+  }
+  return v;
+}
+
+/** a mountain's shape: 1 at its summit, 0 at the foot of its slopes (q = 1); th the bearing round it */
+function peakShape(shape: PeakShape, q: number, th: number) {
+  if (q >= 1) return 0;
+  const foot = 1 - smooth01(0.8, 1, q);
+  switch (shape) {
+    case 'horn': {
+      // a pyramid: steep faces between four sharp arêtes, carved deeper the further from the top
+      const ridge = Math.pow(Math.abs(Math.cos(2 * th)), 0.5);
+      return Math.pow(1 - q, 1.7) * (1 - 0.45 * Math.pow(q, 0.7) * (1 - ridge)) * foot;
+    }
+    case 'massif': {
+      const ridge = Math.pow(Math.abs(Math.cos(1.5 * th)), 0.6);
+      return Math.pow(1 - q * q, 2) * (1 - 0.25 * q * (1 - ridge)) * foot;
+    }
+    case 'cone': {
+      // a stratovolcano's concave slopes, steepening to the top, and a crater in it
+      const rc = 0.02, k = 3.2, e1 = Math.exp(-k);
+      if (q < rc) return 1 - 0.07 * (1 - (q / rc) ** 2);
+      return (Math.exp(-k * q) - e1) / (Math.exp(-k * rc) - e1) * foot;
+    }
+    case 'shield': {
+      // a broad, gently convex swell with a caldera at the top
+      const rc = 0.04;
+      if (q < rc) return 1 - 0.04 * (1 - (q / rc) ** 2);
+      return Math.pow(Math.cos(((q - rc) / (1 - rc)) * Math.PI / 2), 1.1) * foot;
+    }
+    case 'inselberg':
+      // sheer sides, a rounded top
+      return (1 - 0.12 * q * q) * (1 - smooth01(0.82, 1, q));
+  }
+}
+
+/**
+ * Olympus Mons, whole: the nested pits of its caldera, the long shield, and
+ * the escarpment round its foot, cliffs up to 8 km high, then the plains.
+ * `d` is the distance from its middle, km; the measured map takes over beyond.
+ */
+function olympus(h: number, d: number, n: V3, pk: PeakAt, painted: number) {
+  // the second, younger pit of the caldera, off to the south-west
+  const [e, nn] = pk.t, c = pk.c;
+  const mx = n[0] - c[0], my = n[1] - c[1], mz = n[2] - c[2], k = 3389.5;
+  const x = (mx * e[0] + my * e[1] + mz * e[2]) * k, y = (mx * nn[0] + my * nn[1] + mz * nn[2]) * k;
+  const d2 = Math.hypot(x + 14, y + 10);
+  // the escarpment wanders in and out, as the real one does
+  const scarp = 280 + 18 * Math.sin(Math.atan2(y, x) * 3 + 1) + 9 * Math.sin(Math.atan2(y, x) * 7);
+  let H: number;
+  if (d < 30) H = 21.3 - 2.8 * (1 - smooth01(20, 30, d)) - 0.6 * (1 - smooth01(0, 14, d2));
+  else if (d < 40) H = 21.9 - 0.6 * smooth01(30, 40, d);
+  else if (d < scarp) H = 21.3 - 12.6 * Math.pow((d - 40) / (scarp - 40), 1.25);
+  else H = 8.7 - 7.4 * smooth01(scarp, scarp + 14, d);
+  const w = 1 - smooth01(scarp + 20, scarp + 70, d);
+  // the map's own Olympus is a smooth blur of this: keep the ground's small detail, swap the large shape
+  return h + (H * 1000 - painted) * w;
+}
+
+/** altitude zones on a world with weather: trees give way to bare rock, rock to snow, lower toward the poles */
+function zones(s: GroundSpec, n: V3, h: number, out: GroundSample) {
+  const real = s.look.real;
+  if (real !== 'Earth' && !(s.seas && !real)) return;
+  const alat = Math.abs(Math.asin(Math.max(-1, Math.min(1, n[2])))) / D;
+  const wob = (vnoise(n[0] * 9000, n[1] * 9000, n[2] * 9000) - 0.5) * 500;
+  const tree = 3800 - 55 * Math.max(0, alat - 15) + wob, snow = 5200 - 75 * Math.max(0, alat - 20) + wob * 1.6;
+  const rk = smooth01(tree, tree + 500, h);
+  if (rk > 0) {
+    const g = 0.4 + 0.08 * (vnoise(n[0] * 40000, n[1] * 40000, n[2] * 40000) - 0.5);
+    out.r += (g * 1.04 - out.r) * rk * 0.8; out.g += (g - out.g) * rk * 0.8; out.b += (g * 0.92 - out.b) * rk * 0.8;
+    out.rock = Math.max(out.rock, rk * 0.7);
+  }
+  const sn = smooth01(snow - 200, snow + 300, h);
+  if (sn > 0) { out.r += (0.92 - out.r) * sn; out.g += (0.94 - out.g) * sn; out.b += (0.97 - out.b) * sn; out.rock *= 1 - sn; }
+}
+const smooth01 = (a: number, b: number, x: number) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+
+/** the height the map alone gave the last point asked (m) */
+let painted = 0;
+
+/** the ground without the named mountains: the map's heights, the fractal, craters and dunes */
+function groundBase(s: GroundSpec, n: V3, fine: number, out: GroundSample, paint: ReturnType<typeof groundPainter>, det: { oct: number; craters: number; res: number }): number {
   const lat = Math.asin(Math.max(-1, Math.min(1, n[2])));
   const lon = ((Math.atan2(n[1], n[0]) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
   const o = tmp;
@@ -199,15 +335,34 @@ export function groundAt(s: GroundSpec, n: V3, fine: number, out: GroundSample, 
   paint(o, lat, lon, n, det);
   const sea = s.seas && o.s >= 1;
   let h = (o.h - s.datum) * s.scale;
+  painted = h;
   // the point in metres, for the fractal: noise on the sphere, so nothing stretches at the poles
   const R = s.R, px = n[0] * R, py = n[1] * R, pz = n[2] * R;
   const seed = (s.look.seed % 997) * 13.7;
+  // how rugged the ground is here: the Earth's from its measured relief (the Himalaya jagged, the plains
+  // gentle), a made-up world's from its mountain belts; elsewhere the same everywhere
+  let rug = 1;
+  if (s.look.real === 'Earth') {
+    const lonE = lon / D > 180 ? lon / D - 360 : lon / D, r = earthRough(lat / D, lonE);
+    rug = r < 0 ? 0.6 : Math.min(4.5, 0.1 + r / 250);
+  } else if (s.belts > 0 && !sea) {
+    // folded ranges along the seams of a slowly wandering field, like ranges along plate boundaries
+    const w = fbm(n[0] * 1.3 + seed, n[1] * 1.3, n[2] * 1.3, 3) * 2;
+    const b = Math.pow(ridged(n[0] * 2.2 + w + seed, n[1] * 2.2 - w, n[2] * 2.2 + w, 3), 6) * s.belts;
+    h += b * s.relief * 0.55 * (0.6 + 0.8 * ridged(px / 60000 + seed, py / 60000, pz / 60000, 2));
+    rug = 0.35 + 2.2 * b;
+  }
   // fractal hills: from a tenth of the relief at 30 km (less on a small world) down to the finest asked
-  const top = Math.min(30000, R * 0.08), A0 = s.relief * (s.scale ? 0.035 : 0.1);
+  const top = Math.min(30000, R * 0.08), A0 = s.relief * (s.scale ? 0.035 : 0.1) * rug;
   let rough = 0;
   for (let lam = top, a = A0, k = 0; lam > fine && k < 18; lam *= 0.5, a *= 0.55, k++) {
     const q = 1 / lam;
-    const v = k < 4 ? ridged(px * q + seed, py * q, pz * q, 1) - 0.5 : vnoise(px * q + seed + k * 7.1, py * q, pz * q) - 0.5;
+    let v: number;
+    if (k < 4) {
+      // the big ridges; in rugged country sharper, with broad glacier-cut valleys between
+      const rd = ridged(px * q + seed, py * q, pz * q, 1), al = Math.min(1, Math.max(0, rug - 1));
+      v = rd - 0.5 + al * (rd * rd - rd + 0.17);
+    } else v = vnoise(px * q + seed + k * 7.1, py * q, pz * q) - 0.5;
     h += v * a * 2;
     if (lam < 50) rough += Math.abs(v);
   }
@@ -229,7 +384,7 @@ export function groundAt(s: GroundSpec, n: V3, fine: number, out: GroundSample, 
   out.r = Math.min(1, o.r * k); out.g = Math.min(1, o.g * k); out.b = Math.min(1, o.b * k);
   out.h = h;
   out.sea = sea;
-  out.rock = Math.min(1, rough * 0.6 + (s.craters > 0.5 ? 0.4 : 0.1));
+  out.rock = Math.min(1, rough * 0.6 * Math.min(1.5, rug) + (s.craters > 0.5 ? 0.4 : 0.1));
   return h;
 }
 
@@ -358,6 +513,17 @@ export function buildTile(job: TileJob): Tile {
     nrm[v * 3] = nx / l; nrm[v * 3 + 1] = ny / l; nrm[v * 3 + 2] = nz / l;
     const qq = q / 3;
     col[v * 3] = C[q]; col[v * 3 + 1] = C[q + 1]; col[v * 3 + 2] = C[q + 2];
+    // steep ground sheds its snow and soil: cliffs and crags of bare rock
+    const up = (nrm[v * 3] * ox + nrm[v * 3 + 1] * oy + nrm[v * 3 + 2] * oz) / (Math.hypot(ox, oy, oz) || 1);
+    if (up < 0.85 && !SEA[qq]) {
+      const lum = (C[q] + C[q + 1] + C[q + 2]) / 3, snowy = smooth01(0.7, 0.85, lum);
+      // (snow clings up to about 45°; soil and plants slide off sooner)
+      const t = snowy > 0 ? smooth01(0.74, 0.55, up) * (0.6 + 0.4 * snowy) : smooth01(0.85, 0.6, up) * 0.6;
+      const rr = 0.36 + 0.25 * (C[q] - lum), rg = 0.34, rb = 0.31 - 0.2 * (C[q] - lum);
+      const g = lum < 0.5 ? lum * 0.8 + 0.12 : 1;
+      col[v * 3] += (rr * g - col[v * 3]) * t; col[v * 3 + 1] += (rg * g - col[v * 3 + 1]) * t; col[v * 3 + 2] += (rb * g - col[v * 3 + 2]) * t;
+      ROCK[qq] = Math.max(ROCK[qq], t);
+    }
     sea[v] = SEA[qq];
     // boulders on rocky ground, on the finest tiles (most small, a few big: a power law, as round lunar craters)
     if (spacing < 6 && i < N && j < N && ROCK[qq] > 0.3) {

@@ -5,6 +5,7 @@ import { bodyFrame, type V3 } from '../pixel/sprites';
 import { bodyAxis } from '../pixel/renderer';
 import { groundSpec, groundAt, tangent, groundPainter, type GroundSpec, type GroundSample } from './terrain';
 import { TileSet } from './tiles';
+import { FormSet, type Form } from './landforms';
 import { detailFor } from '../pixel/surface';
 import { LIGHT_GLSL } from './lightglsl';
 import { atmosphere, life, gravity, rng, type Atmosphere, type Life } from './science';
@@ -42,6 +43,10 @@ const GROUND_VERT = /* glsl */ `
 #include <logdepthbuf_pars_vertex>
 attribute float sea;
 attribute vec3 grain;
+#ifdef CAVE
+attribute float sky;
+varying float vSky;
+#endif
 varying vec3 vN;
 varying vec3 vP;
 varying vec3 vCol;
@@ -54,6 +59,9 @@ void main() {
   vCol = color;
   vSea = sea;
   vLocal = position + grain;
+  #ifdef CAVE
+  vSky = sky;
+  #endif
   gl_Position = projectionMatrix * viewMatrix * wp;
   #include <logdepthbuf_vertex>
 }`;
@@ -74,10 +82,19 @@ varying vec3 vP;
 varying vec3 vCol;
 varying float vSea;
 varying vec3 vLocal;
+#ifdef CAVE
+varying float vSky;
+#endif
 ${FRAG_NOISE}
 void main() {
   #include <logdepthbuf_fragment>
   vec3 N = normalize(vN);
+  // how much of the sky (and the sun) reaches here: all of it on open ground, little deep in a cave
+  float sky = 1.0;
+  #ifdef CAVE
+  sky = vSky;
+  if (!gl_FrontFacing) N = -N;
+  #endif
   float d = length(vP);
   vec3 V = -vP / max(d, 1e-3);
   // close up, the grain of the ground: pebbles, dust, scuffs
@@ -98,7 +115,9 @@ void main() {
     c += sunCol * pow(max(dot(reflect(-sunDir, Ns), V), 0.0), 220.0) * 2.0;
   } else {
     float dl = max(dot(N, sunDir), 0.0);
-    c = col * (ambient + ambientX + dl * sunCol + lampLight(vP, N));
+    // and the sunlit ground round about lights what faces away from the sky: walls, overhangs, the shady side of a rock
+    vec3 bounce = sunCol * 0.2 * max(dot(sunDir, seaUp), 0.0) * (0.5 - 0.5 * dot(N, seaUp));
+    c = col * ((ambient + dl * sunCol + bounce) * sky + ambientX * (0.3 + 0.7 * sky) + lampLight(vP, N));
   }
   // the air between: haze toward the sky's colour
   float f = 1.0 - exp(-d * fogK);
@@ -185,6 +204,8 @@ export class Ground {
   private mat: THREE.ShaderMaterial;
   /** the ground's tiles */
   readonly tiles: TileSet;
+  /** the arches, spires, overhangs and caves round you */
+  readonly forms: FormSet;
   private paint: ReturnType<typeof groundPainter> | null = null;
   private det = detailFor(1024);
   private sample: GroundSample = { h: 0, r: 0, g: 0, b: 0, sea: false, rock: 0 };
@@ -219,6 +240,10 @@ export class Ground {
     }));
     this.tiles = new TileSet(this.mat);
     this.root.add(this.tiles.group);
+    // the rock you can walk under and into: the ground's own shading, with the sky shut out where it does not reach
+    const caveMat = new THREE.ShaderMaterial({ vertexShader: GROUND_VERT, fragmentShader: GROUND_FRAG, vertexColors: true, side: THREE.DoubleSide, defines: { CAVE: '' }, uniforms: this.mat.uniforms });
+    this.forms = new FormSet(caveMat);
+    this.root.add(this.forms.group);
     this.sky.renderOrder = -1;
     this.sky.frustumCulled = false;
     this.sky.visible = false;
@@ -236,6 +261,26 @@ export class Ground {
   }
   /** the ground sample there (after heightAt) */
   get last_sample() { return this.sample; }
+
+  private formSmp: GroundSample = { h: 0, r: 0, g: 0, b: 0, sea: false, rock: 0 };
+  private formSample = (n: V3, fine: number) => {
+    this.paint ??= groundPainter(this.spec!.look);
+    groundAt(this.spec!, n, fine, this.formSmp, this.paint, this.det);
+    return this.formSmp;
+  };
+
+  /**
+   * What is underfoot for someone at `n` with their feet at `foot` m: the
+   * height they stand at (a cave's floor, or the ground), the roof over them
+   * if there is one, whether rock blocks the way there, and the form they are
+   * inside (a cave) with how far in (0 at the mouth, 1 at the end).
+   */
+  standAt(n: V3, foot: number) {
+    const h = this.heightAt(n, 0.3), sea = this.sample.sea;
+    if (!this.spec) return { h, sea, roof: Infinity, solid: false, inside: null as Form | null, dark: 0 };
+    const g = this.forms.ground(this.spec, n, foot);
+    return { h: g.floor ?? (sea ? 0 : h), sea: g.floor === null && sea, roof: g.roof, solid: g.solid, inside: g.inside, dark: g.dark };
+  }
 
   /** the up direction (unit, body frame) of the ground at n: from the heights around it */
   normalAt(n: V3, span = 1.5): V3 {
@@ -278,6 +323,7 @@ export class Ground {
   private clearAll() {
     for (const p of this.placed.values()) { this.root.remove(p.obj); disposeTree(p.obj); }
     this.placed.clear();
+    this.forms.clear();
     for (const f of this.flora) { this.root.remove(f); f.dispose(); }
     this.flora = [];
     this.floraAt = null;
@@ -313,7 +359,7 @@ export class Ground {
     const r = vb.length();
     const n: V3 = [vb.x / r, vb.y / r, vb.z / r];
     const hHere = this.heightAt(n, 50);
-    alt = r - spec.R - Math.max(0, hHere);
+    alt = r - spec.R - (this.sample.sea ? 0 : hHere);
     // the tiles round the viewer
     this.tiles.frame(vb);
     // the light on the ground
@@ -321,6 +367,7 @@ export class Ground {
     u.time.value = this.t;
     if (sun) (u.sunDir.value as THREE.Vector3).copy(sun);
     (u.sunCol.value as THREE.Vector3).set(this.sunCol.r, this.sunCol.g, this.sunCol.b);
+    (u.seaUp.value as THREE.Vector3).copy(rel).negate().normalize();
     const a = this.atmo!, amb = 0.015 + 0.25 * this.daylight * Math.min(1, a.bar);
     (u.ambient.value as THREE.Vector3).set(amb * (0.6 + 0.4 * this.skyCol.r), amb * (0.6 + 0.4 * this.skyCol.g), amb * (0.6 + 0.4 * this.skyCol.b));
     // the haze: how far you can see, from the density of the air here and what is in it
@@ -335,6 +382,10 @@ export class Ground {
     (u.fogCol.value as THREE.Vector3).set(fog.r, fog.g, fog.b);
     // things on the ground, near enough to matter
     if (alt < 60e3) this.placeSites(n, alt);
+    if (alt < 4000) {
+      this.forms.frame(spec, n, alt, this.formSample);
+      for (const f of this.forms.near(spec, n, 80)) if (!this.found.has(f.key)) { this.found.add(f.key); this.onFind(f.name, f.about); }
+    } else this.forms.clear();
     if (alt < 3000) this.life(dt, n);
     else if (this.flora.length || this.critters.length) this.clearLife();
   }
@@ -678,9 +729,33 @@ function siteModel(s: Site): THREE.Object3D {
     if (/Pathfinder|Chang|Perseverance/.test(s.name)) { const l = landerMesh(); l.position.set(-14, 0, 6); g.add(l); }
   } else if (s.kind === 'probe') g.add(huygensMesh());
   else if (s.kind === 'impact') { /* nothing left but its crater */ }
+  else if (s.kind === 'peak') { if (s.body === 'Earth') g.add(summitCairn()); }
   else if (s.body === 'Venus') g.add(veneraMesh());
   else if (s.body === 'Earth') { const p = probeMesh(); p.scale.setScalar(4); g.add(p); }
   else g.add(landerMesh());
+  return g;
+}
+
+/** what climbers leave on a summit: a cairn of stones, a pole, a string of prayer flags in the wind */
+function summitCairn() {
+  const g = new THREE.Group();
+  const stone = new THREE.MeshLambertMaterial({ color: 0x77736c, flatShading: true });
+  for (let k = 0; k < 9; k++) {
+    const m = new THREE.Mesh(new THREE.IcosahedronGeometry(0.28 - k * 0.02, 0), stone);
+    m.position.set(Math.cos(k * 2.4) * (0.35 - k * 0.03), 0.15 + k * 0.17, Math.sin(k * 2.4) * (0.35 - k * 0.03));
+    m.rotation.set(k, k * 2, 0);
+    g.add(m);
+  }
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 2.4), new THREE.MeshLambertMaterial({ color: 0x8a7a60 }));
+  pole.position.y = 1.4;
+  g.add(pole);
+  const cols = [0x2a62d8, 0xf2f2f2, 0xd23a2a, 0x2a9a4a, 0xe8c020];
+  for (let k = 0; k < 10; k++) {
+    const f = new THREE.Mesh(new THREE.PlaneGeometry(0.3, 0.22), new THREE.MeshLambertMaterial({ color: cols[k % 5], side: THREE.DoubleSide }));
+    f.position.set(0.25 + k * 0.42, 2.45 - k * 0.2, 0);
+    f.rotation.y = 0.2 * Math.sin(k);
+    g.add(f);
+  }
   return g;
 }
 
