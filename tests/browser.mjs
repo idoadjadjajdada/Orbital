@@ -199,8 +199,7 @@ try {
   await page.keyboard.press('KeyT');
   await page.waitForTimeout(1500);
   ok('the autopilot engages overdrive for the Moon', await until(page, () => window.orbital.v3.ship.odLevel > 0));
-  await page.waitForTimeout(7000);
-  ok('T flies to the selection', await page.evaluate(() => window.orbital.v3.nearest().b?.name === 'Moon'));
+  ok('T flies to the selection', await page.waitForFunction(() => window.orbital.v3.nearest().b?.name === 'Moon', null, { timeout: 40000 }).then(() => true, () => false));
   await page.keyboard.press('KeyM');
   await page.waitForTimeout(400);
   ok('M opens the nav map with destinations', await page.evaluate(() => !document.querySelector('.nav3').hidden && document.querySelectorAll('.dest3 .row').length >= 3));
@@ -240,9 +239,9 @@ try {
   await page.keyboard.press('KeyF');
   ok('F at the hatch boards the ship', await page.evaluate(() => window.orbital.v3.mode === 'walk'));
   await page.evaluate(() => { window.orbital.v3.foot.yaw = Math.PI / 2; });
-  await page.waitForTimeout(200);
+  await until(page, () => window.orbital.v3.prompt?.label === 'Step outside');
   await page.keyboard.press('KeyF');
-  await page.waitForTimeout(100);
+  await until(page, () => window.orbital.v3.mode === 'eva');
   await page.keyboard.down('ShiftLeft'); await page.keyboard.down('KeyW');
   await until(page, () => +(window.orbital.v3.readout().where.match(/(\d+) m from/)?.[1] ?? 0) > 60);
   await page.keyboard.up('KeyW'); await page.keyboard.up('ShiftLeft');
