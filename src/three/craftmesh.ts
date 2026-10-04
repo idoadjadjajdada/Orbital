@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { STATION, BASE } from './interior';
 
 /**
  * Models of the craft you can send out and the hardware already on the
@@ -14,6 +15,7 @@ export const MAT = {
   gold: lam(0xd8a830, { emissive: 0x2a1800 }), foil: lam(0xc8a040), silver: lam(0xc8ccd4),
   panel: lam(0x1c2e5a, { emissive: 0x050a18 }), orange: lam(0xd8643a), red: lam(0xb02a20), blue: lam(0x2a4aa0),
   glass: new THREE.MeshLambertMaterial({ color: 0x6a90b0, transparent: true, opacity: 0.55 }),
+  window: new THREE.MeshLambertMaterial({ color: 0x405870, emissive: 0x2a3a4a, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false }),
   lamp: new THREE.MeshBasicMaterial({ color: 0xfff0c0 }), cyan: new THREE.MeshBasicMaterial({ color: 0x60e0ff }),
   chute: lam(0xf0f0f0, { side: THREE.DoubleSide }), chuteOr: lam(0xe06a30, { side: THREE.DoubleSide }),
 };
@@ -118,54 +120,170 @@ export function roverMesh(scale = 1) {
   return g;
 }
 
-/** a station: the ISS's layout, a long truss with eight solar wings and a string of pressurised modules */
+/** blanket-white with stitched quilting, for the modules' insulation */
+const QUILT = (() => {
+  if (typeof document === 'undefined') return null;
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#e9e7e0'; g.fillRect(0, 0, 128, 128);
+  g.strokeStyle = 'rgba(0,0,0,0.13)'; g.lineWidth = 1;
+  for (let i = 0; i <= 128; i += 16) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i, 128); g.stroke(); g.beginPath(); g.moveTo(0, i); g.lineTo(128, i); g.stroke(); }
+  for (let k = 0; k < 40; k++) { g.fillStyle = `rgba(0,0,0,${0.03 + Math.random() * 0.04})`; g.fillRect(Math.random() * 128, Math.random() * 128, 6 + Math.random() * 14, 4 + Math.random() * 10); }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(4, 2);
+  return t;
+})();
+const quilt = lam(0xffffff, { map: QUILT, flatShading: false });
+
+/**
+ * the station: the ISS's layout, built from the same list of modules as its
+ * inside (interior.ts) — the docking adapter forward, Zvezda, the Unity node
+ * with the laboratory and Kibo either side, Tranquility with the cupola under
+ * it, Destiny, the stowage module — under the long truss with its eight
+ * solar wings, radiators, and the robotic arm
+ */
 export function stationMesh() {
   const g = new THREE.Group();
-  add(g, box(100, 1.2, 1.2), MAT.silver);
-  // the modules, along the middle, across the truss
-  for (const [z, l, r] of [[-20, 8, 2.1], [-10, 10, 2.1], [0, 8, 2.2], [10, 12, 2.1], [22, 10, 2], [30, 6, 1.7]] as const) {
-    add(g, cyl(r, r, l, 14), MAT.white, 0, -2.6, z, Math.PI / 2, 0, 0);
+  for (const m of STATION.main) {
+    const len = m.z1 - m.z0, zc = (m.z0 + m.z1) / 2;
+    add(g, cyl(m.hull, m.hull, len, 24), m.id === 'pma' ? MAT.silver : quilt, 0, 0, zc, Math.PI / 2, 0, 0);
+    // the rings at the ends, and a band of dark insulation round the middle
+    for (const z of [m.z0 + 0.1, m.z1 - 0.1]) add(g, cyl(m.hull + 0.06, m.hull + 0.06, 0.18, 24), MAT.silver, 0, 0, z, Math.PI / 2, 0, 0);
+    if (len > 6) add(g, cyl(m.hull + 0.03, m.hull + 0.03, 0.5, 24), MAT.grey, 0, 0, zc, Math.PI / 2, 0, 0);
   }
-  add(g, cyl(2.1, 2.1, 9, 14), MAT.white, 6, -2.6, 0, 0, 0, Math.PI / 2);
-  add(g, cyl(2.1, 2.1, 9, 14), MAT.white, -6, -2.6, 0, 0, 0, Math.PI / 2);
-  // eight solar wings at the ends of the truss
-  for (const x of [-46, -38, 38, 46]) for (const s of [-1, 1]) wing(g, x, 0, s * 18, 35, 4.6, 'z');
-  // radiators
-  for (const x of [-20, 20]) add(g, box(0.06, 13, 4), MAT.white, x, -9, 0);
-  // the cupola, and lights
-  add(g, cyl(1, 1.4, 1.2, 7), MAT.glass, 0, -5, 4);
-  for (const x of [-50, 50]) add(g, new THREE.SphereGeometry(0.4, 6, 4), MAT.lamp, x, 0.7, 0);
+  for (const m of STATION.side) {
+    const len = m.x1 - m.x0, xc = (m.x0 + m.x1) / 2;
+    add(g, cyl(m.hull, m.hull, len, 24), quilt, xc, 0, STATION.nodeZ, 0, 0, Math.PI / 2);
+    for (const x of [m.x0 + 0.1, m.x1 - 0.1]) add(g, cyl(m.hull + 0.06, m.hull + 0.06, 0.18, 24), MAT.silver, x, 0, STATION.nodeZ, 0, 0, Math.PI / 2);
+  }
+  // the docking port's ring and the Kibo airlock's hatch
+  add(g, new THREE.TorusGeometry(1.1, 0.12, 8, 24), MAT.dark, 0, 0, STATION.port.z);
+  add(g, new THREE.TorusGeometry(0.8, 0.12, 8, 4), MAT.red, STATION.airlock.x, 0, STATION.airlock.z, 0, Math.PI / 2, Math.PI / 4);
+  // Kibo's exposed platform beyond its airlock
+  add(g, box(4, 0.6, 3.4), MAT.grey, STATION.airlock.x + 2.2, -0.5, STATION.airlock.z);
+  // the cupola under Tranquility: a drum of seven windows looking down
+  const cu = STATION.cupola;
+  add(g, cyl(1.2, 1.45, 0.6, 6), MAT.silver, cu.x, cu.y - 0.95 - 0.35, cu.z);
+  for (let k = 0; k < 6; k++) { const a = (k / 6) * Math.PI * 2 + Math.PI / 6; add(g, box(0.75, 0.42, 0.05), MAT.glass, cu.x + Math.cos(a) * 1.3, cu.y - 1.6, cu.z + Math.sin(a) * 1.3, 0.55, -a + Math.PI / 2, 0); }
+  // the truss, over Destiny: a long box of girders, with the rotary joints near its ends
+  const T = new THREE.Group();
+  T.position.set(0, 4.2, 9);
+  g.add(T);
+  add(T, box(100, 1.4, 1.4), MAT.grey);
+  for (let x = -48; x <= 48; x += 4) add(T, box(0.12, 1.5, 1.5), MAT.dark, x, 0, 0);
+  for (const sx of [-1, 1]) add(T, box(0.12, 0.12, 1.4), MAT.silver, 0, sx * 0.65, 0), add(T, box(0.12, 1.4, 0.12), MAT.silver, 0, 0, sx * 0.65);
+  add(g, box(1.2, 3, 1.2), MAT.grey, 0, 2.3, 9);
+  for (const x of [-32, 32]) add(T, cyl(1.1, 1.1, 1.2, 12), MAT.silver, x, 0, 0, 0, 0, Math.PI / 2);
+  // eight solar wings, gold-edged, at the ends of the truss, and their masts
+  for (const x of [-46, -39, 39, 46]) for (const s of [-1, 1]) {
+    const w = wing(T, x, 0, s * 19, 35, 4.6, 'z');
+    add(w, box(4.8, 0.03, 0.15), MAT.gold, 0, 0, 0);
+    add(T, box(0.15, 0.15, 36), MAT.silver, x, 0.4, s * 19);
+  }
+  // the radiators, pale and edge-on to the sun
+  for (const x of [-22, -16, 16, 22]) add(T, box(0.08, 12, 3.2), MAT.white, x, -7.5, 0);
+  // the robotic arm on its mobile base: two long booms and a hand
+  const arm = new THREE.Group();
+  arm.position.set(6, 0.9, 0);
+  T.add(arm);
+  add(arm, cyl(0.25, 0.25, 8.5, 8), MAT.white, 0, 4.2, 0, 0.3, 0, 0);
+  add(arm, cyl(0.25, 0.25, 8.5, 8), MAT.white, 0, 7.5, -5, 1.6, 0, 0);
+  add(arm, cyl(0.35, 0.35, 0.7, 8), MAT.dark, 0, 7.9, -1.3);
+  add(arm, box(0.6, 0.6, 1), MAT.dark, 0, 7.3, -9.4);
+  // a crew capsule docked on top of Unity
+  add(g, cyl(1.6, 2, 2.6, 16), MAT.white, 0, 3.6, STATION.nodeZ);
+  add(g, cyl(0.7, 1.6, 1.2, 16), MAT.black, 0, 5.5, STATION.nodeZ);
+  // navigation lights at the ends of the truss
+  for (const x of [-50, 50]) add(T, new THREE.SphereGeometry(0.4, 6, 4), MAT.lamp, x, 0.7, 0);
   return g;
 }
 
-/** a surface base: three habitat domes joined by tunnels, a solar field, a mast, a landing pad */
+/**
+ * a surface base, as its inside is laid out (interior.ts): the commons dome
+ * in the middle, the lab and quarters domes either side, a garage to the
+ * south with its big door and the base's rover, the airlock to the north;
+ * tunnels between them; a solar field, a mast, and the landing pad
+ */
 export function baseMesh(seed = 1) {
   const g = new THREE.Group();
-  const domes: [number, number, number][] = [[0, 0, 7], [16, 6, 5], [-14, 9, 5.5]];
-  for (const [x, z, r] of domes) {
-    add(g, new THREE.SphereGeometry(r, 18, 8, 0, Math.PI * 2, 0, Math.PI / 2), MAT.white, x, 0, z);
-    add(g, cyl(r * 1.02, r * 1.02, 0.6, 18), MAT.grey, x, 0.3, z);
-    // windows round the dome
-    for (let k = 0; k < 6; k++) { const a = (k / 6) * Math.PI * 2 + seed; add(g, box(0.9, 0.5, 0.1), MAT.lamp, x + Math.cos(a) * r * 0.86, r * 0.42, z + Math.sin(a) * r * 0.86, 0, -a + Math.PI / 2, 0); }
+  const shell = lam(0xe6e8ec, { side: THREE.FrontSide });
+  // the foundation: a terrace of concrete under it all, going down into the ground where the ground falls away
+  const slab = lam(0x8c8a84);
+  add(g, box(52, 30, 46), slab, 0, -15.05, -4);
+  add(g, cyl(10, 11, 30, 24), slab, BASE.pad.x, -15.05, BASE.pad.z);
+  add(g, box(10, 30, 6), slab, 22, -15.05, -9);
+  for (const d of BASE.domes) {
+    const dm = new THREE.Mesh(domeOutside(d.r), shell);
+    dm.position.set(d.x, 0, d.z);
+    g.add(dm);
+    add(g, cyl(d.r * 1.03, d.r * 1.06, 0.7, 32), MAT.grey, d.x, 0.35, d.z);
+    // the windows, glowing a little from the light inside
+    for (let i = 1; i < 24; i += 4) {
+      const ph = ((i + 0.5) / 24) * Math.PI * 2, th = (1.5 / 8) * Math.PI / 2;
+      const w = add(g, new THREE.CircleGeometry(d.r * 0.13, 4), MAT.window, d.x + Math.cos(ph) * Math.cos(th) * d.r * 1.002, Math.sin(th) * d.r + 0.3, d.z + Math.sin(ph) * Math.cos(th) * d.r * 1.002);
+      w.lookAt(d.x + Math.cos(ph) * d.r * 3, w.position.y, d.z + Math.sin(ph) * d.r * 3);
+      w.rotateZ(Math.PI / 4);
+    }
+    // a beacon on top
+    add(g, new THREE.SphereGeometry(0.18, 6, 4), new THREE.MeshBasicMaterial({ color: 0xff3020 }), d.x, d.r + 0.4, d.z);
   }
-  for (let k = 1; k < domes.length; k++) {
-    const [x, z] = domes[k], dx = x - domes[0][0], dz = z - domes[0][1], l = Math.hypot(dx, dz);
-    const t = add(g, cyl(1.3, 1.3, l, 10), MAT.grey, dx / 2, 1.2, dz / 2);
-    t.rotation.set(Math.PI / 2, 0, 0);
-    t.rotation.y = 0;
-    t.lookAt(x, 1.2, z);
-    t.rotateX(Math.PI / 2);
+  for (const t of BASE.tunnels) {
+    const lx = t.x1 - t.x0 + 1.4, lz = t.z1 - t.z0 + 1.4;
+    add(g, box(Math.max(lx, 2.9), 2.9, Math.max(lz, 2.9)), MAT.grey, (t.x0 + t.x1) / 2, 1.45, (t.z0 + t.z1) / 2);
   }
+  // the garage, its big striped door to the south
+  const G = BASE.garage, gw = G.x1 - G.x0, gd = G.z1 - G.z0;
+  add(g, box(gw + 0.4, 5.6, gd + 0.4), lam(0xb8bcc2), (G.x0 + G.x1) / 2, 2.8, (G.z0 + G.z1) / 2);
+  const door = add(g, box(gw - 1, 4.6, 0.1), MAT.dark, (G.x0 + G.x1) / 2, 2.3, G.z0 - 0.22);
+  for (let k = 0; k < 5; k++) add(door, box(gw - 1, 0.25, 0.04), MAT.orange, 0, -1.8 + k * 0.9, 0.06);
+  add(g, box(gw + 1, 0.3, 1.2), MAT.grey, (G.x0 + G.x1) / 2, 5.7, G.z0 - 0.3);
+  // the base's rover, parked inside
+  const rv = roverMesh(1.1);
+  rv.position.set(2, BASE.floor, -18);
+  rv.rotation.y = Math.PI;
+  g.add(rv);
+  // the airlock to the north, its outer door lit
+  const A = BASE.airlock;
+  add(g, cyl(A.r + 0.2, A.r + 0.2, 3, 20), lam(0xc8ccd2), A.x, 1.5, A.z);
+  add(g, box(1.4, 2.2, 0.1), MAT.dark, A.x, 1.2, A.z + A.r + 0.21);
+  add(g, new THREE.SphereGeometry(0.15, 6, 4), MAT.lamp, A.x, 2.6, A.z + A.r + 0.3);
+  add(g, box(2.5, 0.2, 2), MAT.grey, A.x, 0.1, A.z + A.r + 1.2);
+  // the solar field to the west
   for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) {
-    const p = add(g, box(4, 0.05, 2), MAT.panel, -10 + i * 5, 1.4, -18 - j * 3, -0.5, 0, 0);
+    const p = add(g, box(4, 0.05, 2), MAT.panel, -32 + i * 5, 1.4, -6 - j * 3.2, -0.5, 0, 0);
     add(g, box(0.1, 1.4, 0.1), MAT.silver, p.position.x, 0.7, p.position.z);
   }
-  add(g, cyl(0.15, 0.2, 14, 6), MAT.silver, 8, 7, -8);
-  add(g, new THREE.SphereGeometry(1.4, 12, 5, 0, Math.PI * 2, 0, Math.PI / 3), MAT.white, 8, 14, -8, Math.PI * 0.75, 0, 0);
-  add(g, new THREE.SphereGeometry(0.3, 6, 4), new THREE.MeshBasicMaterial({ color: 0xff3020 }), 8, 14.4, -8);
-  add(g, cyl(9, 9, 0.2, 24), MAT.dark, 30, 0.1, -12);
-  add(g, new THREE.TorusGeometry(7.5, 0.25, 4, 24), MAT.orange, 30, 0.25, -12, Math.PI / 2, 0, 0);
+  // the mast and its dish
+  add(g, cyl(0.15, 0.2, 14, 6), MAT.silver, 11, 7, 10);
+  add(g, new THREE.SphereGeometry(1.4, 12, 5, 0, Math.PI * 2, 0, Math.PI / 3), MAT.white, 11, 14, 10, Math.PI * 0.75, 0, 0);
+  add(g, new THREE.SphereGeometry(0.3, 6, 4), new THREE.MeshBasicMaterial({ color: 0xff3020 }), 11, 14.4, 10);
+  // the landing pad, ringed, and lights round it
+  add(g, cyl(9, 9, 0.2, 32), MAT.dark, BASE.pad.x, 0.1, BASE.pad.z);
+  add(g, new THREE.TorusGeometry(7.5, 0.25, 4, 32), MAT.orange, BASE.pad.x, 0.25, BASE.pad.z, Math.PI / 2, 0, 0);
+  for (let k = 0; k < 8; k++) { const a = (k / 8) * Math.PI * 2 + seed; add(g, new THREE.SphereGeometry(0.2, 6, 4), MAT.lamp, BASE.pad.x + Math.cos(a) * 9.4, 0.3, BASE.pad.z + Math.sin(a) * 9.4); }
   return g;
+}
+
+/** a dome's outer shell: the hemisphere with the window panels cut out, as the inside has them */
+function domeOutside(R: number) {
+  const seg = 24, rings = 8, pos: number[] = [], idx: number[] = [];
+  for (let j = 0; j <= rings; j++) for (let i = 0; i <= seg; i++) {
+    const th = (j / rings) * Math.PI / 2, ph = (i / seg) * Math.PI * 2;
+    pos.push(Math.cos(ph) * Math.cos(th) * R, Math.sin(th) * R + 0.3, Math.sin(ph) * Math.cos(th) * R);
+  }
+  for (let j = 0; j < rings; j++) for (let i = 0; i < seg; i++) {
+    if (j === 1 && i % 4 === 1) continue;
+    const a = j * (seg + 1) + i, b = a + 1, c = a + seg + 1, d = c + 1;
+    idx.push(a, c, b, b, c, d);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
 }
 
 /** the descent stage the Apollo crews left behind, on its four legs, with its gold foil */

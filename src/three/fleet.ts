@@ -7,6 +7,7 @@ import { atmosphere, composition, interior, life, gravity, airAt, giantPressure,
 import { bodyQuat, dirOf, latLonOf, arc } from './ground';
 import { probeMesh, orbiterMesh, landerMesh, roverMesh, stationMesh, baseMesh } from './craftmesh';
 import { sitesOn } from './sites';
+import { Interior, stationInterior, baseInterior } from './interior';
 
 /**
  * The craft the ship can send out, and what they find.
@@ -63,6 +64,12 @@ export interface Craft {
   parent?: number;
   /** the controls, while you drive it: forward and turn (−1–1) */
   drive: { f: number; s: number };
+  /** there from the start (the ISS, the spaceports' bases), not sent by you */
+  fixed?: boolean;
+  /** its inside, once you have come near enough to see in */
+  inside?: Interior;
+  /** where a base stands: level, at the highest ground under it (m over the datum), worked out once */
+  h0?: number;
 }
 
 let nextId = 1;
@@ -204,7 +211,7 @@ export class Fleet {
       return out.copy(c.from).lerp(end, k);
     }
     if (c.state === 'orbit' && c.orbit) return out.set(Math.cos(c.orbit.ph) * c.orbit.r, Math.sin(c.orbit.ph) * c.orbit.r, 0).applyQuaternion(c.orbit.plane);
-    const h = this.heightAt(b, c.n, 0.5) + (c.state === 'surface' ? 0 : c.alt);
+    const h = (c.kind === 'base' && c.state === 'surface' ? this.level(c) : this.heightAt(b, c.n, 0.5)) + (c.state === 'surface' ? 0 : c.alt);
     const r = R + h;
     return out.set(c.n[0] * r, c.n[1] * r, c.n[2] * r).applyQuaternion(bodyQuat(b));
   }
@@ -226,7 +233,8 @@ export class Fleet {
   up(c: Craft) { return this.local(c).normalize(); }
 
   // ---------------------------------------------------------------- each frame
-  frame(dt: number, P: V3, camFov: number) {
+  /** move them all on: before the viewer is placed, so what you are inside is where you are */
+  step(dt: number) {
     for (const c of this.crafts) {
       if (!c.b.alive && c.state !== 'lost') { c.state = 'lost'; c.status = `${c.b.name} is gone`; this.note(c, `Lost: ${c.b.name} no longer exists`, true); }
       c.t += dt; c.age += dt;
@@ -234,6 +242,25 @@ export class Fleet {
       else if (c.state === 'orbit') this.orbitStep(c, dt);
       else if (c.state === 'descent') this.descend(c, dt);
       else if (c.state === 'surface') this.surface(c, dt);
+    }
+  }
+
+  /** the way a craft is turned (world): along its orbit with its top away from the world, or standing on the ground */
+  quat(c: Craft, q = new THREE.Quaternion()) {
+    const p = this.local(c), up = p.clone().normalize();
+    if (c.state === 'orbit' || c.state === 'cruise') {
+      const fwd = c.orbit && c.state === 'orbit' ? new THREE.Vector3(-Math.sin(c.orbit.ph), Math.cos(c.orbit.ph), 0).applyQuaternion(c.orbit.plane) : this.arrival(c).sub(c.from).normalize();
+      // a station flies with its cupola to the world; anything else with its instruments down
+      return q.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), fwd, c.kind === 'station' ? up : up.clone().negate()));
+    }
+    const n = new THREE.Vector3(...c.n);
+    return q.copy(bodyQuat(c.b)).multiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), n)).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -c.head));
+  }
+
+  /** draw them where they are, from the viewer at P */
+  frame(dt: number, P: V3, camFov: number) {
+    void dt;
+    for (const c of this.crafts) {
       // drawn where it is, from the viewer
       const m = c.mesh;
       if (c.state === 'lost' && c.kind !== 'base') { m.visible = false; continue; }
@@ -243,16 +270,11 @@ export class Fleet {
       // far off, it is a dot on the labels; near, a model
       m.visible = d < 2e5 * (c.kind === 'station' ? 20 : 1) || d / Math.tan(camFov * Math.PI / 360) < 4e6;
       m.position.copy(rel);
-      const up = p.clone().normalize();
-      if (c.state === 'orbit' || c.state === 'cruise') {
-        // flying along its orbit (or its path), its top to the world
-        const fwd = c.orbit && c.state === 'orbit' ? new THREE.Vector3(-Math.sin(c.orbit.ph), Math.cos(c.orbit.ph), 0).applyQuaternion(c.orbit.plane) : this.arrival(c).sub(c.from).normalize();
-        m.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), fwd, up.clone().negate()));
-      } else {
-        const qb = bodyQuat(c.b);
-        const n = new THREE.Vector3(...c.n);
-        m.quaternion.copy(qb).multiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), n)).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -c.head));
-      }
+      this.quat(c, m.quaternion);
+      // near enough to look in at the windows (or to go in): its inside, built the first time
+      const near = (c.kind === 'station' || (c.kind === 'base' && c.build >= 1)) && d < 900;
+      if (near && !c.inside) { c.inside = c.kind === 'station' ? stationInterior(c.name) : baseInterior(c.name, c.id); m.add(c.inside.group); }
+      if (c.inside) c.inside.group.visible = near;
       const chute = m.getObjectByName('chute');
       if (chute) chute.visible = c.state === 'descent' && this.air(c.b).bar > 0.005 && c.vz < 200;
       if (c.kind === 'base') m.scale.setScalar(0.05 + 0.95 * c.build);
@@ -396,6 +418,82 @@ export class Fleet {
       msg += f ? `; nearby, ${f.name}, a ${f.about}` : '; lichens and insects on the rock';
     }
     this.note(c, msg, r() < 0.3);
+  }
+
+  /**
+   * What is already out there: round the Earth, the International Space
+   * Station in its real orbit (420 km, 51.6°); on its ground, bases beside
+   * the spaceports at Cape Canaveral and Baikonur. Made once per Earth.
+   */
+  fixtures(worlds: Body[]) {
+    for (const b of worlds) {
+      if (b.look.real !== 'Earth' || !b.alive || this.crafts.some(c => c.fixed && c.b === b)) continue;
+      const R = b.r * AU_M, qb = bodyQuat(b);
+      const iss = this.make('station', b, 'ISS');
+      const GM = 6.674e-11 * b.m * MSUN_KG, r = R + 420e3;
+      iss.orbit = { r, plane: qb.clone().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 51.6 * Math.PI / 180)), ph: 1.1, w: Math.sqrt(GM / r ** 3) };
+      iss.state = 'orbit'; iss.status = 'in orbit, crewed';
+      this.note(iss, 'In orbit since 1998: 420 km up, an orbit every 93 minutes, crewed without a break since 2000');
+      for (const [name, lat, lon, head] of [['Canaveral Base', 28.52, -80.68, 0.6], ['Baikonur Base', 45.94, 63.35, 2.1]] as const) {
+        const c = this.make('base', b, name);
+        c.state = 'surface'; c.n = dirOf(lat, lon); c.head = head; c.build = 1; c.status = 'crewed';
+        this.note(c, 'A base beside the spaceport: habitats, a lab, a garage, a pad for the ship');
+      }
+    }
+  }
+
+  /** a craft that is simply there (no launch) */
+  private make(kind: CraftKind, b: Body, name: string): Craft {
+    const c: Craft = {
+      id: nextId++, kind, name, b, state: 'surface', t: 0, age: 0, from: new THREE.Vector3(), cruiseT: 0, orbit: null, n: [0, 0, 1], head: 0, alt: 0, vz: 0,
+      log: [], profile: [], odo: 0, cover: 0, build: 1, status: '', mesh: this.model(kind), drive: { f: 0, s: 0 }, fixed: true,
+    };
+    this.crafts.push(c);
+    this.root.add(c.mesh);
+    return c;
+  }
+
+  /**
+   * a base is built level: its floor at the highest ground under its domes,
+   * garage and airlock, with its foundation going down into the ground where
+   * the ground falls away (so nothing pokes up through a floor, and no corner
+   * hangs in the air)
+   */
+  level(c: Craft) {
+    if (c.h0 !== undefined) return c.h0;
+    const R = c.b.r * AU_M, [e, nn] = tangent(c.n);
+    let hi = -Infinity;
+    // (rings over all of it, whichever way it faces)
+    const pts: [number, number][] = [[0, 0]];
+    for (const rr of [9, 17, 24]) for (let k = 0; k < 12; k++) pts.push([Math.cos(k * Math.PI / 6) * rr, Math.sin(k * Math.PI / 6) * rr]);
+    for (const [x, z] of pts) {
+      const m: V3 = [c.n[0] + (e[0] * x + nn[0] * z) / R, c.n[1] + (e[1] * x + nn[1] * z) / R, c.n[2] + (e[2] * x + nn[2] * z) / R], l = Math.hypot(...m);
+      hi = Math.max(hi, this.heightAt(c.b, [m[0] / l, m[1] / l, m[2] / l], 0.5));
+    }
+    c.h0 = hi;
+    return hi;
+  }
+
+  /** the nearest base on a world to a point on it (body frame), and how far, m */
+  nearestBase(b: Body, n: V3) {
+    let best: Craft | null = null, bd = Infinity;
+    for (const c of this.crafts) {
+      if (c.kind !== 'base' || c.b !== b || c.build < 1) continue;
+      const d = arc(c.n, n) * b.r * AU_M;
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best ? { c: best, d: bd } : null;
+  }
+
+  /** a point of a craft's own frame (m, as its model is built) in its world's frame (body frame, m from the centre) */
+  bodyPoint(c: Craft, p: THREE.Vector3) {
+    const w = p.clone().applyQuaternion(this.quat(c)).add(this.local(c));
+    return w.applyQuaternion(bodyQuat(c.b).invert());
+  }
+  /** the same, as a direction on the ground */
+  onBase(c: Craft, x: number, z: number): V3 {
+    const w = this.bodyPoint(c, new THREE.Vector3(x, 0, z)).normalize();
+    return [w.x, w.y, w.z];
   }
 
   remove(c: Craft) {

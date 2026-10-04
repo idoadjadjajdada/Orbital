@@ -473,7 +473,7 @@ export interface Tile {
   pos: Float32Array; nrm: Float32Array; col: Float32Array; sea: Float32Array; index: Uint32Array;
   /** vertex spacing, m */
   spacing: number;
-  /** boulders: position (as pos), size, colour — 7 numbers each */
+  /** boulders: position (as pos), size, colour, and a number of its own (for how it lies) — 8 numbers each */
   rocks: Float32Array;
 }
 
@@ -534,13 +534,27 @@ export function buildTile(job: TileJob): Tile {
       ROCK[qq] = Math.max(ROCK[qq], t);
     }
     sea[v] = SEA[qq];
-    // boulders on rocky ground, on the finest tiles (most small, a few big: a power law, as round lunar craters)
-    if (spacing < 6 && i < N && j < N && ROCK[qq] > 0.3) {
-      const hk = hash(i * 31 + 7 + x * 977, j * 17 + 3 + y * 613, f * 101 + L * 7 + Math.floor(s.look.seed));
-      if (hk < ROCK[qq] * 0.06 * Math.min(1, spacing)) {
-        const sz = Math.min(spacing * 2, 3) * (0.08 + 0.5 * Math.pow(hash(i + x, j + y, 5 + L), 3)) * ROCK[qq];
-        rocks.push(P[q] + (P[e] - P[q]) * 0.37, P[q + 1] + (P[e + 1] - P[q + 1]) * 0.37, P[q + 2] + (P[e + 2] - P[q + 2]) * 0.37, sz, C[q] * 0.7, C[q + 1] * 0.7, C[q + 2] * 0.7);
-      }
+  }
+  // boulders: on a lattice fixed to the world (a cell every 2 m), each cell's own hash and its own ground
+  // deciding whether it holds one and how big, so the same boulder is in the same place whichever tile
+  // draws it; set on the tile's surface, so it neither floats nor sinks (most small, a few big: a power law)
+  if (spacing < 6) {
+    const LR = Math.max(L, Math.round(Math.log2((R * Math.PI / 2) / 2))), kc = 2 / 2 ** LR, per = 2 ** (LR - L);
+    const i0 = Math.round((a0 + 1) / kc), j0 = Math.round((b0 + 1) / kc), sd = Math.floor(s.look.seed);
+    const rs: GroundSample = { h: 0, r: 0, g: 0, b: 0, sea: false, rock: 0 };
+    for (let jj = 0; jj < per; jj++) for (let ii = 0; ii < per; ii++) {
+      const ci = i0 + ii, cj = j0 + jj;
+      const hk = hash(ci * 7 + f * 131, cj * 13 + 7, sd + 17);
+      if (hk > 0.09) continue;
+      const ua = (ii + 0.15 + 0.7 * hash(ci, cj, sd + 3)) / per, vb = (jj + 0.15 + 0.7 * hash(cj, ci, sd + 5)) / per;
+      groundAt(s, faceDir(f, a0 + ua * k, b0 + vb * k), 2, rs, paint, det);
+      if (rs.sea || rs.rock < 0.3 || hk > rs.rock * 0.09) continue;
+      const sz = (0.08 + 0.55 * Math.pow(hash(ci + 9, cj + 4, sd), 3)) * rs.rock * 2.2;
+      // the tile's surface there, from its grid
+      const gx = ua * N, gy = vb * N, ix = Math.min(N - 1, Math.floor(gx)), iy = Math.min(N - 1, Math.floor(gy)), fx = gx - ix, fy = gy - iy;
+      const q00 = at(ix, iy), q10 = at(ix + 1, iy), q01 = at(ix, iy + 1), q11 = at(ix + 1, iy + 1);
+      const lerp = (o: number) => (P[q00 + o] * (1 - fx) + P[q10 + o] * fx) * (1 - fy) + (P[q01 + o] * (1 - fx) + P[q11 + o] * fx) * fy;
+      rocks.push(lerp(0), lerp(1), lerp(2), sz, C[q00] * 0.7, C[q00 + 1] * 0.7, C[q00 + 2] * 0.7, (ci * 7919 + cj * 104729) % 100003);
     }
   }
   // the skirt: the edge's vertices again, lowered along the up, round the tile in order

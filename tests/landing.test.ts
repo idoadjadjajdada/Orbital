@@ -129,7 +129,16 @@ describe('the ground', () => {
       const pb = [u.pos[b * 3] + u.c[0] * R, u.pos[b * 3 + 1] + u.c[1] * R, u.pos[b * 3 + 2] + u.c[2] * R];
       expect(Math.hypot(pa[0] - pb[0], pa[1] - pb[1], pa[2] - pb[2])).toBeLessThan(0.05);
     }
-    // face coordinates go there and back
+    // the same boulders whichever tile draws them: a tile's, and its four children's together
+    const R0 = s.R, key = (t: ReturnType<typeof buildTile>) => { const out: string[] = []; for (let k = 0; k < t.rocks.length; k += 8) out.push(String(t.rocks[k + 7])); return out; };
+    const near = (t: ReturnType<typeof buildTile>) => { const out: number[][] = []; for (let k = 0; k < t.rocks.length; k += 8) out.push([t.rocks[k] + t.c[0] * R0, t.rocks[k + 1] + t.c[1] * R0, t.rocks[k + 2] + t.c[2] * R0]); return out; };
+    const par = buildTile({ key: 'p', spec: s, f: 0, L: 16, x: 32000, y: 33600 });
+    const kids = [0, 1, 2, 3].map(q => buildTile({ key: 'c', spec: s, f: 0, L: 17, x: 64000 + (q & 1), y: 67200 + (q >> 1) }));
+    expect(key(par).length).toBeGreaterThan(0);
+    expect(kids.flatMap(key).sort()).toEqual(key(par).sort());
+    const pp = near(par), kp = kids.flatMap(near);
+    for (const p of pp) expect(Math.min(...kp.map(q => Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2])))).toBeLessThan(1.5);
+
     const [f, a, b] = faceOf(faceDir(3, 0.3, -0.7));
     expect(f).toBe(3); expect(a).toBeCloseTo(0.3, 9); expect(b).toBeCloseTo(-0.7, 9);
   });

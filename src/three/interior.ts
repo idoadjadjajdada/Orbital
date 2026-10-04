@@ -1,0 +1,729 @@
+import * as THREE from 'three';
+
+/**
+ * Places you go inside: an ISS-like station in orbit, a base on the ground,
+ * and whatever comes later.
+ *
+ * An interior is a model in its craft's own frame (metres; y up, the long
+ * way along z), with the spaces you can move through (boxes and round
+ * rooms), the things you can use (spots, as on the ship: look at one and
+ * press F), screens that show live readings, and the light fixtures the
+ * lights inside follow. In a station you float: you move the way you look,
+ * up and down as well, and push off the walls; in a base you walk, with the
+ * world's own gravity, on its floors.
+ *
+ * Outside and inside are one: the station's exterior (craftmesh.ts) is built
+ * from the same list of modules as its interior, and a base's domes are the
+ * same domes, so a window seen from inside looks out where the outside has
+ * one.
+ */
+
+export interface Spot { id: string; at: THREE.Vector3; label: string; reach: number }
+interface Disc { x: number; z: number; r: number; y0: number; y1: number }
+interface Region { name: string; box?: THREE.Box3; disc?: Disc }
+
+export class Interior {
+  readonly group = new THREE.Group();
+  readonly spots: Spot[] = [];
+  /** the spaces you can be in: a body's middle must be inside one of these */
+  readonly boxes: THREE.Box3[] = [];
+  readonly discs: Disc[] = [];
+  /** named parts, for "where am I" */
+  readonly regions: Region[] = [];
+  /** the light fixtures: the lights inside follow the nearest */
+  readonly lamps: THREE.Vector3[] = [];
+  /** where you come in, and which way you face */
+  spawn = { p: new THREE.Vector3(), yaw: 0 };
+  /** where the floor is, in one with gravity */
+  floor = 0;
+  private screens = new Map<string, { g: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D; tex: THREE.CanvasTexture; w: number; h: number; tint: string }>();
+  private anims: ((t: number) => void)[] = [];
+
+  constructor(readonly name: string, readonly zeroG: boolean) { this.group.name = `interior:${name}`; }
+
+  /** can a body of radius r have its middle at p? */
+  canBe(p: THREE.Vector3, r = 0.25) {
+    for (const b of this.boxes) if (p.x > b.min.x + r && p.x < b.max.x - r && p.y > b.min.y + (this.zeroG ? r : -0.01) && p.y < b.max.y - r && p.z > b.min.z + r && p.z < b.max.z - r) return true;
+    for (const d of this.discs) if (Math.hypot(p.x - d.x, p.z - d.z) < d.r - r && p.y >= d.y0 - 0.01 && p.y < d.y1 - r) return true;
+    return false;
+  }
+
+  /** the part of the interior a point is in */
+  where(p: THREE.Vector3) {
+    for (const g of this.regions) {
+      if (g.box && g.box.containsPoint(p)) return g.name;
+      if (g.disc && Math.hypot(p.x - g.disc.x, p.z - g.disc.z) < g.disc.r) return g.name;
+    }
+    return this.name;
+  }
+
+  /** the spot you are looking at, near enough to use */
+  facing(eye: THREE.Vector3, dir: THREE.Vector3): Spot | null {
+    let best: Spot | null = null, bs = Infinity;
+    for (const s of this.spots) {
+      const v = s.at.clone().sub(eye), d = v.length();
+      if (d > s.reach) continue;
+      const c = v.dot(dir) / Math.max(d, 1e-6);
+      if (c < (d < 1 ? 0.3 : 0.8)) continue;
+      const score = d * (2 - c);
+      if (score < bs) { bs = score; best = s; }
+    }
+    return best;
+  }
+
+  /** a screen to draw on: a canvas texture on a plane, w × h m, facing +z of its parent */
+  screen(id: string, parent: THREE.Object3D, w: number, h: number, at: THREE.Vector3, ry = 0, tint = '#7fe0ff') {
+    const px = 256, ph = Math.max(32, Math.round((px * h) / w));
+    const c = makeCanvas(px, ph);
+    const tex = c ? new THREE.CanvasTexture(c.canvas as HTMLCanvasElement) : null;
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), tex ? new THREE.MeshBasicMaterial({ map: tex }) : MATS.screen);
+    m.position.copy(at);
+    m.rotation.y = ry;
+    parent.add(m);
+    if (c && tex) { tex.colorSpace = THREE.SRGBColorSpace; this.screens.set(id, { g: c.g, tex, w: px, h: ph, tint }); this.drawScreen(id, [id.toUpperCase()]); }
+    return m;
+  }
+
+  /** text on a screen: the first line a heading */
+  drawScreen(id: string, lines: string[]) {
+    const s = this.screens.get(id);
+    if (!s) return;
+    const g = s.g;
+    g.fillStyle = '#04121c'; g.fillRect(0, 0, s.w, s.h);
+    g.strokeStyle = 'rgba(127,224,255,0.25)'; g.lineWidth = 2; g.strokeRect(3, 3, s.w - 6, s.h - 6);
+    const fs = Math.max(11, Math.min(20, Math.floor((s.h - 12) / Math.max(4, lines.length + 0.5))));
+    g.textBaseline = 'top';
+    lines.forEach((l, k) => {
+      g.font = `${k === 0 ? 'bold ' : ''}${fs}px monospace`;
+      g.fillStyle = k === 0 ? '#ffd27a' : s.tint;
+      g.fillText(l, 9, 7 + k * (fs + 3), s.w - 16);
+    });
+    s.tex.needsUpdate = true;
+  }
+
+  /** something that moves: called each frame with the time */
+  animate(f: (t: number) => void) { this.anims.push(f); }
+  update(t: number) { for (const f of this.anims) f(t); }
+
+  addSpot(id: string, at: THREE.Vector3, label: string, reach = 2.2) { this.spots.push({ id, at, label, reach }); }
+}
+
+// ---------------------------------------------------------------- materials and textures
+
+function makeCanvas(w: number, h: number) {
+  if (typeof OffscreenCanvas !== 'undefined' && typeof document === 'undefined') {
+    const c = new OffscreenCanvas(w, h);
+    return { canvas: c, g: c.getContext('2d')! };
+  }
+  if (typeof document === 'undefined') return null;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  return { canvas: c, g: c.getContext('2d')! };
+}
+
+/** a seeded random */
+export const rnd = (a: number) => () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+
+/**
+ * a wall of racks, as on the ISS: locker doors with handles and labels, panels
+ * with switches and lights, cables, bungee cords, patches of velcro, a laptop
+ * or two
+ */
+function rackTexture(seed: number, base = '#d9d6cc') {
+  const c = makeCanvas(512, 512);
+  if (!c) return null;
+  const g = c.g, r = rnd(seed);
+  g.fillStyle = base; g.fillRect(0, 0, 512, 512);
+  // rack columns
+  for (let i = 0; i < 4; i++) {
+    const x = i * 128;
+    g.fillStyle = '#b8b5ab'; g.fillRect(x, 0, 3, 512);
+    // locker doors down the rack, or an instrument panel
+    let y = 6;
+    while (y < 500) {
+      const h = 40 + Math.floor(r() * 4) * 22;
+      const kind = r();
+      if (kind < 0.55) {
+        g.fillStyle = `hsl(45, 10%, ${78 + r() * 8}%)`; g.fillRect(x + 8, y, 112, h - 6);
+        g.strokeStyle = '#9c988c'; g.lineWidth = 2; g.strokeRect(x + 8, y, 112, h - 6);
+        g.fillStyle = '#6a6f78'; g.fillRect(x + 54, y + h / 2 - 8, 20, 6);
+        g.fillStyle = r() < 0.5 ? '#2a4a8a' : '#f2f2f2'; g.fillRect(x + 14, y + 6, 26 + r() * 30, 8);
+      } else if (kind < 0.8) {
+        g.fillStyle = '#4a5058'; g.fillRect(x + 8, y, 112, h - 6);
+        for (let k = 0; k < 8; k++) { g.fillStyle = ['#e0e0e0', '#ffcf40', '#40ff80', '#ff5050'][Math.floor(r() * 4)]; g.fillRect(x + 14 + k * 12, y + 8 + (k % 2) * 10, 5, 5); }
+        g.fillStyle = '#9aa0a8'; for (let k = 0; k < 4; k++) g.fillRect(x + 16 + k * 24, y + h - 20, 10, 8);
+      } else {
+        // a laptop strapped to the rack
+        g.fillStyle = '#22252a'; g.fillRect(x + 20, y + 4, 88, h - 14);
+        g.fillStyle = `hsl(${190 + r() * 40}, 60%, 35%)`; g.fillRect(x + 25, y + 8, 78, h - 24);
+        g.fillStyle = 'rgba(255,255,255,0.5)'; for (let k = 0; k < 4; k++) g.fillRect(x + 30, y + 13 + k * 7, 30 + r() * 40, 2);
+      }
+      y += h;
+    }
+  }
+  // cables and bungees across the racks
+  for (let k = 0; k < 7; k++) {
+    g.strokeStyle = ['#202020', '#3050a0', '#c0c0c0', '#e0a020', '#202020'][k % 5];
+    g.lineWidth = 2 + r() * 3;
+    g.beginPath();
+    const y0 = r() * 512;
+    g.moveTo(0, y0);
+    g.bezierCurveTo(170, y0 + (r() - 0.5) * 120, 340, y0 + (r() - 0.5) * 120, 512, y0 + (r() - 0.5) * 60);
+    g.stroke();
+  }
+  // velcro patches and small bags
+  for (let k = 0; k < 14; k++) { g.fillStyle = r() < 0.5 ? '#efe9d8' : '#8a8c90'; g.fillRect(r() * 490, r() * 490, 10 + r() * 22, 8 + r() * 12); }
+  const tex = new THREE.CanvasTexture(c.canvas as HTMLCanvasElement);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+/** a panelled wall or floor: plates with seams and rivets, or ribbed padding */
+function panelTexture(seed: number, base: string, kind: 'plate' | 'grate' | 'pad' | 'floor') {
+  const c = makeCanvas(256, 256);
+  if (!c) return null;
+  const g = c.g, r = rnd(seed);
+  g.fillStyle = base; g.fillRect(0, 0, 256, 256);
+  if (kind === 'plate' || kind === 'floor') {
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {
+      g.fillStyle = `rgba(0,0,0,${0.03 + r() * 0.05})`; g.fillRect(i * 64 + 2, j * 64 + 2, 60, 60);
+      g.strokeStyle = 'rgba(0,0,0,0.25)'; g.strokeRect(i * 64 + 1, j * 64 + 1, 62, 62);
+      g.fillStyle = 'rgba(0,0,0,0.35)';
+      for (const [a, b] of [[6, 6], [58, 6], [6, 58], [58, 58]]) g.fillRect(i * 64 + a, j * 64 + b, 2, 2);
+    }
+    if (kind === 'floor') { g.strokeStyle = 'rgba(255,200,40,0.6)'; g.lineWidth = 6; g.beginPath(); g.moveTo(0, 250); g.lineTo(256, 250); g.stroke(); }
+  } else if (kind === 'grate') {
+    g.strokeStyle = 'rgba(0,0,0,0.4)';
+    for (let i = 0; i < 256; i += 8) { g.beginPath(); g.moveTo(i, 0); g.lineTo(i, 256); g.stroke(); g.beginPath(); g.moveTo(0, i); g.lineTo(256, i); g.stroke(); }
+  } else {
+    for (let j = 0; j < 256; j += 32) { g.fillStyle = 'rgba(0,0,0,0.12)'; g.fillRect(0, j, 256, 3); g.fillStyle = 'rgba(255,255,255,0.12)'; g.fillRect(0, j + 4, 256, 2); }
+  }
+  const tex = new THREE.CanvasTexture(c.canvas as HTMLCanvasElement);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+/** the materials: lit by the lights inside, and a little by themselves, so nothing is ever black */
+const lit = (color: number, map: THREE.Texture | null = null, extra: THREE.MeshLambertMaterialParameters = {}) =>
+  new THREE.MeshLambertMaterial({ color, map, emissive: new THREE.Color(color).multiplyScalar(0.28), emissiveMap: map, ...extra });
+
+export const MATS = {
+  screen: new THREE.MeshBasicMaterial({ color: 0x0a2a3a }),
+  light: new THREE.MeshBasicMaterial({ color: 0xf4f7ff }),
+  warm: new THREE.MeshBasicMaterial({ color: 0xfff0d0 }),
+  grow: new THREE.MeshBasicMaterial({ color: 0xff60d0 }),
+  glass: new THREE.MeshLambertMaterial({ color: 0x9ac0e0, transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide }),
+  rail: lit(0xe8c030),
+  blue: lit(0x3060c0),
+  dark: lit(0x30343c),
+  grey: lit(0x8a9098),
+  white: lit(0xe8e8e4),
+  red: lit(0xc03028),
+  green: lit(0x4a9a40),
+  leaf: lit(0x3fa040),
+  wood: lit(0x9a7048),
+  orange: lit(0xe07030),
+  holo: new THREE.MeshBasicMaterial({ color: 0x60d0ff, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, wireframe: true }),
+};
+
+function add(parent: THREE.Object3D, geo: THREE.BufferGeometry, m: THREE.Material, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) {
+  const o = new THREE.Mesh(geo, m);
+  o.position.set(x, y, z);
+  o.rotation.set(rx, ry, rz);
+  parent.add(o);
+  return o;
+}
+const box = (w: number, h: number, d: number) => new THREE.BoxGeometry(w, h, d);
+const cyl = (r0: number, r1: number, h: number, n = 16) => new THREE.CylinderGeometry(r0, r1, h, n);
+
+/** a flat panel facing +z with a square hole in it (a hatchway), w × h, the hole s × s */
+function bulkhead(w: number, h: number, s: number, round = false) {
+  const sh = new THREE.Shape();
+  sh.moveTo(-w / 2, -h / 2); sh.lineTo(w / 2, -h / 2); sh.lineTo(w / 2, h / 2); sh.lineTo(-w / 2, h / 2); sh.lineTo(-w / 2, -h / 2);
+  const hole = new THREE.Path();
+  if (round) hole.absarc(0, 0, s / 2, 0, Math.PI * 2, true);
+  else { const q = s / 2, c = s * 0.18; hole.moveTo(-q + c, -q); hole.lineTo(q - c, -q); hole.lineTo(q, -q + c); hole.lineTo(q, q - c); hole.lineTo(q - c, q); hole.lineTo(-q + c, q); hole.lineTo(-q, q - c); hole.lineTo(-q, -q + c); hole.lineTo(-q + c, -q); }
+  sh.holes.push(hole);
+  return new THREE.ShapeGeometry(sh);
+}
+
+// ---------------------------------------------------------------- the station
+
+/**
+ * The station's modules, as the ISS's are laid out: a line of them along z
+ * from the docking port (−z, where the ship docks) aft, a node with a module
+ * to either side, and the cupola under Tranquility looking down at the world.
+ * Interiors are square in section, lined with racks, inside round hulls.
+ */
+export const STATION = {
+  main: [
+    { id: 'pma', name: 'Docking adapter', z0: -28, z1: -24, half: 0.62, hull: 1.35 },
+    { id: 'zvezda', name: 'Zvezda · crew quarters and galley', z0: -24, z1: -12.2, half: 1.05, hull: 2.15 },
+    { id: 'unity', name: 'Unity · node', z0: -12.2, z1: -5.8, half: 1.2, hull: 2.3 },
+    { id: 'tranq', name: 'Tranquility · life support and exercise', z0: -5.8, z1: 4.5, half: 1.05, hull: 2.2 },
+    { id: 'destiny', name: 'Destiny · command and comms', z0: 4.5, z1: 14.5, half: 1.05, hull: 2.15 },
+    { id: 'pmm', name: 'Stowage', z0: 14.5, z1: 19.5, half: 0.95, hull: 1.95 },
+  ],
+  side: [
+    { id: 'lab', name: 'Columbus · laboratory', x0: -14, x1: -2.4, half: 1.05, hull: 2.15 },
+    { id: 'kibo', name: 'Kibo · robotics and airlock', x0: 2.4, x1: 14.5, half: 1.05, hull: 2.15 },
+  ],
+  /** the node the side modules join at, z */
+  nodeZ: -9,
+  /** the cupola, under Tranquility */
+  cupola: { x: 0, z: -1.2, y: -1.05 },
+  /** where a ship docks: the end of the docking adapter, facing −z */
+  port: new THREE.Vector3(0, 0, -28),
+  /** the Kibo airlock's outer hatch, +x */
+  airlock: new THREE.Vector3(14.5, 0, -9),
+};
+
+/** a module's square tube of racks along an axis: walls, light strips, handrails, end bulkheads with hatches */
+function tube(I: Interior, parent: THREE.Object3D, len: number, half: number, seed: number, plain = false, ends: [boolean, boolean] = [true, true]) {
+  const g = new THREE.Group();
+  parent.add(g);
+  const w = half * 2;
+  const tex = (k: number) => {
+    const t = plain ? panelTexture(seed + k, '#c8ccd2', 'pad') : rackTexture(seed * 7 + k);
+    if (t) { t.wrapS = THREE.RepeatWrapping; t.repeat.set(Math.max(1, Math.round(len / 2.2)), 1); }
+    return t;
+  };
+  // four walls, inward-facing: port, starboard, deck, overhead
+  const walls: [number, number, number, number, number, number][] = [
+    [-half, 0, 0, 0, Math.PI / 2, 0], [half, 0, 0, 0, -Math.PI / 2, 0],
+    [0, -half, 0, -Math.PI / 2, 0, Math.PI / 2], [0, half, 0, Math.PI / 2, 0, Math.PI / 2],
+  ];
+  walls.forEach(([x, y, z, rx, ry, rz], k) => {
+    const m = add(g, new THREE.PlaneGeometry(len, w), lit(0xffffff, tex(k)), x, y, z, rx, ry, rz);
+    if (k >= 2) m.rotation.set(rx, 0, 0), m.rotateZ(rz);
+  });
+  // the lights: strips along the overhead corners
+  for (const s of [-1, 1]) add(g, box(0.08, 0.04, len * 0.9), MATS.light, s * (half - 0.12), half - 0.03, 0);
+  // handrails, yellow, along the walls
+  for (const s of [-1, 1]) for (const y of [-0.45, 0.45]) add(g, box(0.035, 0.035, len * 0.8), MATS.rail, s * (half - 0.08), y, 0);
+  // the corners: dark trim
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) add(g, box(0.1, 0.1, len), MATS.dark, sx * (half - 0.03), sy * (half - 0.03), 0);
+  // the ends: bulkheads with a hatchway
+  ends.forEach((on, k) => {
+    if (!on) return;
+    const s = k ? 1 : -1;
+    const b = add(g, bulkhead(w, w, 1.25), lit(0xb8bcc4), 0, 0, s * len / 2, 0, k ? Math.PI : 0, 0);
+    b.material = lit(0xb8bcc4, null, { side: THREE.DoubleSide });
+    add(g, new THREE.TorusGeometry(0.66, 0.05, 6, 8), MATS.grey, 0, 0, s * (len / 2 - 0.02), 0, 0, Math.PI / 8);
+  });
+  for (let z = -len / 2 + 1; z < len / 2; z += 2.2) I.lamps.push(new THREE.Vector3(0, half - 0.2, z));
+  return g;
+}
+
+/** the ISS-like station's inside, with what is in each module */
+export function stationInterior(name: string): Interior {
+  const I = new Interior(name, true);
+  const G = I.group;
+  const r = rnd(name.length * 97 + 3);
+  for (const m of STATION.main) {
+    const len = m.z1 - m.z0, zc = (m.z0 + m.z1) / 2;
+    const holder = new THREE.Group();
+    holder.position.set(0, 0, zc);
+    G.add(holder);
+    const t = tube(I, holder, len, m.half, Math.floor(r() * 1000), m.id === 'pma' || m.id === 'unity');
+    // the node's side hatches: openings in its port and starboard walls
+    if (m.id === 'unity') {
+      t.children.slice(0, 2).forEach(o => { o.visible = false; });
+      for (const s of [-1, 1]) {
+        const b = add(holder, bulkhead(m.half * 2, m.half * 2, 1.25), lit(0xb8bcc4, null, { side: THREE.DoubleSide }), s * m.half, 0, 0, 0, s * Math.PI / 2, 0);
+        b.rotation.y = -s * Math.PI / 2;
+      }
+    }
+    I.boxes.push(new THREE.Box3(new THREE.Vector3(-m.half, -m.half, m.z0 - 0.05), new THREE.Vector3(m.half, m.half, m.z1 + 0.05)));
+    I.regions.push({ name: m.name, box: new THREE.Box3(new THREE.Vector3(-m.half - 0.1, -m.half - 2, m.z0), new THREE.Vector3(m.half + 0.1, m.half + 0.1, m.z1)) });
+    furnishStation(I, holder, m.id, len, m.half, r);
+  }
+  for (const m of STATION.side) {
+    const len = m.x1 - m.x0, xc = (m.x0 + m.x1) / 2;
+    const holder = new THREE.Group();
+    holder.position.set(xc, 0, STATION.nodeZ);
+    holder.rotation.y = Math.PI / 2;
+    G.add(holder);
+    tube(I, holder, len, m.half, Math.floor(r() * 1000));
+    I.boxes.push(new THREE.Box3(new THREE.Vector3(m.x0 - 0.05, -m.half, STATION.nodeZ - m.half), new THREE.Vector3(m.x1 + 0.05, m.half, STATION.nodeZ + m.half)));
+    I.regions.push({ name: m.name, box: new THREE.Box3(new THREE.Vector3(m.x0, -m.half, STATION.nodeZ - m.half), new THREE.Vector3(m.x1, m.half, STATION.nodeZ + m.half)) });
+    furnishStation(I, holder, m.id, len, m.half, r);
+  }
+  cupola(I);
+  I.spawn = { p: new THREE.Vector3(0, 0, -26.5), yaw: Math.PI };
+  return I;
+}
+
+/** the cupola: seven windows under Tranquility, the big round one looking straight down */
+function cupola(I: Interior) {
+  const { x, z, y } = STATION.cupola, G = I.group;
+  const c = new THREE.Group();
+  c.position.set(x, y, z);
+  G.add(c);
+  // the opening in Tranquility's deck, and the short drum below it
+  add(c, cyl(0.95, 0.95, 0.7, 6, ), lit(0xc8ccd2, null, { side: THREE.BackSide }), 0, -0.35, 0);
+  // the six side windows round the drum's lower edge, and the round one at the bottom
+  const ring = add(c, cyl(1.35, 0.95, 0.5, 6, ), MATS.glass, 0, -0.95, 0);
+  ring.rotation.y = Math.PI / 6;
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * Math.PI * 2;
+    add(c, box(0.08, 0.55, 0.08), MATS.grey, Math.cos(a) * 1.15, -0.95, Math.sin(a) * 1.15, 0, -a, 0.6);
+  }
+  add(c, new THREE.CircleGeometry(0.42, 24), MATS.glass, 0, -1.2, 0, -Math.PI / 2, 0, 0);
+  add(c, new THREE.RingGeometry(0.42, 1.35, 6, 1), lit(0xc8ccd2, null, { side: THREE.DoubleSide }), 0, -1.2, 0, -Math.PI / 2, 0, Math.PI / 6);
+  // the deck around the hole: a grab bar ring
+  add(c, new THREE.TorusGeometry(0.9, 0.03, 6, 24), MATS.rail, 0, 0.02, 0, Math.PI / 2, 0, 0);
+  I.boxes.push(new THREE.Box3(new THREE.Vector3(x - 0.75, y - 1.15, z - 0.75), new THREE.Vector3(x + 0.75, y + 0.2, z + 0.75)));
+  I.regions.push({ name: 'The Cupola', box: new THREE.Box3(new THREE.Vector3(x - 1.4, y - 1.4, z - 1.4), new THREE.Vector3(x + 1.4, y, z + 1.4)) });
+  I.addSpot('cupola', new THREE.Vector3(x, y - 0.4, z), 'Look out of the Cupola', 2.8);
+  I.lamps.push(new THREE.Vector3(x, y - 0.2, z));
+}
+
+/** what each module holds */
+function furnishStation(I: Interior, h: THREE.Group, id: string, len: number, half: number, r: () => number) {
+  // local: the module runs along its z, port −x, deck −y
+  const W = (p: THREE.Vector3) => p.clone().applyMatrix4(h.matrix.compose(h.position, h.quaternion, h.scale));
+  switch (id) {
+    case 'pma': {
+      add(h, new THREE.TorusGeometry(0.6, 0.06, 8, 24), MATS.grey, 0, 0, -len / 2 + 0.05);
+      add(h, new THREE.CircleGeometry(0.58, 24), lit(0x9aa0a8, null, { side: THREE.DoubleSide }), 0, 0, -len / 2 + 0.02);
+      I.addSpot('dock', W(new THREE.Vector3(0, 0, -len / 2 + 0.4)), 'Through the hatch, back aboard the ship', 2);
+      break;
+    }
+    case 'zvezda': {
+      // the galley table, its food trays and the water dispenser
+      add(h, box(0.9, 0.06, 1.4), MATS.grey, 0, -0.55, -2);
+      add(h, box(0.08, 0.5, 0.08), MATS.dark, 0, -0.8, -2);
+      for (let k = 0; k < 6; k++) add(h, box(0.16, 0.05, 0.12), [MATS.orange, MATS.white, MATS.red, MATS.green][k % 4], -0.3 + (k % 3) * 0.3, -0.5, -2.4 + Math.floor(k / 3) * 0.8);
+      add(h, box(0.35, 0.5, 0.15), MATS.white, half - 0.1, 0.1, -3.2);
+      add(h, box(0.06, 0.08, 0.1), MATS.blue, half - 0.2, -0.1, -3.2);
+      I.addSpot('galley', W(new THREE.Vector3(0, -0.4, -2)), 'Eat: a tray of rehydrated food', 2.2);
+      // two sleep stations, one each side: a padded booth with a sleeping bag strapped in
+      for (const s of [-1, 1]) {
+        const z = 2.5;
+        add(h, box(0.05, 1.9, 0.95), lit(0xd8d4c8), s * (half - 0.02), 0, z);
+        add(h, box(0.25, 1.5, 0.6), [MATS.blue, MATS.orange][s > 0 ? 1 : 0], s * (half - 0.15), -0.05, z);
+        add(h, new THREE.CircleGeometry(0.12, 12), MATS.warm, s * (half - 0.04), 0.7, z + 0.3, 0, -s * Math.PI / 2, 0);
+      }
+      I.addSpot('sleep', W(new THREE.Vector3(-half + 0.3, 0, 2.5)), 'Sleep in a sleep station', 2);
+      // the toilet compartment: a curtain and the funnel
+      add(h, box(0.04, 1.6, 0.9), lit(0x6a8ab0), half - 0.05, 0, 4.6);
+      I.screen('zvezda', h, 0.6, 0.4, new THREE.Vector3(-half + 0.02, 0.35, -4), Math.PI / 2);
+      break;
+    }
+    case 'unity': {
+      // stowage bags tied to the walls
+      for (let k = 0; k < 6; k++) add(h, box(0.4, 0.3, 0.5), lit(0xe8e0c8), (r() - 0.5) * 1.4, half - 0.2, (r() - 0.5) * 3, 0, r(), 0);
+      break;
+    }
+    case 'tranq': {
+      // the treadmill on the deck, its harness on bungees; the resistive exercise device beside it
+      add(h, box(0.7, 0.18, 1.7), MATS.dark, 0, -half + 0.12, 2.4);
+      add(h, box(0.55, 0.02, 1.5), lit(0x202020), 0, -half + 0.22, 2.4);
+      for (const s of [-1, 1]) add(h, cyl(0.012, 0.012, 1.1, 4), MATS.rail, s * 0.3, -half + 0.75, 2.4, 0.2 * s, 0, 0);
+      add(h, box(0.06, 1.6, 0.06), MATS.grey, half - 0.3, 0, -3.8);
+      add(h, box(0.06, 1.6, 0.06), MATS.grey, half - 0.9, 0, -3.8);
+      add(h, box(0.7, 0.06, 0.06), MATS.grey, half - 0.6, 0.6, -3.8);
+      I.addSpot('treadmill', W(new THREE.Vector3(0, -0.3, 2.4)), 'Run on the treadmill', 2.2);
+      I.screen('life', h, 0.8, 0.5, new THREE.Vector3(-half + 0.02, 0.25, -1.2 - 2.2), Math.PI / 2);
+      I.addSpot('life', W(new THREE.Vector3(-half + 0.3, 0.25, -3.4)), 'Life support: the air and water', 2.2);
+      break;
+    }
+    case 'destiny': {
+      // the command post: three screens, a keyboard shelf, the comms panel
+      I.screen('status', h, 0.9, 0.6, new THREE.Vector3(-half + 0.02, 0.2, -1.5), Math.PI / 2);
+      I.screen('orbit', h, 0.9, 0.6, new THREE.Vector3(-half + 0.02, 0.2, -0.45), Math.PI / 2);
+      add(h, box(0.3, 0.04, 2.2), MATS.dark, -half + 0.18, -0.25, -1);
+      I.addSpot('status', W(new THREE.Vector3(-half + 0.4, 0.2, -1)), 'The station: where it is, how it is', 2.2);
+      I.screen('comms', h, 0.7, 0.45, new THREE.Vector3(half - 0.02, 0.2, 2), -Math.PI / 2);
+      I.addSpot('comms', W(new THREE.Vector3(half - 0.4, 0.2, 2)), 'Call the ground', 2.2);
+      // the window: the lab's nadir port, its shutter open
+      add(h, new THREE.CircleGeometry(0.25, 20), lit(0x10141c), 0, -half + 0.01, 3, -Math.PI / 2, 0, 0);
+      break;
+    }
+    case 'pmm': {
+      // cargo bags, and the suit rack
+      for (let k = 0; k < 10; k++) add(h, box(0.5, 0.35, 0.45), lit(r() < 0.5 ? 0xece4d0 : 0xd8d0b8), (r() - 0.5) * 1.2, (r() - 0.5) * 1.2, (r() - 0.5) * 3, r(), r(), 0);
+      const suit = new THREE.Group();
+      suit.position.set(half - 0.35, -0.1, 1.2);
+      h.add(suit);
+      add(suit, box(0.5, 0.7, 0.35), MATS.white, 0, 0.1, 0);
+      add(suit, new THREE.SphereGeometry(0.17, 12, 8), lit(0xf0f0f0), 0, 0.62, 0);
+      add(suit, new THREE.SphereGeometry(0.14, 12, 8), lit(0xd8a830, null, { emissive: 0x302000 }), 0.04, 0.62, 0);
+      add(suit, box(0.42, 0.5, 0.2), MATS.white, 0, 0.15, -0.25);
+      I.addSpot('suit', W(new THREE.Vector3(half - 0.5, 0, 1.2)), 'Top up your suit: oxygen, power, coolant', 2.2);
+      break;
+    }
+    case 'lab': {
+      // experiment racks lit up, the glovebox, the plant chamber with lettuce under pink light
+      I.screen('lab', h, 0.8, 0.5, new THREE.Vector3(-half + 0.02, 0.25, -2), Math.PI / 2);
+      I.addSpot('experiment', W(new THREE.Vector3(-half + 0.35, 0.25, -2)), 'Run an experiment', 2.2);
+      add(h, box(0.5, 0.45, 0.8), MATS.glass, half - 0.3, 0, -0.5);
+      for (const z of [-0.7, -0.3]) add(h, new THREE.TorusGeometry(0.08, 0.02, 6, 12), MATS.dark, half - 0.55, 0, z, 0, Math.PI / 2, 0);
+      const veg = new THREE.Group();
+      veg.position.set(half - 0.3, 0, 2.2);
+      h.add(veg);
+      add(veg, box(0.5, 0.6, 0.7), lit(0x808890), 0, 0, 0);
+      add(veg, box(0.42, 0.02, 0.6), MATS.grow, -0.05, 0.27, 0);
+      for (let k = 0; k < 6; k++) add(veg, new THREE.SphereGeometry(0.06 + r() * 0.03, 7, 5), MATS.leaf, -0.18, -0.12 + r() * 0.05, -0.22 + k * 0.09);
+      I.addSpot('veggie', W(new THREE.Vector3(half - 0.45, 0, 2.2)), 'The plant chamber: lettuce, grown in orbit', 2);
+      break;
+    }
+    case 'kibo': {
+      // the robotics workstation: two screens and two hand controllers; the airlock hatch at the far end
+      I.screen('arm', h, 0.8, 0.5, new THREE.Vector3(-half + 0.02, 0.25, -1.5), Math.PI / 2);
+      I.screen('cam', h, 0.8, 0.5, new THREE.Vector3(-half + 0.02, 0.25, -0.6), Math.PI / 2);
+      for (const z of [-1.4, -0.7]) add(h, cyl(0.03, 0.04, 0.18, 6), MATS.dark, -half + 0.25, -0.2, z, 0, 0, Math.PI / 2);
+      I.addSpot('arm', W(new THREE.Vector3(-half + 0.35, 0.2, -1)), 'The robotic arm: watch it work', 2.2);
+      add(h, new THREE.TorusGeometry(0.62, 0.07, 8, 4), MATS.red, 0, 0, len / 2 - 0.05, 0, 0, Math.PI / 4);
+      I.addSpot('eva', W(new THREE.Vector3(0, 0, len / 2 - 0.5)), 'Spacewalk: out through the airlock', 2.2);
+      break;
+    }
+  }
+}
+
+// ---------------------------------------------------------------- the base
+
+/**
+ * A base on the ground, as its outside shows it: the commons dome in the
+ * middle (the command table, the galley, the hydroponics), the lab dome to
+ * the east, quarters and the suit room to the west, the garage south with its
+ * vehicle and big door, and the airlock north. Tunnels join them. The floor
+ * is at y = 0.3; outside, the ground.
+ */
+export const BASE = {
+  domes: [
+    { id: 'commons', name: 'Commons', x: 0, z: 0, r: 8 },
+    { id: 'lab', name: 'Laboratory', x: 17, z: 0, r: 5.5 },
+    { id: 'quarters', name: 'Quarters and suit room', x: -17, z: 0, r: 5.5 },
+  ],
+  tunnels: [
+    { x0: 7.5, x1: 11.8, z0: -1.2, z1: 1.2 },
+    { x0: -11.8, x1: -7.5, z0: -1.2, z1: 1.2 },
+    { x0: -1.2, x1: 1.2, z0: -12.2, z1: -7.5 },
+    { x0: -1.2, x1: 1.2, z0: 7.5, z1: 12.2 },
+  ],
+  garage: { x0: -7, x1: 7, z0: -24, z1: -12 },
+  airlock: { x: 0, z: 14, r: 2.2 },
+  /** the outer door: where you step out, and come back in */
+  door: new THREE.Vector3(0, 0, 16.6),
+  /** the landing pad and the garage's big door */
+  pad: new THREE.Vector3(30, 0, -12),
+  gate: new THREE.Vector3(0, 0, -24.5),
+  floor: 0.3,
+};
+
+/** the base's inside */
+export function baseInterior(name: string, seed: number): Interior {
+  const I = new Interior(name, false);
+  I.floor = BASE.floor;
+  const G = I.group, r = rnd(seed * 31 + 7), F = BASE.floor;
+  const floorTex = panelTexture(seed, '#6a6e74', 'floor');
+  if (floorTex) floorTex.repeat.set(4, 4);
+  const wallTex = panelTexture(seed + 1, '#dcdfe4', 'plate');
+  if (wallTex) wallTex.repeat.set(8, 2);
+  for (const d of BASE.domes) {
+    const g = new THREE.Group();
+    g.position.set(d.x, 0, d.z);
+    G.add(g);
+    add(g, new THREE.CircleGeometry(d.r - 0.15, 40), lit(0xffffff, floorTex), 0, F, 0, -Math.PI / 2, 0, 0);
+    // the dome's inner shell, with a band of real windows cut in it (the outside's windows)
+    g.add(domeShell(d.r - 0.12, wallTex));
+    // a ring of lights round the top
+    add(g, new THREE.TorusGeometry(d.r * 0.45, 0.06, 6, 32), MATS.light, 0, d.r * 0.8, 0, Math.PI / 2, 0, 0);
+    I.lamps.push(new THREE.Vector3(d.x, d.r * 0.75, d.z), new THREE.Vector3(d.x + d.r * 0.5, 2.5, d.z), new THREE.Vector3(d.x - d.r * 0.5, 2.5, d.z));
+    I.discs.push({ x: d.x, z: d.z, r: d.r - 0.4, y0: F, y1: d.r * 0.9 });
+    I.regions.push({ name: d.name, disc: { x: d.x, z: d.z, r: d.r, y0: 0, y1: d.r } });
+    furnishBase(I, g, d.id, d.r, r);
+  }
+  for (const t of BASE.tunnels) {
+    const g = new THREE.Group(), lx = t.x1 - t.x0, lz = t.z1 - t.z0;
+    g.position.set((t.x0 + t.x1) / 2, 0, (t.z0 + t.z1) / 2);
+    G.add(g);
+    corridor(g, Math.max(lx, lz), lx > lz, F, wallTex, floorTex);
+    I.boxes.push(new THREE.Box3(new THREE.Vector3(t.x0 - 0.6, F, t.z0 - 0.6), new THREE.Vector3(t.x1 + 0.6, F + 2.4, t.z1 + 0.6)));
+    I.lamps.push(new THREE.Vector3(g.position.x, 2.3, g.position.z));
+  }
+  garage(I, F, wallTex, floorTex, r);
+  airlock(I, F, wallTex, floorTex);
+  I.spawn = { p: new THREE.Vector3(0, F, 13.2), yaw: 0 };
+  return I;
+}
+
+/** a dome's inner shell: a hemisphere of panels, open where the windows are */
+function domeShell(R: number, tex: THREE.Texture | null) {
+  const seg = 24, rings = 8, pos: number[] = [], uv: number[] = [], idx: number[] = [];
+  for (let j = 0; j <= rings; j++) for (let i = 0; i <= seg; i++) {
+    const th = (j / rings) * Math.PI / 2, ph = (i / seg) * Math.PI * 2;
+    pos.push(Math.cos(ph) * Math.cos(th) * R, Math.sin(th) * R + 0.3, Math.sin(ph) * Math.cos(th) * R);
+    uv.push(i / seg * 4, j / rings);
+  }
+  for (let j = 0; j < rings; j++) for (let i = 0; i < seg; i++) {
+    // the windows: every fourth panel of the second band
+    if (j === 1 && i % 4 === 1) continue;
+    const a = j * (seg + 1) + i, b = a + 1, c = a + seg + 1, d = c + 1;
+    idx.push(a, b, c, b, d, c);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  const m = new THREE.Mesh(g, lit(0xffffff, tex, { side: THREE.DoubleSide }));
+  // the window frames
+  const grp = new THREE.Group();
+  grp.add(m);
+  for (let i = 1; i < seg; i += 4) {
+    const ph = ((i + 0.5) / seg) * Math.PI * 2, th = (1.5 / rings) * Math.PI / 2;
+    const fr = new THREE.Mesh(new THREE.TorusGeometry(R * 0.14, 0.05, 4, 4), MATS.dark);
+    fr.position.set(Math.cos(ph) * Math.cos(th) * (R - 0.05), Math.sin(th) * R + 0.3, Math.sin(ph) * Math.cos(th) * (R - 0.05));
+    fr.lookAt(0, fr.position.y, 0);
+    fr.rotateZ(Math.PI / 4);
+    grp.add(fr);
+  }
+  return grp;
+}
+
+/** a tunnel between modules: a ribbed box, along x or z */
+function corridor(g: THREE.Group, len: number, alongX: boolean, F: number, wall: THREE.Texture | null, floor: THREE.Texture | null) {
+  const w = 2.6, h = 2.5, inner = new THREE.Group();
+  if (alongX) inner.rotation.y = Math.PI / 2;
+  g.add(inner);
+  add(inner, new THREE.PlaneGeometry(w, len + 1.6), lit(0xffffff, floor), 0, F, 0, -Math.PI / 2, 0, 0);
+  for (const s of [-1, 1]) add(inner, new THREE.PlaneGeometry(len + 1.6, h), lit(0xffffff, wall, { side: THREE.DoubleSide }), s * w / 2, F + h / 2, 0, 0, Math.PI / 2, 0);
+  add(inner, new THREE.PlaneGeometry(w, len + 1.6), lit(0xc0c4ca, null, { side: THREE.DoubleSide }), 0, F + h, 0, Math.PI / 2, 0, 0);
+  for (let z = -len / 2; z <= len / 2; z += 1.2) {
+    add(inner, box(w, 0.1, 0.12), MATS.grey, 0, F + h - 0.05, z);
+    for (const s of [-1, 1]) add(inner, box(0.1, h, 0.12), MATS.grey, s * (w / 2 - 0.05), F + h / 2, z);
+  }
+  add(inner, box(0.12, 0.04, len), MATS.light, 0, F + h - 0.08, 0);
+}
+
+/** the garage: a long hall with the base's vehicle in it, a workbench, and the big door out */
+function garage(I: Interior, F: number, wall: THREE.Texture | null, floor: THREE.Texture | null, r: () => number) {
+  const { x0, x1, z0, z1 } = BASE.garage, G = new THREE.Group(), w = x1 - x0, d = z1 - z0, H = 5;
+  G.position.set((x0 + x1) / 2, 0, (z0 + z1) / 2);
+  I.group.add(G);
+  add(G, new THREE.PlaneGeometry(w, d), lit(0xffffff, floor), 0, F, 0, -Math.PI / 2, 0, 0);
+  add(G, new THREE.PlaneGeometry(w, d), lit(0xb0b4ba, null, { side: THREE.DoubleSide }), 0, F + H, 0, Math.PI / 2, 0, 0);
+  for (const s of [-1, 1]) add(G, new THREE.PlaneGeometry(d, H), lit(0xffffff, wall, { side: THREE.DoubleSide }), s * w / 2, F + H / 2, 0, 0, Math.PI / 2, 0);
+  // the back wall with the tunnel's door, and the big door at the far end, striped
+  add(G, bulkhead(w, H, 2.4), lit(0xd0d4da, wall, { side: THREE.DoubleSide }), 0, F + H / 2, d / 2);
+  const door = add(G, new THREE.PlaneGeometry(w - 1, H - 0.6), lit(0x8a8e94, null, { side: THREE.DoubleSide }), 0, F + (H - 0.6) / 2, -d / 2);
+  for (let k = 0; k < 6; k++) add(door, box(w - 1, 0.18, 0.05), k % 2 ? MATS.dark : lit(0xe0b020), 0, -H / 2 + 0.5 + k * 0.7, 0.03);
+  for (let k = -1; k <= 1; k++) add(G, box(0.15, 0.06, d * 0.8), MATS.light, k * 3.5, F + H - 0.05, 0);
+  // the workbench and the tool wall
+  add(G, box(0.8, 0.9, 3), MATS.grey, -w / 2 + 0.5, F + 0.45, 2);
+  for (let k = 0; k < 8; k++) add(G, box(0.05, 0.3 + r() * 0.3, 0.06), MATS.dark, -w / 2 + 0.05, F + 1.6 + r() * 0.6, 0.8 + k * 0.35);
+  I.boxes.push(new THREE.Box3(new THREE.Vector3(x0 + 0.2, F, z0 + 0.4), new THREE.Vector3(x1 - 0.2, F + H, z1 + 0.6)));
+  I.regions.push({ name: 'Garage', box: new THREE.Box3(new THREE.Vector3(x0, 0, z0), new THREE.Vector3(x1, H, z1)) });
+  for (let z = z0 + 2; z < z1; z += 4) I.lamps.push(new THREE.Vector3(G.position.x, F + H - 0.4, z));
+  I.addSpot('vehicle', new THREE.Vector3(2, F + 1, -18), 'Take the rover out', 3.5);
+  I.addSpot('gate', new THREE.Vector3(0, F + 1.5, z0 + 0.6), 'Open the big door and walk out', 3);
+}
+
+/** the airlock: a small round room with the suit benches and the outer door */
+function airlock(I: Interior, F: number, wall: THREE.Texture | null, floor: THREE.Texture | null) {
+  const { x, z, r } = BASE.airlock, g = new THREE.Group();
+  g.position.set(x, 0, z);
+  I.group.add(g);
+  add(g, new THREE.CircleGeometry(r, 24), lit(0xffffff, floor), 0, F, 0, -Math.PI / 2, 0, 0);
+  add(g, cyl(r, r, 2.6, 24), lit(0xffffff, wall, { side: THREE.BackSide }), 0, F + 1.3, 0);
+  add(g, new THREE.CircleGeometry(r, 24), lit(0xb0b4ba), 0, F + 2.6, 0, Math.PI / 2, 0, 0);
+  add(g, box(1.4, 2.1, 0.12), lit(0x8a8e94), 0, F + 1.05, r - 0.05);
+  add(g, new THREE.TorusGeometry(0.3, 0.05, 6, 16), MATS.red, 0, F + 1.2, r - 0.12);
+  add(g, box(1.2, 0.08, 0.06), MATS.light, 0, F + 2.5, 0);
+  for (const s of [-1, 1]) add(g, box(0.5, 0.45, 1.4), MATS.grey, s * (r - 0.35), F + 0.22, 0);
+  I.discs.push({ x, z, r: r - 0.3, y0: F, y1: F + 2.6 });
+  I.regions.push({ name: 'Airlock', disc: { x, z, r, y0: 0, y1: 3 } });
+  I.lamps.push(new THREE.Vector3(x, F + 2.3, z));
+  I.addSpot('out', new THREE.Vector3(x, F + 1.2, z + r - 0.3), 'Step outside', 2.4);
+}
+
+/** what each dome holds */
+function furnishBase(I: Interior, g: THREE.Group, id: string, R: number, r: () => number) {
+  const F = BASE.floor, P = (x: number, y: number, z: number) => new THREE.Vector3(g.position.x + x, y, g.position.z + z);
+  if (id === 'commons') {
+    // the command table: a round table with the world turning over it as a hologram
+    add(g, cyl(1.5, 1.6, 0.9, 32), MATS.dark, 0, F + 0.45, 0);
+    add(g, cyl(1.45, 1.45, 0.04, 32), lit(0x0a2030, null, { emissive: 0x0a3a50 }), 0, F + 0.92, 0);
+    const holo = add(g, new THREE.IcosahedronGeometry(0.8, 2), MATS.holo, 0, F + 2, 0);
+    I.animate(t => { holo.rotation.y = t * 0.3; });
+    I.addSpot('holo', P(0, F + 1.4, 0), 'The world below: the map', 3);
+    // the command console at the north wall: screens, and the ship
+    const con = new THREE.Group();
+    con.position.set(0, 0, R - 1.6);
+    g.add(con);
+    add(con, box(3.4, 0.9, 0.7), MATS.grey, 0, F + 0.45, 0);
+    I.screen('base', con, 1.2, 0.7, new THREE.Vector3(-1.1, F + 1.6, 0.2), Math.PI);
+    I.screen('ship', con, 1.2, 0.7, new THREE.Vector3(0.2, F + 1.6, 0.2), Math.PI);
+    I.screen('weather', con, 1, 0.6, new THREE.Vector3(1.45, F + 1.55, 0.1), Math.PI - 0.3);
+    I.addSpot('command', P(-0.9, F + 1.3, R - 1.6), 'Base status', 2.6);
+    I.addSpot('callship', P(0.4, F + 1.3, R - 1.6), 'Call the ship to the pad', 2.6);
+    I.addSpot('weather', P(1.6, F + 1.3, R - 1.8), 'Outside: the air and the weather', 2.6);
+    // the galley and the dining table to the east
+    add(g, box(0.7, 0.95, 3), MATS.white, R - 1.4, F + 0.47, -1);
+    add(g, box(0.72, 0.05, 3), MATS.dark, R - 1.4, F + 0.97, -1);
+    add(g, box(0.8, 1.9, 0.8), MATS.grey, R - 1.6, F + 0.95, 1.4);
+    add(g, cyl(0.9, 0.9, 0.06, 20), MATS.wood, 4, F + 0.75, -3.6);
+    add(g, cyl(0.08, 0.1, 0.72, 6), MATS.dark, 4, F + 0.38, -3.6);
+    for (let k = 0; k < 4; k++) { const a = k * Math.PI / 2 + 0.4; add(g, box(0.45, 0.45, 0.45), MATS.blue, 4 + Math.cos(a) * 1.25, F + 0.22, -3.6 + Math.sin(a) * 1.25); }
+    I.addSpot('galley', P(R - 1.6, F + 1.1, -1), 'The galley: something hot', 2.4);
+    // the hydroponics: planters round the west and south walls, under pink grow lights
+    for (let k = 0; k < 7; k++) {
+      const a = Math.PI * 0.62 + k * 0.22, x = Math.cos(a) * (R - 1.3), z = Math.sin(a) * (R - 1.3);
+      const pl = new THREE.Group();
+      pl.position.set(x, F, z);
+      pl.rotation.y = -a;
+      g.add(pl);
+      add(pl, box(0.7, 0.6, 1.4), MATS.grey, 0, 0.3, 0);
+      add(pl, box(0.6, 0.05, 1.3), lit(0x3a2a1a), 0, 0.6, 0);
+      for (let q = 0; q < 6; q++) add(pl, new THREE.SphereGeometry(0.1 + r() * 0.08, 7, 5), MATS.leaf, (r() - 0.5) * 0.4, 0.72 + r() * 0.1, -0.55 + q * 0.22);
+      for (let q = 0; q < 3; q++) add(pl, new THREE.SphereGeometry(0.04, 6, 4), q % 2 ? MATS.red : MATS.orange, (r() - 0.5) * 0.4, 0.82, (r() - 0.5));
+      add(pl, box(0.6, 0.03, 1.3), MATS.grow, 0, 1.6, 0);
+    }
+    I.addSpot('greens', P(-R + 1.7, F + 0.9, -1.5), 'Hydroponics: food and air', 2.4);
+    // a couch at a window
+    add(g, box(2.2, 0.45, 0.8), MATS.orange, -2.5, F + 0.22, -R + 2);
+    add(g, box(2.2, 0.5, 0.2), MATS.orange, -2.5, F + 0.65, -R + 1.65);
+  } else if (id === 'lab') {
+    // benches, the microscope, the sample shelves of coloured rock, the spectrometer
+    add(g, box(3.5, 0.9, 0.8), MATS.white, 0, F + 0.45, R - 1.3);
+    add(g, cyl(0.12, 0.16, 0.5, 8), MATS.dark, -0.8, F + 1.15, R - 1.3);
+    add(g, cyl(0.04, 0.04, 0.3, 6), MATS.dark, -0.8, F + 1.5, R - 1.35, 0.5, 0, 0);
+    I.screen('spec', g, 0.9, 0.55, new THREE.Vector3(0.9, F + 1.5, R - 1.65), Math.PI);
+    I.addSpot('analyse', g.position.clone().add(new THREE.Vector3(0.4, F + 1.1, R - 1.3)), 'Analyse your samples', 2.4);
+    for (let k = 0; k < 3; k++) {
+      add(g, box(0.4, 0.05, 2.4), MATS.grey, -R + 1, F + 0.6 + k * 0.5, 0);
+      for (let q = 0; q < 6; q++) add(g, new THREE.DodecahedronGeometry(0.08 + r() * 0.05, 0), lit(new THREE.Color().setHSL(r() * 0.12, 0.3 + r() * 0.3, 0.3 + r() * 0.3).getHex()), -R + 1, F + 0.7 + k * 0.5, -1 + q * 0.4);
+    }
+    I.addSpot('rocks', g.position.clone().add(new THREE.Vector3(-R + 1.3, F + 1, 0)), 'The sample collection', 2.4);
+    add(g, box(0.9, 1.8, 0.9), lit(0x9aa0a8), 2.5, F + 0.9, -R + 1.8);
+    add(g, box(0.5, 0.3, 0.05), MATS.glass, 2.5, F + 1.2, -R + 2.26);
+  } else if (id === 'quarters') {
+    // bunks, lockers, the medical bay, and the suit room
+    for (let k = 0; k < 2; k++) for (let lvl = 0; lvl < 2; lvl++) {
+      add(g, box(2, 0.25, 0.9), MATS.grey, -1.8 + k * 3.6, F + 0.4 + lvl * 1.1, -R + 1.4);
+      add(g, box(1.9, 0.12, 0.8), lit(0x4a6aa0), -1.8 + k * 3.6, F + 0.58 + lvl * 1.1, -R + 1.4);
+    }
+    I.addSpot('sleep', g.position.clone().add(new THREE.Vector3(-1.8, F + 0.9, -R + 1.6)), 'Sleep', 2.4);
+    for (let k = 0; k < 4; k++) add(g, box(0.6, 1.9, 0.5), MATS.blue, -1.5 + k * 0.7, F + 0.95, R - 0.9);
+    // the suit room: three suits on their racks
+    for (let k = 0; k < 3; k++) {
+      const s = new THREE.Group();
+      s.position.set(R - 1.3, F, -1.4 + k * 1.4);
+      s.rotation.y = -Math.PI / 2;
+      g.add(s);
+      add(s, box(0.55, 0.75, 0.38), MATS.white, 0, 1.25, 0);
+      add(s, new THREE.SphereGeometry(0.19, 12, 8), MATS.white, 0, 1.85, 0);
+      add(s, new THREE.SphereGeometry(0.155, 12, 8), lit(0xd8a830, null, { emissive: 0x302000 }), 0, 1.85, 0.05);
+      for (const sx of [-1, 1]) { add(s, cyl(0.09, 0.09, 0.8, 8), MATS.white, sx * 0.14, 0.45, 0); add(s, cyl(0.07, 0.08, 0.7, 8), MATS.white, sx * 0.36, 1.2, 0); }
+      add(s, box(0.45, 0.6, 0.22), lit(0xc8ccd2), 0, 1.3, -0.3);
+    }
+    I.addSpot('suit', g.position.clone().add(new THREE.Vector3(R - 1.6, F + 1.3, 0)), 'The suit room: refill and upgrade your suit', 2.6);
+    add(g, box(0.8, 0.7, 2), MATS.white, -R + 1.4, F + 0.35, 0.5);
+    I.addSpot('med', g.position.clone().add(new THREE.Vector3(-R + 1.6, F + 0.8, 0.5)), 'Medical bay: a check-up', 2.4);
+  }
+}

@@ -186,6 +186,8 @@ export class Ground {
   lifeInfo: Life | null = null;
   /** how bright the day is where you are (0 night – 1 day), and the sky's colour */
   daylight = 0;
+  /** how much the daylit sky drowns out faint things in it (0 at night or with no air, near 1 under a bright blue sky) */
+  glare = 0;
   /** the light on the ground: colour of the sun through the air, and the ambient from the sky */
   readonly sunCol = new THREE.Color(1, 1, 1);
   readonly skyCol = new THREE.Color(0, 0, 0);
@@ -405,6 +407,7 @@ export class Ground {
       this.skyCol.setRGB(0, 0, 0);
       su.thick.value = 0;
       this.sky.visible = !!giant && giant.inside > 0;
+      this.glare = 0;
       return;
     }
     const alt = rel.length() - b.r * AU_M;
@@ -420,6 +423,7 @@ export class Ground {
     su.thick.value = thick;
     su.haze.value = a.haze;
     this.sky.visible = thick > 0.01 || !!giant;
+    this.glare = this.daylight * thick;
     this.skyCol.copy(sky).multiplyScalar(this.daylight * thick);
     // the sky's colour at the horizon, as its shader draws it over the dark
     const dayS = smooth(-0.2, 0.1, s), low = 1 - smooth(0, 0.35, Math.abs(s + 0.05));
@@ -447,7 +451,7 @@ export class Ground {
       wantKeys.add(s.name);
       if (!this.placed.has(s.name)) {
         const obj = siteModel(s);
-        this.stand(obj, sn);
+        this.stand(obj, sn, 0, 3);
         this.root.add(obj);
         this.placed.set(s.name, { obj, key: s.name });
       }
@@ -473,10 +477,25 @@ export class Ground {
     for (const p of this.placed.values()) p.obj.traverse(o => { const m = (o as THREE.Mesh).material as THREE.MeshLambertMaterial | undefined; if (m && (m as { userData?: { glow?: boolean } }).userData?.glow) m.emissive.setRGB(0.9 * night, 0.7 * night, 0.35 * night); });
   }
 
-  /** put an object on the ground in a direction, standing up */
-  stand(obj: THREE.Object3D, n: V3, lift = 0) {
-    const h = this.heightAt(n, 0.5);
-    const R = this.spec!.R + Math.max(h, this.sample.sea ? 0 : h) + lift;
+  /**
+   * put an object on the ground in a direction, standing up; with `foot` (m)
+   * it settles to the lowest ground under its footprint, so on a slope its
+   * downhill side touches rather than hangs in the air (its uphill side goes in
+   * a little, as a heavy thing does)
+   */
+  stand(obj: THREE.Object3D, n: V3, lift = 0, foot = 0) {
+    let h = this.heightAt(n, 0.5);
+    if (this.sample.sea) h = 0;
+    if (foot > 0) {
+      const [e, nn] = tangent(n), k = foot / this.spec!.R;
+      for (let a = 0; a < 6; a++) {
+        const c = Math.cos(a * 1.047) * k, d = Math.sin(a * 1.047) * k;
+        const m: V3 = [n[0] + e[0] * c + nn[0] * d, n[1] + e[1] * c + nn[1] * d, n[2] + e[2] * c + nn[2] * d], l = Math.hypot(...m);
+        const hh = this.heightAt([m[0] / l, m[1] / l, m[2] / l], 0.5);
+        if (!this.sample.sea) h = Math.min(h, hh + (h - hh) * 0.35);
+      }
+    }
+    const R = this.spec!.R + h + lift;
     obj.position.set(n[0] * R, n[1] * R, n[2] * R);
     obj.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(n[0], n[1], n[2]));
   }
@@ -501,10 +520,16 @@ export class Ground {
       const th = Math.hypot(gx, gy) / R;
       const dx = Math.hypot(gx, gy) > 0 ? gx / Math.hypot(gx, gy) : 0, dy = Math.hypot(gx, gy) > 0 ? gy / Math.hypot(gx, gy) : 0;
       const dir: V3 = [Math.cos(th) * c[0] + Math.sin(th) * (dx * e[0] + dy * nn[0]), Math.cos(th) * c[1] + Math.sin(th) * (dx * e[1] + dy * nn[1]), Math.cos(th) * c[2] + Math.sin(th) * (dx * e[2] + dy * nn[2])];
-      const h = this.heightAt(dir, 5);
+      let h = this.heightAt(dir, 2);
       if (this.sample.sea) continue;
+      // standing on the lowest corner of its block, its footing carried down into the ground
+      for (const [ox, oy] of [[20, 20], [-20, 20], [20, -20], [-20, -20]]) {
+        const m2: V3 = [dir[0] + (e[0] * ox + nn[0] * oy) / R, dir[1] + (e[1] * ox + nn[1] * oy) / R, dir[2] + (e[2] * ox + nn[2] * oy) / R], l2 = Math.hypot(...m2);
+        h = Math.min(h, this.heightAt([m2[0] / l2, m2[1] / l2, m2[2] / l2], 2));
+      }
+      h -= 3;
       const core = Math.exp(-Math.hypot(gx, gy) / (radius * 0.25));
-      const tall = 8 + (core * 220 + 20) * Math.pow(r(), 2.5);
+      const tall = 11 + (core * 220 + 20) * Math.pow(r(), 2.5);
       up.set(dir[0], dir[1], dir[2]);
       q.setFromUnitVectors(new THREE.Vector3(0, 1, 0), up);
       p.set(dir[0] * (R + h) - base.x, dir[1] * (R + h) - base.y, dir[2] * (R + h) - base.z);
@@ -535,7 +560,7 @@ export class Ground {
       const rad = 60 + 900 * Math.sqrt(pop) * Math.pow(r(), 0.8), ang = r() * Math.PI * 2;
       const th = rad / R;
       const dir: V3 = [Math.cos(th) * c[0] + Math.sin(th) * (Math.cos(ang) * e[0] + Math.sin(ang) * nn[0]), Math.cos(th) * c[1] + Math.sin(th) * (Math.cos(ang) * e[1] + Math.sin(ang) * nn[1]), Math.cos(th) * c[2] + Math.sin(th) * (Math.cos(ang) * e[2] + Math.sin(ang) * nn[2])];
-      const h = this.heightAt(dir, 5);
+      const h = this.heightAt(dir, 0.5) - 0.6;
       if (this.sample.sea) continue;
       const b = alienMesh(seed + k, hue);
       b.position.set(dir[0] * (R + h) - base.x, dir[1] * (R + h) - base.y, dir[2] * (R + h) - base.z);
@@ -620,16 +645,17 @@ export class Ground {
         if (r() > density) continue;
         const th = rad / R;
         const dir: V3 = [Math.cos(th) * n[0] + Math.sin(th) * (Math.cos(ang) * e[0] + Math.sin(ang) * nn[0]), Math.cos(th) * n[1] + Math.sin(th) * (Math.cos(ang) * e[1] + Math.sin(ang) * nn[1]), Math.cos(th) * n[2] + Math.sin(th) * (Math.cos(ang) * e[2] + Math.sin(ang) * nn[2])];
-        const h = this.heightAt(dir, 2);
+        // (as fine as the ground is drawn near you, and the trunk set a little into it so it never stands on air)
+        const h = this.heightAt(dir, 0.5) - 0.4;
         if (this.sample.sea) continue;
         const kind = kinds[Math.floor(r() * kinds.length)];
         const sz = kind.size * (0.5 + 0.7 * r());
         q.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(...dir));
         p.set(dir[0] * (R + h) - base.x, dir[1] * (R + h) - base.y, dir[2] * (R + h) - base.z);
-        s.set(Math.max(0.6, sz * 0.12), sz * 0.6, Math.max(0.6, sz * 0.12));
+        s.set(Math.max(0.6, sz * 0.12), sz * 0.6 + 0.4, Math.max(0.6, sz * 0.12));
         m.compose(p, q, s);
         trunk.setMatrixAt(a++, m);
-        const top = p.clone().add(new THREE.Vector3(...dir).multiplyScalar(sz * (kind.cone ? 0.25 : 0.45)));
+        const top = p.clone().add(new THREE.Vector3(...dir).multiplyScalar(sz * (kind.cone ? 0.25 : 0.45) + 0.4));
         col.setHex(kind.col).offsetHSL(0, 0, (r() - 0.5) * 0.12);
         if (kind.cone) { s.set(sz * 0.45, sz * 0.8, sz * 0.45); m.compose(top, q, s); cone.setMatrixAt(cN, m); cone.setColorAt(cN++, col); }
         else { s.set(sz * 0.6, sz * 0.55, sz * 0.6); m.compose(top, q, s); crown.setMatrixAt(bN, m); crown.setColorAt(bN++, col); }

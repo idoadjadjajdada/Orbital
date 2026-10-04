@@ -352,11 +352,12 @@ const PART_FRAG = /* glsl */ `
 #include <common>
 #include <logdepthbuf_pars_fragment>
 varying vec3 vC;
+uniform float dim;
 void main() {
   #include <logdepthbuf_fragment>
   vec2 q = gl_PointCoord * 2.0 - 1.0;
   float a = exp(-dot(q, q) * 3.0);
-  gl_FragColor = vec4(vC * a * 0.4, 1.0);
+  gl_FragColor = vec4(vC * a * 0.4 * dim, 1.0);
 }`;
 
 export type Mode = 'pilot' | 'walk' | 'eva' | 'scope' | 'surface' | 'craft' | 'shuttle';
@@ -485,7 +486,7 @@ export class View3D {
     // gas and debris: soft glowing motes rather than hard dots, so many together read as a cloud
     this.parts = new THREE.Points(new THREE.BufferGeometry(), new THREE.ShaderMaterial({
       vertexShader: PART_VERT, fragmentShader: PART_FRAG, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, vertexColors: true,
-      uniforms: { px: { value: Math.min(2, window.devicePixelRatio || 1) } },
+      uniforms: { px: { value: Math.min(2, window.devicePixelRatio || 1) }, dim: { value: 1 } },
     }));
     this.parts.frustumCulled = false;
     this.scene.add(this.parts);
@@ -1303,6 +1304,9 @@ export class View3D {
     if (this.mode === 'eva') this.spacewalk(dtReal);
     if (this.mode === 'surface') this.surfaceStep(dtReal);
     this.shuttle.step(dtReal, this.mode === 'shuttle');
+    // the craft move on before the viewer is placed: inside one, you go where it goes
+    this.fleet.step(dtReal);
+    if (this.frameNo % 60 === 1) this.fleet.fixtures(app.world.sources);
     this.place();
     const P = this.where();
     const cam = this.camera;
@@ -1330,6 +1334,8 @@ export class View3D {
     const seen = new Set<Body>();
     const tanPx = Math.tan((cam.fov * Math.PI) / 360) / (window.innerHeight / 4);
     const mk: number[] = [], mc: number[] = [];
+    // under a daylit sky only what is bright enough shows: the Sun, the Moon's disc; not the faint dots, nor dust and rubble
+    const glare = this.ground.body ? this.ground.glare : 0, faint = Math.max(0, 1 - glare * 4);
     // deep in a giant's clouds nothing outside can be seen
     const blind = tunnel || this.giant.inside > 0.97;
     if (!blind) for (const b of app.visual) {
@@ -1338,10 +1344,10 @@ export class View3D {
       const R = this.visR(b) * AU_M;
       const angPx = R / Math.max(dist, 1) / tanPx;
       // a marker for everything too small to see as a disc
-      if (angPx < 2.5) {
-        const t = tintOf(b);
+      if (angPx < 2.5 && (faint > 0 || b.cls === 'star')) {
+        const t = tintOf(b), k = b.cls === 'star' ? 1 : faint;
         mk.push(rel[0], rel[1], rel[2]);
-        mc.push(t[0], t[1], t[2]);
+        mc.push(t[0] * k, t[1] * k, t[2] * k);
       }
       const glowy = b.cls === 'star' || b.cls === 'wd' || b.cls === 'ns' || b.look.white || b.look.wormhole || (b.cls === 'bh' && this.app.feeding.level(b) > 0.02);
       if (angPx < 0.6 && !glowy && !b.feed) continue;
@@ -1385,6 +1391,8 @@ export class View3D {
       pc.push(Math.min(1, r + h), Math.min(1, g + h * 0.5), Math.min(1, bl + h * 0.2));
     }
     setPoints(this.parts, pp, pc);
+    (this.parts.material as THREE.ShaderMaterial).uniforms.dim.value = faint;
+    this.parts.visible = faint > 0;
 
     // the light on the hull: the star that shines brightest here
     let sun: THREE.Vector3 | null = null, best = 0;
@@ -2236,9 +2244,12 @@ export class View3D {
       up.normalize();
       dip = -Math.sqrt(Math.max(0, 1 - (gb.r / r) ** 2)) - 0.01;
     }
+    // a bright sky hides the names of what it hides: only what shows as a disc (or the selection) keeps its label
+    const glare = gb ? this.ground.glare : 0, tanPx = Math.tan((cam.fov * Math.PI) / 360) / (H / 2);
     for (const { b } of cands) {
       v.set((b.x - P[0]) * AU_M, (b.y - P[1]) * AU_M, (b.z - P[2]) * AU_M);
       if (gb && b !== gb && dir.copy(v).normalize().dot(up) < dip) continue;
+      if (glare > 0.25 && b !== this.app.selected && b.cls !== 'star' && this.visR(b) * AU_M / Math.max(1, v.length()) / tanPx < 2.5) continue;
       // inside, only what can be seen through a window
       if (eye && !hull.seesOut(eye, dir.copy(v).normalize().applyQuaternion(inv))) continue;
       v.project(cam);

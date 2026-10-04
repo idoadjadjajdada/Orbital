@@ -172,12 +172,12 @@ export class TileSet {
     const mesh = new THREE.Mesh(g, this.mat);
     mesh.position.set(t.c[0] * R, t.c[1] * R, t.c[2] * R);
     mesh.visible = false;
-    const n = t.rocks.length / 7;
+    const n = t.rocks.length / 8;
     if (n) {
       const rk = new THREE.InstancedMesh(this.rockGeo, this.rockMat, n);
       const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), sc = new THREE.Vector3(), at = new THREE.Vector3(), c = new THREE.Color();
       for (let k = 0; k < n; k++) {
-        const o = k * 7, sz = t.rocks[o + 3], hk = Math.floor(t.rocks[o] * 13 + t.rocks[o + 1] * 7);
+        const o = k * 8, sz = t.rocks[o + 3], hk = t.rocks[o + 7];
         e.set(hsh(hk, 1) * 6, hsh(hk, 2) * 6, hsh(hk, 3) * 6);
         q.setFromEuler(e);
         sc.set(sz * (0.8 + 0.6 * hsh(hk, 4)), sz * (0.5 + 0.4 * hsh(hk, 5)), sz * (0.8 + 0.6 * hsh(hk, 6)));
