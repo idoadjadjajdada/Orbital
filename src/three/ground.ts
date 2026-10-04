@@ -46,6 +46,7 @@ const GROUND_VERT = /* glsl */ `
 #include <common>
 #include <logdepthbuf_pars_vertex>
 attribute float sea;
+attribute float rock;
 attribute vec3 grain;
 #ifdef CAVE
 attribute float sky;
@@ -56,6 +57,12 @@ varying vec3 vP;
 varying vec3 vCol;
 varying float vSea;
 varying vec3 vLocal;
+varying float vRock;
+// the ground's tangent directions: in its own frame (where the texture lies) and in the view's (where the light falls)
+varying vec3 vT1;
+varying vec3 vT2;
+varying vec3 vW1;
+varying vec3 vW2;
 void main() {
   vN = normalize(mat3(modelMatrix) * normal);
   vec4 wp = modelMatrix * vec4(position, 1.0);
@@ -63,6 +70,11 @@ void main() {
   vCol = color;
   vSea = sea;
   vLocal = position + grain;
+  vRock = rock;
+  vT1 = normalize(cross(normal, abs(normal.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));
+  vT2 = cross(normal, vT1);
+  vW1 = normalize(mat3(modelMatrix) * vT1);
+  vW2 = normalize(mat3(modelMatrix) * vT2);
   #ifdef CAVE
   vSky = sky;
   #endif
@@ -83,12 +95,18 @@ uniform vec3 seaUp;
 uniform float lush;
 uniform vec3 leaf;
 uniform float alien;
+uniform float kind;
 ${LIGHT_GLSL}
 varying vec3 vN;
 varying vec3 vP;
 varying vec3 vCol;
 varying float vSea;
 varying vec3 vLocal;
+varying float vRock;
+varying vec3 vT1;
+varying vec3 vT2;
+varying vec3 vW1;
+varying vec3 vW2;
 #ifdef CAVE
 varying float vSky;
 #endif
@@ -131,6 +149,65 @@ void main() {
     }
   }
   #endif
+  // ---- the ground close up: what it is made of, in relief, lit pixel by pixel
+  vec3 Nd = N;
+  float glint = 0.0;
+  float closeK = 1.0 - smoothstep(60.0, 260.0, d);
+  if (closeK > 0.0 && vSea < 0.5) {
+    // bare rock where it is steep or rough; else the world's own ground: regolith, sand, ice, soil or lava rock
+    float steep = 1.0 - smoothstep(0.62, 0.86, dot(N, seaUp));
+    float rk = clamp(max(steep, smoothstep(0.45, 0.85, vRock) * 0.8), 0.0, 1.0);
+    vec3 up = normalize(cross(vT1, vT2));
+    // the relief: a height field (m) from grit to stones, its slope tilting the light
+    float e = 0.05;
+    float stones = smoothstep(0.7, 0.76, n3(vLocal * 2.3 + 11.0));
+    float pebbles = smoothstep(0.66, 0.7, n3(vLocal * 7.1 + 5.0));
+    #define RELIEF(p) (n3((p) * 1.7) * 0.5 + n3((p) * 4.3) * 0.25 + n3((p) * 11.0) * 0.12)
+    float h0 = RELIEF(vLocal), h1 = RELIEF(vLocal + vT1 * e), h2 = RELIEF(vLocal + vT2 * e);
+    float amp = kind == 2.0 ? 0.05 : kind == 1.0 ? 0.06 : 0.11;
+    vec2 g = vec2(h1 - h0, h2 - h0) / e * amp;
+    if (kind == 1.0) {
+      // sand: ripples across the wind, a few centimetres high, wandering
+      vec3 wind = normalize(vec3(0.8, 0.35, 0.49));
+      float w1 = dot(vLocal, wind) * 2.4 + n3(vLocal * 0.35) * 5.0;
+      g += vec2(dot(vT1, wind), dot(vT2, wind)) * cos(w1) * 0.32 * (1.0 - rk);
+      col *= 1.0 + 0.06 * sin(w1) * (1.0 - rk);
+    }
+    if (kind == 2.0) {
+      // ice: smooth, cracked in long lines, glittering where the sun catches a facet
+      float cr = 1.0 - smoothstep(0.0, 0.025, abs(n3(vLocal * vec3(0.45, 0.5, 0.4)) - 0.5));
+      col *= 1.0 - 0.28 * cr * (1.0 - smoothstep(20.0, 120.0, d));
+      glint = step(0.985, h3(floor(vLocal * 9.0))) * (1.0 - smoothstep(5.0, 40.0, d));
+    }
+    if (kind == 4.0) {
+      // lava rock: dark, pitted with gas bubbles
+      float pits = smoothstep(0.74, 0.8, n3(vLocal * 9.0 + 3.0));
+      col *= 0.92 - 0.3 * pits;
+      g -= vec2(n3(vLocal * 9.0 + 3.0 + vT1 * e) - n3(vLocal * 9.0 + 3.0), n3(vLocal * 9.0 + 3.0 + vT2 * e) - n3(vLocal * 9.0 + 3.0)) / e * 0.04 * pits;
+    }
+    // stones and pebbles strewn on loose ground: a little darker or paler than it, standing up out of it
+    if (kind != 2.0) {
+      float loose = 1.0 - rk;
+      float tone = n3(vLocal * 2.3 + 40.0);
+      col = mix(col, col * mix(0.62, 1.22, tone), stones * 0.75 * loose);
+      col = mix(col, col * mix(0.7, 1.15, h3(floor(vLocal * 7.1))), pebbles * 0.5 * loose * (1.0 - smoothstep(10.0, 60.0, d)));
+      vec2 sg = vec2(n3((vLocal + vT1 * e) * 2.3 + 11.0) - n3(vLocal * 2.3 + 11.0), n3((vLocal + vT2 * e) * 2.3 + 11.0) - n3(vLocal * 2.3 + 11.0)) / e;
+      g += sg * 0.18 * smoothstep(0.66, 0.74, n3(vLocal * 2.3 + 11.0)) * loose;
+    }
+    // rock: in layers, the strata of its laying-down, and cracked
+    if (rk > 0.0) {
+      float lay = dot(vLocal, up) * 1.1 + n3(vLocal * 0.12) * 7.0;
+      float strata = sin(lay) * 0.5 + 0.5, fine = sin(lay * 4.7 + n3(vLocal * 0.9) * 3.0);
+      float crack = 1.0 - smoothstep(0.0, 0.03, abs(n3(vLocal * vec3(0.7, 0.35, 0.7)) - 0.5));
+      vec3 rcol = col * (0.84 + 0.22 * strata + 0.05 * fine) * (1.0 - 0.4 * crack);
+      col = mix(col, rcol, rk);
+      g += vec2(dot(vT1, up), dot(vT2, up)) * cos(lay) * 0.25 * rk;
+      g *= 1.0 + rk * 0.8;
+    }
+    // (the relief fades with distance, before it can shimmer)
+    g *= closeK;
+    Nd = normalize(N - vW1 * g.x - vW2 * g.y);
+  }
   vec3 c;
   if (vSea > 0.5) {
     // the sea: small waves, the sky reflected at a glancing angle, a glint of the sun
@@ -144,10 +221,12 @@ void main() {
     c = mix(c, fogCol, fres * 0.7);
     c += sunCol * pow(max(dot(reflect(-sunDir, Ns), V), 0.0), 220.0) * 2.0;
   } else {
-    float dl = max(dot(N, sunDir), 0.0);
+    float dl = max(dot(Nd, sunDir), 0.0);
     // and the sunlit ground round about lights what faces away from the sky: walls, overhangs, the shady side of a rock
     vec3 bounce = sunCol * 0.2 * max(dot(sunDir, seaUp), 0.0) * (0.5 - 0.5 * dot(N, seaUp));
-    c = col * ((ambient + dl * sunCol + bounce) * sky + ambientX * (0.3 + 0.7 * sky) + lampLight(vP, N));
+    c = col * ((ambient + dl * sunCol + bounce) * sky + ambientX * (0.3 + 0.7 * sky) + lampLight(vP, Nd));
+    // a glint off ice, where a facet turns the sun to you
+    if (glint > 0.0) c += sunCol * glint * pow(max(dot(reflect(-sunDir, Nd), V), 0.0), 8.0) * 1.5 * dl;
   }
   // the air between: haze toward the sky's colour
   float f = 1.0 - exp(-d * fogK);
@@ -265,6 +344,8 @@ export class Ground {
         sunDir: { value: new THREE.Vector3(0, 0, 1) }, sunCol: { value: new THREE.Vector3(1, 1, 1) }, ambient: { value: new THREE.Vector3(0.03, 0.03, 0.03) },
         fogCol: { value: new THREE.Vector3() }, fogK: { value: 0 }, time: { value: 0 }, seaUp: { value: new THREE.Vector3() },
         lush: { value: 0 }, leaf: { value: new THREE.Vector3(0.3, 0.45, 0.15) }, alien: { value: 0 },
+        // what the ground is made of, close up: 0 regolith, 1 sand, 2 ice, 3 soil, 4 lava rock
+        kind: { value: 0 },
         ...lightUniforms,
       },
     });
@@ -359,6 +440,8 @@ export class Ground {
     if (!b) { this.tiles.reset(null); return; }
     this.atmo = atmosphere(b, stars);
     this.lifeInfo = life(b, stars);
+    const st = b.look.style;
+    this.mat.uniforms.kind.value = b.look.real === 'Venus' || st === 'lava' ? 4 : st === 'ice' ? 2 : st === 'desert' ? 1 : st === 'terran' || st === 'ocean' ? 3 : 0;
     this.spec = groundSpec(b.look, b.r * AU_M, gravity(b), this.atmo.bar);
     this.tiles.reset(this.spec);
     this.sites = sitesOn(b.look.real);

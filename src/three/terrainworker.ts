@@ -8,5 +8,5 @@ self.onmessage = async (e: MessageEvent<TileJob>) => {
   if (e.data.spec.look.real === 'Mars') await marsReady;
   if (e.data.spec.look.real === 'Earth') await earthReady;
   const t = buildTile(e.data);
-  (self as unknown as Worker).postMessage(t, [t.pos.buffer, t.nrm.buffer, t.col.buffer, t.sea.buffer, t.index.buffer, t.rocks.buffer] as ArrayBuffer[]);
+  (self as unknown as Worker).postMessage(t, [t.pos.buffer, t.nrm.buffer, t.col.buffer, t.sea.buffer, t.rock.buffer, t.index.buffer, t.rocks.buffer] as ArrayBuffer[]);
 };

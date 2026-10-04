@@ -161,6 +161,7 @@ export class TileSet {
     g.setAttribute('normal', new THREE.BufferAttribute(t.nrm, 3));
     g.setAttribute('color', new THREE.BufferAttribute(t.col, 3));
     g.setAttribute('sea', new THREE.BufferAttribute(t.sea, 1));
+    g.setAttribute('rock', new THREE.BufferAttribute(t.rock, 1));
     g.setIndex(new THREE.BufferAttribute(t.index, 1));
     g.computeBoundingSphere();
     const R = s.R;

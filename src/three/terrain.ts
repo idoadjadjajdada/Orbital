@@ -471,6 +471,8 @@ export interface Tile {
   /** the tile's middle (unit, body frame); vertices are relative to its point on the datum, m */
   c: V3;
   pos: Float32Array; nrm: Float32Array; col: Float32Array; sea: Float32Array; index: Uint32Array;
+  /** how rocky each vertex is (0 soil, sand or ice – 1 bare rock), for the ground's close-up texture */
+  rock: Float32Array;
   /** vertex spacing, m */
   spacing: number;
   /** boulders: position (as pos), size, colour, and a number of its own (for how it lies) — 8 numbers each */
@@ -506,7 +508,7 @@ export function buildTile(job: TileJob): Tile {
   }
   // the grid proper, and the skirt: one more ring of vertices under the edge
   const nv = (N + 1) * (N + 1), ns = 4 * N;
-  const pos = new Float32Array((nv + ns) * 3), nrm = new Float32Array((nv + ns) * 3), col = new Float32Array((nv + ns) * 3), sea = new Float32Array(nv + ns);
+  const pos = new Float32Array((nv + ns) * 3), nrm = new Float32Array((nv + ns) * 3), col = new Float32Array((nv + ns) * 3), sea = new Float32Array(nv + ns), rockv = new Float32Array(nv + ns);
   const rocks: number[] = [];
   const at = (i: number, j: number) => ((j + 1) * M + (i + 1)) * 3;
   for (let j = 0; j <= N; j++) for (let i = 0; i <= N; i++) {
@@ -534,6 +536,7 @@ export function buildTile(job: TileJob): Tile {
       ROCK[qq] = Math.max(ROCK[qq], t);
     }
     sea[v] = SEA[qq];
+    rockv[v] = ROCK[qq];
   }
   // boulders: on a lattice fixed to the world (a cell every 2 m), each cell's own hash and its own ground
   // deciding whether it holds one and how big, so the same boulder is in the same place whichever tile
@@ -573,6 +576,7 @@ export function buildTile(job: TileJob): Tile {
     nrm[t * 3] = nrm[v * 3]; nrm[t * 3 + 1] = nrm[v * 3 + 1]; nrm[t * 3 + 2] = nrm[v * 3 + 2];
     col[t * 3] = col[v * 3]; col[t * 3 + 1] = col[v * 3 + 1]; col[t * 3 + 2] = col[v * 3 + 2];
     sea[t] = sea[v];
+    rockv[t] = rockv[v];
   });
   const idx = new Uint32Array(N * N * 6 + ns * 6);
   let q = 0;
@@ -587,7 +591,7 @@ export function buildTile(job: TileJob): Tile {
     // facing out of the tile, toward the seam it covers
     idx[q++] = v0; idx[q++] = s0; idx[q++] = v1; idx[q++] = v1; idx[q++] = s0; idx[q++] = s1;
   }
-  return { key: job.key, f, L, x, y, c, pos, nrm, col, sea, index: idx.slice(0, q), spacing, rocks: Float32Array.from(rocks) };
+  return { key: job.key, f, L, x, y, c, pos, nrm, col, sea, rock: rockv, index: idx.slice(0, q), spacing, rocks: Float32Array.from(rocks) };
 }
 
 /** a tangent basis at a unit vector: east, north */
