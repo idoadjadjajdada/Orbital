@@ -53,7 +53,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        part: [map, ship, land, giant, touch]
+        part: [map, ship, land, base, giant, touch]
     name: browser (${{ matrix.part }})
     steps:
       - uses: actions/checkout@v4

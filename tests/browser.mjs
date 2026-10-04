@@ -17,7 +17,7 @@ const ok = (name, cond, extra = '') => { if (!cond) fails++; console.log(`${cond
  * The suite is in parts, each in a page of its own, so they can run side by side (CI runs one
  * part per job): PARTS=map,ship picks some; all of them by default.
  */
-const ALL = ['map', 'ship', 'land', 'giant', 'touch'];
+const ALL = ['map', 'ship', 'land', 'base', 'giant', 'touch'];
 const want = new Set((process.env.PARTS || ALL.join(',')).split(',').map(x => x.trim()).filter(Boolean));
 for (const w of want) if (!ALL.includes(w)) { console.log(`unknown part ${w}: the parts are ${ALL.join(', ')}`); process.exit(2); }
 let page, errs = [];
@@ -282,30 +282,26 @@ try {
     window.__pad = { id: 'Test pad (STANDARD GAMEPAD)', connected: true, mapping: 'standard', axes: [0, -1, 0, 0], buttons: btn() };
     navigator.getGamepads = () => [window.__pad];
   });
+  // (each button held until what it does has happened: the pad is read once a frame, and frames can be slow)
+  const hold = async (i, fn, v = 1) => {
+    await page.evaluate(([i, v]) => { window.__pad.buttons[i].pressed = true; window.__pad.buttons[i].value = v; }, [i, v]);
+    const r = await until(page, fn);
+    await page.evaluate(i => { window.__pad.buttons[i].pressed = false; window.__pad.buttons[i].value = 0; }, i);
+    await until(page, () => true);
+    return r;
+  };
   const q0 = await page.evaluate(() => window.orbital.v3.where());
-  await page.waitForTimeout(800);
-  ok('the controller left stick flies', await page.evaluate(p => { const q = window.orbital.v3.where(); return window.orbital.pad.connected && Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) > 0; }, q0));
-  await page.evaluate(() => { window.__pad.axes = [0, 0, 0, 0]; window.__pad.buttons[8].pressed = true; });
-  await page.waitForTimeout(200);
-  await page.evaluate(() => { window.__pad.buttons[8].pressed = false; });
-  ok('the controller View button opens the map', await page.evaluate(() => !document.querySelector('.nav3').hidden));
-  await page.evaluate(() => { window.__pad.buttons[1].pressed = true; });
-  await page.waitForTimeout(200);
-  await page.evaluate(() => { window.__pad.buttons[1].pressed = false; window.__pad.buttons[15].pressed = true; });
-  await page.waitForTimeout(200);
-  await page.evaluate(() => { window.__pad.buttons[15].pressed = false; });
+  ok('the controller left stick flies', await until(page, p => { const q = window.orbital.v3.where(); return window.orbital.pad.connected && Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) > 0; }, q0));
+  await page.evaluate(() => { window.__pad.axes = [0, 0, 0, 0]; });
+  ok('the controller View button opens the map', await hold(8, () => !document.querySelector('.nav3').hidden));
+  await hold(1, () => document.querySelector('.nav3').hidden);
+  await hold(15, () => !!window.orbital.selected);
   ok('B closes the map and the d-pad picks a target', await page.evaluate(() => document.querySelector('.nav3').hidden && window.orbital.v3.mode === 'pilot' && !!window.orbital.selected));
-  await page.evaluate(() => { window.__pad.buttons[9].pressed = true; });
-  await page.waitForTimeout(400);
-  await page.evaluate(() => { window.__pad.buttons[9].pressed = false; });
-  ok('Menu goes back to the 2D map', await page.evaluate(() => !window.orbital.mode3d));
-  await page.evaluate(() => { const v = window.orbital.view; window.__s0 = v.scale; window.__pad.buttons[7].value = 1; window.__pad.buttons[7].pressed = true; });
-  await page.waitForTimeout(500);
-  await page.evaluate(() => { window.__pad.buttons[7].value = 0; window.__pad.buttons[7].pressed = false; window.__pad.buttons[9].pressed = true; });
-  ok('RT zooms the 2D map in', await page.evaluate(() => window.orbital.view.scale > window.__s0 * 1.5));
-  await page.waitForTimeout(400);
-  await page.evaluate(() => { window.__pad.buttons[9].pressed = false; window.__pad.connected = false; });
-  ok('Menu steps back into 3D', await page.evaluate(() => window.orbital.mode3d));
+  ok('Menu goes back to the 2D map', await hold(9, () => !window.orbital.mode3d));
+  await page.evaluate(() => { window.__s0 = window.orbital.view.scale; });
+  ok('RT zooms the 2D map in', await hold(7, () => window.orbital.view.scale > window.__s0 * 1.5));
+  ok('Menu steps back into 3D', await hold(9, () => window.orbital.mode3d));
+  await page.evaluate(() => { window.__pad.connected = false; });
   await page.keyboard.press('KeyV');
   await page.waitForTimeout(300);
   ok('V goes back to the map', await page.evaluate(() => !window.orbital.mode3d && document.getElementById('c3').hidden));
@@ -334,8 +330,7 @@ try {
   ok('W walks on the ground', await until(page, n => { const m = window.orbital.v3.surf.n; return Math.hypot(m[0] - n[0], m[1] - n[1], m[2] - n[2]) * 1737e3 > 1; }, s0));
   await page.keyboard.up('KeyW');
   await page.keyboard.press('Space');
-  await page.waitForTimeout(400);
-  ok('Space jumps, and in a sixth of a g you stay up', await page.evaluate(() => window.orbital.v3.surf.y > 0.6));
+  ok('Space jumps, and in a sixth of a g you stay up', await until(page, () => window.orbital.v3.surf.y > 0.6));
   await page.keyboard.press('KeyR');
   await page.waitForTimeout(300);
   ok('R scans: the air, the ground under your feet', await page.evaluate(() => { const t = document.querySelector('.panel3').textContent; return /Field scan/i.test(t) && /exosphere/.test(t) && /SiO₂/.test(t); }));
@@ -374,6 +369,57 @@ try {
   ok('docked, you are in the hangar', await page.evaluate(() => window.orbital.v3.mode === 'walk' && window.orbital.v3.foot.deck === 1 && window.orbital.v3.shuttle.state === 'docked'));
   await page.evaluate(() => window.orbital.v3.use('helm'));
   clean('land');
+  }
+
+  if (await part('base')) {
+  // a base: up the outpost's stairs and in, its consoles and monitors, a craft's camera on one, the hangar's rover
+  await page.evaluate(() => { const a = window.orbital; a.loadPreset('earth'); a.select(a.world.sources.find(b => b.name === 'Earth')); });
+  await page.keyboard.press('KeyV');
+  await page.waitForFunction(() => window.orbital.v3?.active, null, { timeout: 30000 });
+  await page.evaluate(() => {
+    const a = window.orbital, v = a.v3, b = a.world.sources.find(x => x.name === 'Earth'), c = v.fleet.crafts.find(q => q.name === 'Canaveral Base');
+    const w = v.fleet.bodyPoint(c, new v.camera.position.constructor(0, 1500, 0)).applyQuaternion(window.__bodyQuat(b)), AU = 1.495978707e11;
+    v.travel = null; v.ship.nav.anchor = b; v.ship.nav.off = [w.x / AU, w.y / AU, w.z / AU]; v.ship.nav.vel = [0, 0, 0];
+  });
+  await page.waitForFunction(() => window.orbital.v3.ground.ready, null, { timeout: 90000 }).catch(() => {});
+  // on foot at a point of the base (its frame, m), facing toward another
+  const stand = (x, z, x2, z2, pitch = 0) => page.evaluate(([x, z, x2, z2, pitch]) => {
+    const v = window.orbital.v3, f = v.fleet, c = f.crafts.find(q => q.name === 'Canaveral Base');
+    const n = f.onBase(c, x, z), m = f.onBase(c, x2, z2), d = [m[0] - n[0], m[1] - n[1], m[2] - n[2]];
+    const l = Math.hypot(n[0], n[1]), e = [-n[1] / l, n[0] / l, 0], nn = [n[1] * e[2] - n[2] * e[1], n[2] * e[0] - n[0] * e[2], n[0] * e[1] - n[1] * e[0]];
+    v.toSurface(n, Math.atan2(-(d[0] * e[0] + d[1] * e[1] + d[2] * e[2]), d[0] * nn[0] + d[1] * nn[1] + d[2] * nn[2]));
+    v.surf.pitch = pitch;
+  }, [x, z, x2, z2, pitch]);
+  const local = () => page.evaluate(() => { const v = window.orbital.v3, f = v.fleet, c = f.crafts.find(q => q.name === 'Canaveral Base'), l = f.toLocal(c, v.surf.n); return { x: l.x, z: l.z, foot: v.surf.foot - f.level(c) }; });
+  ok('the base\'s buildings are in', await page.waitForFunction(() => window.orbital.v3.fleet.crafts.find(q => q.name === 'Canaveral Base').mesh.children[0]?.userData.buildings?.every(h => !h.g.getObjectByName('stand-in')), null, { timeout: 60000 }).then(() => true, () => false));
+  await stand(0, -10, 0, 0);
+  await page.keyboard.down('KeyW');
+  ok('W climbs the outpost\'s stairs to its floor, 1.6 m up', await page.waitForFunction(() => { const v = window.orbital.v3, f = v.fleet, c = f.crafts.find(q => q.name === 'Canaveral Base'); return v.surf.foot - f.level(c) > 1.55; }, null, { timeout: 60000 }).then(() => true, () => false), JSON.stringify(await local()));
+  await page.keyboard.up('KeyW');
+  ok('its walls stop you; its doorways do not', await page.evaluate(() => {
+    const v = window.orbital.v3, f = v.fleet, c = f.crafts.find(q => q.name === 'Canaveral Base'), at = (x, z) => f.structureAt(c.b, f.onBase(c, x, z));
+    return at(6.5, -1.75)?.solid === true && at(0, -6.1)?.solid === false && at(0, 3)?.solid === false && at(0, 0)?.solid === true && Math.abs(at(-1.5, -1.5).floor - f.level(c) - 1.6) < 0.05;
+  }));
+  await stand(-1.6, -1.6, 0, 0, -0.3);
+  ok('the command table: Mission Control', await until(page, () => window.orbital.v3.prompt?.label === 'The command table: Mission Control'));
+  await stand(6.6, -0.4, 6.6, 1, -0.2);
+  ok('a console in the control room is a monitor', await until(page, () => /^The ship console: Mission Control, or a craft's camera on it/.test(window.orbital.v3.prompt?.label ?? '')));
+  await page.keyboard.press('KeyF');
+  ok('F there opens Mission Control, with a 📺 button for each craft', await until(page, () => !document.querySelector('.panel3').hidden && !!document.querySelector('button[data-act="feed"]')));
+  const iss = await page.evaluate(() => window.orbital.v3.fleet.crafts.find(c => c.name === 'ISS').id);
+  await page.click(`button[data-act="feed"][data-id="${iss}"]`);
+  await page.keyboard.press('Escape');
+  ok('📺 puts the ISS\'s camera on that console', await page.evaluate(id => { const f = window.orbital.v3.feeds; return f.showing(f.target) === id; }, iss));
+  ok('and it is drawn while you look at it', await until(page, () => window.orbital.v3.feeds.drawn >= 2));
+  await stand(0, -32, 0, -60);
+  const d0 = await page.evaluate(() => window.orbital.v3.feeds.drawn);
+  await page.waitForTimeout(1500);
+  ok('but not while you are away from it', await page.evaluate(d => window.orbital.v3.feeds.drawn === d, d0));
+  await stand(28, -6, 28, 4, -0.2);
+  ok('the hangar\'s rover is in reach', await until(page, () => window.orbital.v3.prompt?.label === 'The rover: drive it out'));
+  await page.keyboard.press('KeyF');
+  ok('F drives it out of the hangar', await until(page, () => window.orbital.v3.mode === 'craft' && window.orbital.v3.fleet.crafts.some(c => c.kind === 'rover' && /rover/.test(c.name))));
+  clean('base');
   }
 
   if (await part('giant')) {
