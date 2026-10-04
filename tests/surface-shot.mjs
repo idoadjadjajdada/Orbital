@@ -1,4 +1,5 @@
 // A picture from the ground, to look at by eye: node tests/surface-shot.mjs <body> <lat> <lon> <out.png> [yaw°] [preset] [day|night]
+// (PITCH=-0.6 looks down at the ground at your feet)
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
 
@@ -35,11 +36,11 @@ try {
   };
   const n = await page.evaluate(put, [name, +lat, +lon, when]);
   await page.waitForFunction(() => window.orbital.v3.ground.ready, null, { timeout: 90000 });
-  await page.evaluate(([n, y]) => { const v = window.orbital.v3; v.toSurface(n, y * Math.PI / 180); v.res.scale = 1; v.res.t = -1e9; v.renderer.setPixelRatio(1); v.resize(); }, [n, +yaw]);
+  await page.evaluate(([n, y, pitch]) => { const v = window.orbital.v3; v.toSurface(n, y * Math.PI / 180); v.surf.pitch = pitch; v.res.scale = 1; v.res.t = -1e9; v.renderer.setPixelRatio(1); v.resize(); }, [n, +yaw, +(process.env.PITCH || 0)]);
   // until the ground under you is built down to its finest (slow in a software renderer)
   await page.waitForFunction(() => window.orbital.v3.ground.tiles.under < 3, null, { timeout: 120000 }).catch(() => console.log('ground still coarse underfoot'));
   await page.waitForTimeout(5000);
-  await page.evaluate(() => { const v = window.orbital.v3; v.surf.pitch = 0.05; });
+  await page.evaluate(p => { const v = window.orbital.v3; v.surf.pitch = p; }, process.env.PITCH ? +process.env.PITCH : 0.05);
   // EVAL: code to run in the page once on the ground (v is the 3D view, a the app)
   if (process.env.EVAL) console.log('eval:', await page.evaluate(async code => { const a = window.orbital; return String(await new Function('v', 'a', code)(a.v3, a)); }, process.env.EVAL));
   await page.waitForTimeout(3000);

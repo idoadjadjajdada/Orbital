@@ -170,8 +170,10 @@ void main() {
       // sand: ripples across the wind, a few centimetres high, wandering
       vec3 wind = normalize(vec3(0.8, 0.35, 0.49));
       float w1 = dot(vLocal, wind) * 2.4 + n3(vLocal * 0.35) * 5.0;
-      g += vec2(dot(vT1, wind), dot(vT2, wind)) * cos(w1) * 0.32 * (1.0 - rk);
-      col *= 1.0 + 0.06 * sin(w1) * (1.0 - rk);
+      // (gone by eighty metres: further off they would line up into stripes)
+      float rip = (1.0 - rk) * (1.0 - smoothstep(25.0, 80.0, d));
+      g += vec2(dot(vT1, wind), dot(vT2, wind)) * cos(w1) * 0.3 * rip;
+      col *= 1.0 + 0.04 * sin(w1) * rip;
     }
     if (kind == 2.0) {
       // ice: smooth, cracked in long lines, glittering where the sun catches a facet
