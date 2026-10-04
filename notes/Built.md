@@ -2,6 +2,7 @@
 
 What's in the game, newest first. The README has the full description.
 
+- **Dock and Go aboard** for every station in Mission Control (62bddbc)
 - **The notes app** (with its own home-screen icon) at https://idoadjadjajdada.github.io/Orbital/notes/: read, tick, edit and add to these notes from a phone; and `AGENTS.md`, the brief for anyone working on the project
 - **Ruins** on the worlds, rare, tinted to the ground, walkable, logged (4d8f3ac)
 - **Rockets**: Courier, Wayfarer, Mammoth; crew, supplies and rovers between pads, bases and stations, on one world or between worlds; ride along (4d8f3ac)
