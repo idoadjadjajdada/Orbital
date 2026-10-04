@@ -19,7 +19,7 @@ try {
   const info = await page.evaluate(([k, mapR]) => {
     const a = window.orbital;
     a.clear(); a.armed = k; const b = a.place({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0 }); a.armed = null; a.paused = false;
-    a.select(b); a.focus = b;
+    a.select(b); a.focus = b; a.pan = { x: 0, y: 0, z: 0 }; a.view.glide = { x: 0, y: 0 };
     // the extent: the furthest of what came with it (disc, shell, companion), or its radius
     let ext = b.r;
     for (const x of a.world.bodies) if (x !== b) ext = Math.max(ext, Math.hypot(x.x - b.x, x.y - b.y, x.z - b.z));

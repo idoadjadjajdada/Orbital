@@ -184,23 +184,90 @@ export function drawJet(ctx: CanvasRenderingContext2D, b: Body, x: number, y: nu
 }
 
 /** A pulsar's two beams, sweeping round with its spin. */
-export function drawPulsar(ctx: CanvasRenderingContext2D, x: number, y: number, rPx: number, angle: number, strong: boolean) {
+/**
+ * A pulsar on the map, as Chandra sees the Crab: a glowing ring and a wider wispy torus round its
+ * equator (tilted as its spin is, so a circle seen from above, a line seen edge-on), jets straight out of
+ * its poles with knots streaming out, and its two lighthouse beams sweeping round with its spin.
+ * `axis` is the spin; `angle` how far it has turned. A magnetar is violet, its beams flickering.
+ */
+export function drawPulsar(ctx: CanvasRenderingContext2D, x: number, y: number, rPx: number, angle: number, strong: boolean, axis: [number, number, number] = [0, 0, 1], now = 0) {
   ctx.globalCompositeOperation = 'lighter';
-  const L = Math.max(30, rPx * 10) * (strong ? 1.5 : 1);
-  for (const sg of [1, -1]) {
-    const a = angle + (sg > 0 ? 0 : Math.PI);
-    const ux = Math.cos(a), uy = Math.sin(a);
-    for (let t = rPx + 1; t < L; t++) {
-      const v = Math.min(1, (1 - t / L) * 1.4);
-      const half = Math.round(t * 0.08);
-      for (let wv = -half; wv <= half; wv++) {
-        const px = Math.round(x + ux * t - uy * wv), py = Math.round(y + uy * t + ux * wv);
-        if (v * (1 - Math.abs(wv) / (half + 1)) < bayer(px, py) * 0.7) continue;
-        ctx.fillStyle = rgba(strong ? [0.85, 0.75, 1] : [0.7, 0.85, 1], v);
-        ctx.fillRect(px, py, 1, 1);
+  const hot: V3 = strong ? [0.95, 0.72, 1] : [0.78, 0.9, 1], cool: V3 = strong ? [0.55, 0.3, 0.95] : [0.35, 0.55, 1];
+  const S = Math.max(14, rPx * 14);
+  // the torus: a ring seen at the tilt of the spin; on screen an ellipse whose short axis is along the spin's sky direction
+  const cosI = Math.abs(axis[2]), proj = Math.hypot(axis[0], axis[1]);
+  const rot = proj > 1e-6 ? Math.atan2(-axis[1], axis[0]) : 0;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rot);
+  ctx.scale(Math.max(0.08, cosI), 1);
+  for (const [R, w, k, c] of [[S * 1.05, S * 0.32, 0.22, cool], [S * 0.5, S * 0.07, 0.6, mix(cool, hot, 0.6)], [S * 0.22, S * 0.08, 0.7, hot]] as const) {
+    const g = ctx.createRadialGradient(0, 0, Math.max(0, R - w), 0, 0, R + w);
+    g.addColorStop(0, rgba(c as V3, 0));
+    g.addColorStop(0.5, rgba(c as V3, k));
+    g.addColorStop(1, rgba(c as V3, 0));
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0, 0, R + w, 0, 2 * Math.PI); ctx.fill();
+  }
+  // wisps: arcs going round, the inner ones faster
+  ctx.lineCap = 'round';
+  for (let k = 0; k < 9; k++) {
+    const R = S * (0.35 + 0.08 * k + 0.05 * Math.sin(k * 2.3));
+    const a0 = k * 1.7 + now * 0.6 * Math.pow(0.5 / (R / S), 1.5);
+    ctx.strokeStyle = rgba(k < 3 ? hot : cool, 0.35 - k * 0.025);
+    ctx.lineWidth = Math.max(1, S * 0.025);
+    ctx.beginPath(); ctx.arc(0, 0, R, a0, a0 + 0.9 + 0.4 * Math.sin(k)); ctx.stroke();
+  }
+  ctx.restore();
+  // the jets, along the spin's direction on the sky, straight out of the poles
+  if (proj > 0.15) {
+    const ux = axis[0] / proj, uy = -axis[1] / proj;
+    const n = S * 4.5 * proj;
+    for (const sg of [1, -1]) {
+      const ex = x + sg * ux * n, ey = y + sg * uy * n;
+      for (const [wt, w0, k, c] of [[0.07, 0.6, 0.25, cool], [0.025, 0.3, 0.7, hot]] as const) {
+        const g = ctx.createLinearGradient(x, y, ex, ey);
+        g.addColorStop(0, rgba(c as V3, k));
+        g.addColorStop(0.4, rgba(c as V3, k * 0.5));
+        g.addColorStop(1, rgba(c as V3, 0));
+        ctx.fillStyle = g;
+        const W0 = Math.max(0.8, rPx * w0 + 0.6), WT = Math.max(1, n * wt);
+        ctx.beginPath();
+        ctx.moveTo(x - uy * W0, y + ux * W0); ctx.lineTo(ex - uy * WT, ey + ux * WT);
+        ctx.lineTo(ex + uy * WT, ey - ux * WT); ctx.lineTo(x + uy * W0, y - ux * W0);
+        ctx.closePath(); ctx.fill();
+      }
+      for (let q = 0; q < 4; q++) {
+        const t = (q / 4 + now * 0.12) % 1;
+        const kx = x + sg * ux * n * t, ky = y + sg * uy * n * t, kr = Math.max(1.5, S * (0.06 + 0.12 * t));
+        const g = ctx.createRadialGradient(kx, ky, 0, kx, ky, kr);
+        g.addColorStop(0, rgba(hot, 0.6 * (1 - t)));
+        g.addColorStop(1, rgba(cool, 0));
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(kx, ky, kr, 0, 2 * Math.PI); ctx.fill();
       }
     }
   }
+  // the lighthouse beams, faint, sweeping
+  const L = S * 3 * (strong ? 1.3 : 1);
+  for (const sg of [1, -1]) {
+    const a = angle + (sg > 0 ? 0 : Math.PI);
+    const ux = Math.cos(a), uy = Math.sin(a);
+    const g = ctx.createLinearGradient(x, y, x + ux * L, y + uy * L);
+    const k = strong ? 0.22 * (0.8 + 0.2 * Math.sin(now * 9)) : 0.18;
+    g.addColorStop(0, rgba([0.85, 0.9, 1], k));
+    g.addColorStop(1, rgba([0.85, 0.9, 1], 0));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(x, y); ctx.lineTo(x + ux * L - uy * L * 0.06, y + uy * L + ux * L * 0.06); ctx.lineTo(x + ux * L + uy * L * 0.06, y + uy * L - ux * L * 0.06);
+    ctx.closePath(); ctx.fill();
+  }
+  // the star itself, white-hot
+  const g = ctx.createRadialGradient(x, y, 0, x, y, Math.max(3, rPx * 2.5));
+  g.addColorStop(0, rgba([1, 1, 1], 1));
+  g.addColorStop(1, rgba(hot, 0));
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(x, y, Math.max(3, rPx * 2.5), 0, 2 * Math.PI); ctx.fill();
   ctx.globalCompositeOperation = 'source-over';
 }
 

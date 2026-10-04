@@ -69,6 +69,19 @@ lapping the outer, and Saturn's spokes come and go across the B ring. The
 rings cast their shadow across the planet, and the planet its shadow across
 the rings behind it.
 
+**A disc has to be built.** A bare black hole is just its shadow, the
+starlight behind it (and the Milky Way) bent into a ring round it. Its disc
+comes only from what it actually eats: matter that reaches it first settles
+into a ring round it over a few seconds, then drains through the disc into the
+hole over tens of seconds, and the disc's brightness follows what is in it —
+a stray asteroid barely shows, a planet round a stellar hole glows, a star
+torn apart by a million-sun hole (try *Star torn apart* and wait for the
+debris to fall back, a month and a half in) blazes. The disc lies across the
+spin of what fell in. Jets come up only after the disc has been bright for a
+while, and die away after it fades. A hole that comes with its gas already in
+place — a quasar, TON 618, M87*, a microquasar's companion overflowing onto
+it — starts with its disc and jets established.
+
 **Black holes, traced.** Up close in 3D every pixel round a hole follows its
 ray of light back through the hole's gravity (the photon orbit equation in
 Schwarzschild space). Rays that fall in make the shadow, 2.6 horizons across;
@@ -89,8 +102,13 @@ behind a hole are lensed into arcs. On the map the same disc is drawn tilted
 as it lies, flowing, beamed and ringed round its shadow, with smooth, tapering
 jets.
 
-**The other strange things.** A pulsar's two beams leave its magnetic poles,
-35° off its spin, and sweep round like a lighthouse's (a magnetar's flicker).
+**The other strange things.** A pulsar is drawn as Chandra sees the Crab's:
+a bright inner ring and a wider torus of plasma round its equator going round
+it, matter lifted out of it along the magnetic field's loops to the poles,
+and jets straight out of the poles, carrying it away in knots that stream
+outward; its two lighthouse beams sweep round from the magnetic poles, 35° off
+its spin. A magnetar is the same in violet, its field loops brighter and
+twisted, flaring every so often when its crust gives way.
 A planetary nebula is a traced shell of glowing gas, blue-green oxygen inside
 a red rim, brightest at its edge as the Ring Nebula is. A supernova remnant
 has blue-white filaments shot with red. A protoplanetary disc is dust lit by

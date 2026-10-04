@@ -9,6 +9,7 @@ import { paintCrater, cloneMap, lookKey, type SurfaceMap } from './surface';
 import { maps, MapService } from './maps';
 import { bayer } from './noise';
 import { drawAccretion, drawNebula } from './accretion';
+import type { DiscState } from '../physics/feeding';
 import { bakeShaped } from './shaped';
 import { drawFlash, drawJet, drawPulsar, drawWhiteHole, drawWormhole, drawCraft } from './phenomena';
 import { chip } from '../physics/materials';
@@ -31,6 +32,8 @@ export interface DrawState {
   dtReal: number;
   timeReal: number;
   simTime: number;
+  /** a compact object's accretion disc, as it has built up from what it swallowed (null: it has none) */
+  disc: (b: Body) => DiscState | null;
 }
 
 interface Drawn { b: Body; sx: number; sy: number; r: number; hidden: boolean }
@@ -98,7 +101,6 @@ export class Renderer {
   }
   private spinVis = new Map<Body, number>();
   private trails = new Map<Body, Trail>();
-  private jet = new Map<Body, { rate: number; power: number }>();
   /** a fed hole's disc: how far out it reaches, horizon radii, and when that was measured */
   private discExt = new Map<Body, { t: number; r: number }>();
   private haloCache = new Map<string, HTMLCanvasElement>();
@@ -160,7 +162,6 @@ export class Renderer {
   }
 
   drawnOf(b: Body) { return this.drawn.find(d => d.b === b); }
-  accRate(b: Body) { return this.jet.get(b)?.rate ?? 0; }
   setAim(pts: [number, number, number][] | null, impact: [number, number, number] | null) { this.aim = pts ? { pts, impact } : null; }
   flash(e: SimEvent, now: number) {
     const big = e.kind === 'supernova' || e.kind === 'ia' || e.kind === 'kilonova' || e.kind === 'evaporate' || e.kind === 'gw';
@@ -168,7 +169,7 @@ export class Renderer {
     // only drawn (and so pruned) on the map: while the 3D view is up, keep the list from growing
     if (this.flashes.length > 64) this.flashes = this.flashes.filter(f => now - f.t0 < f.dur).slice(-64);
   }
-  forget(b: Body) { this.sprites.delete(b); this.maps.delete(b); this.trails.delete(b); this.jet.delete(b); this.spinVis.delete(b); }
+  forget(b: Body) { this.sprites.delete(b); this.maps.delete(b); this.trails.delete(b); this.spinVis.delete(b); }
   clearTrails() { this.trails.clear(); }
 
   /** smallest radius a body is drawn at, in art pixels, so it is never lost */
@@ -529,27 +530,19 @@ export class Renderer {
       if (ext.r) drawNebula(ctx, b, d.sx, d.sy, ext.r * this.scale, b.kind === 'pne', s.timeReal);
     }
     // ---- jets: along the spin of what has fallen in, as bright as the feeding ----
-    if (b.look.pulsar) drawPulsar(ctx, d.sx, d.sy, d.r, s.timeReal * 3 + b.id, !!b.look.magnetar);
+    if (b.look.pulsar) drawPulsar(ctx, d.sx, d.sy, d.r, s.timeReal * (b.look.magnetar ? 1.2 : 3) + b.id, !!b.look.magnetar, bodyAxis(b), s.timeReal);
     if (b.cls === 'bh' || b.cls === 'ns') this.drawJets(b, d, s);
   }
 
   private drawJets(b: Body, d: Drawn, s: DrawState) {
-    let j = this.jet.get(b);
-    if (!j) { j = { rate: 0, power: 0 }; this.jet.set(b, j); }
-    // paused, the jets hold as they were
-    if (s.dtSim > 0) {
-      const inst = b.swallowed / s.dtSim;
-      b.swallowed = 0;
-      j.rate += (inst - j.rate) * Math.min(1, s.dtReal * 1.5);
-    }
-    // against the Eddington rate, 2.2×10⁻⁸ M☉/yr per M☉ at 10% efficiency
-    const want = j.rate > 0 ? Math.max(0, Math.min(1, (Math.log10(j.rate / (2.2e-8 * b.m)) + 4) / 4)) : 0;
-    j.power += (want - j.power) * Math.min(1, s.dtReal * 2);
-    if (j.power < 0.03) return;
+    // the disc and jets as they have built up from what the hole has actually swallowed (physics/feeding.ts)
+    const st = s.disc(b);
+    if (!st || st.level < 0.02) return;
+    const j = { power: st.level, jet: st.jet };
     // as long as the hole is big — thousands of Schwarzschild radii — and longer the harder it is fed
     // (never drawn longer than the screen: zoomed in on a giant hole it would be billions of pixels)
     const rs = schwarzschild(b.m);
-    const len = Math.min(2 * (this.W + this.H), Math.max(30, rs * this.scale * (800 + 6000 * j.power)));
+    const len = Math.min(2 * (this.W + this.H), Math.max(30, rs * this.scale * (800 + 6000 * j.jet)));
     // the disc it feeds from: its bright inner part (the gas further out is drawn as gas), measured now and then
     let ext = this.discExt.get(b);
     if (!ext || s.timeReal - ext.t > 3) {
@@ -560,7 +553,7 @@ export class Renderer {
       this.discExt.set(b, ext);
     }
     if (b.cls === 'bh') drawAccretion(this.ctx, b, d.sx, d.sy, rs * this.scale, Math.min(ext.r, 60, (this.W + this.H) / Math.max(1e-9, rs * this.scale)), j.power, s.timeReal);
-    drawJet(this.ctx, b, d.sx, d.sy, d.r, j.power, len, s.timeReal, this.haloFn);
+    if (j.jet > 0.03) drawJet(this.ctx, b, d.sx, d.sy, d.r, j.jet, len, s.timeReal, this.haloFn);
   }
 
   private drawFlashes(now: number) {

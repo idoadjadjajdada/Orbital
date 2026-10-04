@@ -49,6 +49,9 @@ uniform float glow;
 uniform float time;
 uniform float hue;
 uniform float glare;
+/** the sky at infinity, and the turn from the disc's frame to the world's, to look it up in */
+uniform samplerCube sky;
+uniform mat3 localToWorld;
 varying vec3 vL;
 float hash3(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
 float vnoise3(vec3 x) {
@@ -75,23 +78,6 @@ vec3 fire(float v) {
   c = mix(c, vec3(1.0, 0.33, 0.04), smoothstep(0.2, 0.55, v));
   c = mix(c, vec3(1.0, 0.68, 0.3), smoothstep(0.5, 0.85, v));
   return mix(c, vec3(1.0, 0.94, 0.8), smoothstep(0.82, 1.0, v));
-}
-/** the sky behind, in a direction: stars on a fine grid of cells, one in some of them, round and soft */
-vec3 stars(vec3 d) {
-  vec3 c = vec3(0.0);
-  for (int k = 0; k < 2; k++) {
-    float N = k == 0 ? 260.0 : 620.0;
-    vec3 g = d * N, cell = floor(g);
-    float h = hash3(cell + float(k) * 17.0);
-    if (h > (k == 0 ? 0.97 : 0.985)) {
-      vec3 ctr = cell + 0.5 + (vec3(hash3(cell + 3.1), hash3(cell + 7.7), hash3(cell + 1.3)) - 0.5) * 0.6;
-      float dd = length(g - ctr);
-      float m = hash3(cell + 9.9);
-      vec3 tint = mix(vec3(1.0, 0.8, 0.6), vec3(0.75, 0.85, 1.0), m);
-      c += tint * exp(-dd * dd * 40.0) * (0.4 + 1.2 * pow(hash3(cell + 5.5), 4.0));
-    }
-  }
-  return c;
 }
 vec4 discAt(vec3 q, vec3 d) {
   float r = length(q.xy);
@@ -138,7 +124,7 @@ void main() {
     float r = length(p);
     rMin = min(rMin, r);
     if (r < 1.0) { fell = true; break; }
-    float dt = max(0.012, 0.05 * r * r / (r + 2.0));
+    float dt = max(0.012, 0.035 * r * r / (r + 2.0));
     vec3 pn = p + d * dt + 0.5 * acc * dt * dt;
     float rn = length(pn);
     vec3 an = -1.5 * h2 * pn / pow(max(rn, 0.5), 5.0);
@@ -166,16 +152,15 @@ void main() {
     p = pn;
     if (r > RB * 1.001 && dot(p, d) > 0.0) break;
   }
-  // what is behind, bent: the stars seen past the hole along the bent ray, where the bending is enough to
-  // show (further out the real sky shows through unbent)
-  if (!fell && alpha < 0.99) {
-    float defl = acos(clamp(dot(normalize(d), d0), -1.0, 1.0));
-    float a = smoothstep(0.015, 0.12, defl);
-    col += (1.0 - alpha) * stars(normalize(d)) * a;
-    alpha += (1.0 - alpha) * a;
+  // what is behind, bent: the real sky looked up along the ray as it leaves, so the stars behind the hole are
+  // lensed into arcs and its shadow is a hole in them (the sky outside this sphere is the same sky, unbent)
+  if (!fell && alpha < 0.999) {
+    col += (1.0 - alpha) * textureCube(sky, normalize(localToWorld * normalize(d))).rgb;
+    alpha = 1.0;
   }
   // the photon ring: light that wound round the hole on its way
-  float ring = exp(-sq((rMin - 1.52) / 0.05)) * (0.25 + 1.2 * glow);
+  // (round a hole with nothing to light it, only starlight wound round it: faint)
+  float ring = exp(-sq((rMin - 1.52) / 0.05)) * (0.05 + 1.2 * glow);
   col += (1.0 - alpha) * vec3(1.0, 0.62, 0.3) * ring;
   alpha = max(alpha, min(1.0, ring));
   if (fell) alpha = 1.0;
@@ -223,6 +208,8 @@ uniform float len;
 /** how wide (1 a jet's) and how knotted (0 smooth, 1 a jet's knots) */
 uniform float wid;
 uniform float knotK;
+/** how far out (as a fraction of its length) it comes up to full brightness */
+uniform float rise;
 uniform vec3 eye;
 uniform mat4 invProj;
 uniform mat3 viewToWorld;
@@ -246,7 +233,7 @@ void main() {
   float core = exp(-sq(d / wdt) * 2.5);
   float sheath = exp(-sq(d / (wdt * 2.2))) * 0.03;
   // launched from near the hole, brightening over its first stretch, fading toward the tip
-  float along = exp(-t * 2.4) * smoothstep(0.0, 0.04, t) * (1.0 - smoothstep(0.6, 1.0, t));
+  float along = exp(-t * 2.4) * smoothstep(0.0, rise, t) * (1.0 - smoothstep(0.6, 1.0, t));
   float k = fract(t * 7.0 - time * 0.25);
   float knots = mix(1.0, 0.6 + 0.9 * exp(-sq((k - 0.5) / 0.09)), knotK);
   float I = (core * knots + sheath) * along * power;
@@ -265,7 +252,7 @@ export class HoleLook {
 
 
   /** jetLen: the jets' length in horizon radii */
-  constructor(glow: THREE.Texture, private jetLen = 3000) {
+  constructor(glow: THREE.Texture, sky: THREE.CubeTexture, private jetLen = 3000) {
     const rOut = 16, RB = 250;
     this.mat = new THREE.ShaderMaterial({
       vertexShader: DISC_VERT, fragmentShader: DISC_FRAG, side: THREE.BackSide, transparent: true, depthWrite: false,
@@ -274,6 +261,7 @@ export class HoleLook {
         camL: { value: new THREE.Vector3() }, RB: { value: RB },
         invProj: { value: new THREE.Matrix4() }, viewToLocal: { value: new THREE.Matrix3() }, res: { value: new THREE.Vector2(1, 1) }, rIn: { value: 3 }, rOut: { value: rOut },
         glow: { value: 0 }, time: { value: 0 }, hue: { value: 0.5 }, glare: { value: 0 },
+        sky: { value: sky }, localToWorld: { value: new THREE.Matrix3() },
       },
     });
     this.disc = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24), this.mat);
@@ -287,7 +275,7 @@ export class HoleLook {
         vertexShader: JET_VERT, fragmentShader: JET_FRAG, transparent: true, depthWrite: false, side: THREE.BackSide, blending: THREE.AdditiveBlending,
         uniforms: {
           power: { value: 0 }, time: { value: 0 }, col: { value: new THREE.Color(0.55, 0.7, 1.0) },
-          base: { value: new THREE.Vector3() }, axis: { value: new THREE.Vector3(0, 0, s) }, len: { value: 1 }, eye: { value: new THREE.Vector3() }, wid: { value: 1 }, knotK: { value: 1 },
+          base: { value: new THREE.Vector3() }, axis: { value: new THREE.Vector3(0, 0, s) }, len: { value: 1 }, eye: { value: new THREE.Vector3() }, wid: { value: 1 }, knotK: { value: 1 }, rise: { value: 0.04 },
           invProj: { value: new THREE.Matrix4() }, viewToWorld: { value: new THREE.Matrix3() }, res: { value: new THREE.Vector2(1, 1) },
         },
       });
@@ -337,6 +325,7 @@ export class HoleLook {
     const ql = this.disc.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(cam.getWorldQuaternion(new THREE.Quaternion()));
     (u.viewToLocal.value as THREE.Matrix3).setFromMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(ql));
     (u.res.value as THREE.Vector2).copy(res);
+    (u.localToWorld.value as THREE.Matrix3).setFromMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(this.disc.getWorldQuaternion(new THREE.Quaternion())));
     u.glow.value = glow;
     u.time.value = time;
     u.hue.value = hue;

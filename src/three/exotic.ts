@@ -115,40 +115,189 @@ export class NebulaLook {
   dispose() { this.mesh.geometry.dispose(); this.mat.dispose(); }
 }
 
-// ------------------------------------------------------------------ pulsar beams
+// ------------------------------------------------------------------ pulsars and magnetars
+/**
+ * What is round a pulsar, as Chandra sees the Crab's: a bright inner ring and a
+ * wider torus of plasma round its equator, flowing round it; matter lifted out
+ * of the torus along the magnetic field's lines (the dipole's r = L sin²θ),
+ * funnelled up to the poles; and the jets that leave the poles, brightest down
+ * their spines, with knots of plasma streaming out. A magnetar's field is a
+ * thousand times stronger, its loops twisted and brighter, flaring now and then.
+ * Traced through a sphere round the star, in units of its radius, its spin up z.
+ */
+const PSR_FRAG = /* glsl */ `
+#include <common>
+#include <logdepthbuf_pars_fragment>
+float sq(float x) { return x * x; }
+uniform vec3 camL;
+uniform mat4 invProj;
+uniform mat3 viewToLocal;
+uniform vec2 res;
+uniform float RB;
+uniform float time;
+uniform float mag;
+uniform float flare;
+uniform vec3 hot;
+uniform vec3 cool;
+float hash3(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float vnoise3(vec3 x) {
+  vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(hash3(i), hash3(i + vec3(1, 0, 0)), f.x), mix(hash3(i + vec3(0, 1, 0)), hash3(i + vec3(1, 1, 0)), f.x), f.y),
+             mix(mix(hash3(i + vec3(0, 0, 1)), hash3(i + vec3(1, 0, 1)), f.x), mix(hash3(i + vec3(0, 1, 1)), hash3(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+/** the light from gas at a point: colour times density */
+vec3 glowAt(vec3 p) {
+  float r = length(p), rho = length(p.xy);
+  if (r < 1.0) return vec3(0.0);
+  float phi = atan(p.y, p.x);
+  vec3 c = vec3(0.0);
+  // the torus and the inner ring: plasma going round, faster inside (two looks faded so the shear never builds)
+  float P = 20.0, p1 = fract(time / P), p2 = fract(time / P + 0.5);
+  float w1 = phi - 3.0 * pow(rho / 6.0, -1.5) * (p1 - 0.5) * P * 0.05;
+  float w2 = phi - 3.0 * pow(rho / 6.0, -1.5) * (p2 - 0.5) * P * 0.05;
+  // wisps: fine arcs round the star, drawn out by the flow, wandering in radius
+  float n1 = vnoise3(vec3(cos(w1) * 2.0, sin(w1) * 2.0, rho * 1.6)) * 0.6 + vnoise3(vec3(cos(w1) * 5.0, sin(w1) * 5.0, rho * 4.5)) * 0.4;
+  float n2 = vnoise3(vec3(cos(w2) * 2.0, sin(w2) * 2.0, rho * 1.6)) * 0.6 + vnoise3(vec3(cos(w2) * 5.0, sin(w2) * 5.0, rho * 4.5)) * 0.4;
+  float swirl = mix(n1, n2, abs(2.0 * p1 - 1.0));
+  float wisp = smoothstep(0.45, 0.8, swirl);
+  float th = 0.25 + 0.05 * rho;
+  float torus = exp(-sq((rho - 15.0) / 4.5)) * exp(-sq(p.z / th)) * (0.1 + 0.9 * wisp) * 0.6;
+  float ring = exp(-sq((rho - 7.0) / 0.45)) * exp(-sq(p.z / 0.25)) * (0.15 + 1.4 * wisp) * 0.7;
+  // the inner disc it feeds from, close in, spiralling down toward the star
+  float inner = exp(-sq(p.z / (0.12 + 0.03 * rho))) * smoothstep(1.4, 2.5, rho) * (1.0 - smoothstep(5.0, 8.0, rho)) * (0.3 + 1.2 * wisp) * 0.7;
+  c += cool * torus + mix(cool, hot, 0.6) * ring + hot * inner;
+  // matter lifted along the field's lines: on the dipole's shells r = L sin²θ, streaming poleward in strands
+  float s2 = max(1.0 - sq(p.z / r), 1e-3);
+  float L = r / s2;
+  float twist = mag * 1.2 * (p.z / r);
+  float strands = smoothstep(0.55, 0.85, vnoise3(vec3(cos(phi + twist) * 2.2, sin(phi + twist) * 2.2, L * 0.6)));
+  float along = abs(p.z) / r;
+  float flow = 0.45 + 0.55 * sin((along * 9.0 - time * (1.3 + mag)) * 3.14159);
+  float shell = exp(-sq((L - (5.0 + 2.0 * mag)) / (0.9 + 0.8 * mag)));
+  float field = shell * strands * flow * smoothstep(0.05, 0.25, along) * (1.8 + 1.5 * mag);
+  c += mix(cool, hot, 0.5) * field * (1.0 + flare * 2.5);
+  // the jets: out of the poles, narrow at the surface and opening slowly, knots streaming out
+  float az = abs(p.z);
+  float wj = 0.18 + 0.05 * az;
+  float core = exp(-sq(rho / wj)) * smoothstep(0.9, 1.6, az) * (1.0 - smoothstep(18.0, 38.0, az));
+  // knots, irregular, streaming outward; and the jet's edge wavering (kinked, as the Crab's is)
+  float kn = vnoise3(vec3(az * 0.35 - time * 1.4, sign(p.z) * 5.0, 0.0));
+  float knot = 0.5 + 0.9 * smoothstep(0.5, 0.85, kn);
+  c += mix(hot, vec3(1.0), 0.25) * core * knot * 1.3;
+  c += cool * exp(-sq(rho / (wj * 2.8))) * smoothstep(1.0, 2.5, az) * (1.0 - smoothstep(18.0, 38.0, az)) * 0.12;
+  return c;
+}
+void main() {
+  #include <logdepthbuf_fragment>
+  vec4 v = invProj * vec4(gl_FragCoord.xy / res * 2.0 - 1.0, -1.0, 1.0);
+  vec3 d = normalize(viewToLocal * normalize(v.xyz / v.w));
+  float B = dot(camL, d), C = dot(camL, camL) - RB * RB, D = B * B - C;
+  if (D < 0.0) discard;
+  float t0 = max(0.0, -B - sqrt(D)), t1 = -B + sqrt(D);
+  if (t1 <= 0.0) discard;
+  // stop at the star itself
+  float Bs = B, Cs = dot(camL, camL) - 1.0, Ds = Bs * Bs - Cs;
+  if (Ds > 0.0) { float ts = -Bs - sqrt(Ds); if (ts > t0) t1 = min(t1, ts); }
+  vec3 acc = vec3(0.0);
+  const int N = 72;
+  float dt = (t1 - t0) / float(N);
+  // (dithered start, so the steps do not show as bands)
+  float j = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+  for (int i = 0; i < N; i++) acc += glowAt(camL + d * (t0 + (float(i) + j) * dt)) * dt;
+  vec3 col = 1.0 - exp(-acc * 0.9);
+  gl_FragColor = vec4(col, 1.0);
+}`;
+
+export class PulsarLook {
+  readonly group = new THREE.Group();
+  private mat: THREE.ShaderMaterial;
+  private mesh: THREE.Mesh;
+  private beams: PulsarBeams;
+  private jets: PulsarBeams;
+  private RB = 40;
+  constructor(private magnetar: boolean) {
+    this.mat = new THREE.ShaderMaterial({
+      vertexShader: NEB_VERT, fragmentShader: PSR_FRAG, side: THREE.BackSide, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      uniforms: {
+        camL: { value: new THREE.Vector3() }, invProj: { value: new THREE.Matrix4() }, viewToLocal: { value: new THREE.Matrix3() }, res: { value: new THREE.Vector2(1, 1) },
+        RB: { value: this.RB }, time: { value: 0 }, mag: { value: magnetar ? 1 : 0 }, flare: { value: 0 },
+        hot: { value: magnetar ? new THREE.Color(0.95, 0.7, 1.0) : new THREE.Color(0.75, 0.88, 1.0) },
+        cool: { value: magnetar ? new THREE.Color(0.55, 0.3, 0.95) : new THREE.Color(0.35, 0.55, 1.0) },
+      },
+    });
+    this.mesh = new THREE.Mesh(new THREE.SphereGeometry(this.RB, 48, 24), this.mat);
+    this.mesh.frustumCulled = false;
+    this.group.add(this.mesh);
+    // the jets carry on far past the traced sphere, along the spin; the lighthouse beams sweep from the magnetic poles
+    this.jets = new PulsarBeams(magnetar, 'jet');
+    this.beams = new PulsarBeams(magnetar, 'beam');
+    this.group.add(this.jets.group, this.beams.group);
+  }
+  /**
+   * each frame: the spin axis (world), the angle it has turned, the star's world radius scale,
+   * the camera and screen, the clock
+   */
+  update(spin: THREE.Vector3, angle: number, cam: THREE.Camera, res: THREE.Vector2, time: number) {
+    // the parent turns with the star (thirty times a second for a pulsar): undo that, and stand up the spin
+    const parent = this.group.parent!;
+    const pq = parent.getWorldQuaternion(new THREE.Quaternion()).invert();
+    this.group.quaternion.copy(pq.multiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), spin.clone().normalize())));
+    this.group.updateMatrixWorld(true);
+    const u = this.mat.uniforms;
+    const eye = cam.getWorldPosition(new THREE.Vector3());
+    (u.camL.value as THREE.Vector3).copy(this.mesh.worldToLocal(eye.clone()));
+    (u.invProj.value as THREE.Matrix4).copy(cam.projectionMatrixInverse);
+    const ql = this.mesh.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(cam.getWorldQuaternion(new THREE.Quaternion()));
+    (u.viewToLocal.value as THREE.Matrix3).setFromMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(ql));
+    (u.res.value as THREE.Vector2).copy(res);
+    u.time.value = time;
+    // a magnetar's crust gives way now and then: a flare, bright for a moment, fading over a few seconds
+    if (this.magnetar) { const ph = (time % 13) / 13; u.flare.value = ph < 0.35 ? Math.exp(-ph * 14) : 0; }
+    const z = new THREE.Vector3(0, 0, 1);
+    this.jets.update(z, 0, 3000, cam, res, time, 0.5 + (this.magnetar ? 0.6 * u.flare.value : 0));
+    this.beams.update(z, angle, 1500, cam, res, time, this.magnetar ? 0.28 : 0.2);
+  }
+  dispose() {
+    this.mesh.geometry.dispose(); this.mat.dispose();
+    this.jets.dispose(); this.beams.dispose();
+  }
+}
+
 export class PulsarBeams {
   readonly group = new THREE.Group();
   private mats: THREE.ShaderMaterial[] = [];
   private q = new THREE.Quaternion();
-  constructor(private strong: boolean) {
+  /** 'jet': along the spin, steady; 'beam': a lighthouse beam, from the magnetic poles 35° off it */
+  constructor(private strong: boolean, private kind: 'jet' | 'beam' = 'beam') {
     for (const s of [1, -1]) {
       const m = new THREE.ShaderMaterial({
         vertexShader: JET_VERT, fragmentShader: JET_FRAG, transparent: true, depthWrite: false, side: THREE.BackSide, blending: THREE.AdditiveBlending,
         uniforms: {
-          power: { value: 1 }, time: { value: 0 }, col: { value: strong ? new THREE.Color(0.75, 0.6, 1.0) : new THREE.Color(0.6, 0.78, 1.0) },
+          power: { value: 1 }, time: { value: 0 },
+          col: { value: kind === 'jet' ? (strong ? new THREE.Color(0.75, 0.55, 1.0) : new THREE.Color(0.55, 0.72, 1.0)) : new THREE.Color(0.8, 0.88, 1.0) },
           base: { value: new THREE.Vector3() }, axis: { value: new THREE.Vector3() }, len: { value: 1 }, eye: { value: new THREE.Vector3() },
           invProj: { value: new THREE.Matrix4() }, viewToWorld: { value: new THREE.Matrix3() }, res: { value: new THREE.Vector2(1, 1) },
-          wid: { value: 1.6 }, knotK: { value: 0 },
+          wid: { value: kind === 'jet' ? 0.6 : 0.45 }, knotK: { value: kind === 'jet' ? 1 : 0 }, rise: { value: kind === 'jet' ? 0.004 : 0.0005 },
         },
       });
       m.userData.sign = s;
       this.mats.push(m);
-      const cone = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.03, 1, 24, 1, false).translate(0, 0.5, 0), m);
+      const cone = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.03, 1, 24, 1, false).translate(0, 0.5, 0), m);
       cone.frustumCulled = false;
       cone.rotation.x = s > 0 ? Math.PI / 2 : -Math.PI / 2;
       this.group.add(cone);
     }
   }
-  /**
-   * the spin axis, the angle it has turned through, the beams' length (in the parent's units) and
-   * the camera: the magnetic axis is 35° off the spin, and goes round with it
-   */
-  update(spin: THREE.Vector3, angle: number, len: number, cam: THREE.Camera, res: THREE.Vector2, time: number) {
+  /** the axis (in the parent's frame), the angle turned, the length (in the parent's units), the camera, the clock, the strength */
+  update(spin: THREE.Vector3, angle: number, len: number, cam: THREE.Camera, res: THREE.Vector2, time: number, power = 0.9) {
     const z = spin.clone().normalize();
-    const ref = Math.abs(z.z) < 0.9 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);
-    const x = new THREE.Vector3().crossVectors(ref, z).normalize(), y = new THREE.Vector3().crossVectors(z, x);
-    const tilt = 35 * Math.PI / 180;
-    const m = z.clone().multiplyScalar(Math.cos(tilt)).add(x.multiplyScalar(Math.sin(tilt) * Math.cos(angle))).add(y.multiplyScalar(Math.sin(tilt) * Math.sin(angle)));
+    let m = z;
+    if (this.kind === 'beam') {
+      const ref = Math.abs(z.z) < 0.9 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);
+      const x = new THREE.Vector3().crossVectors(ref, z).normalize(), y = new THREE.Vector3().crossVectors(z, x);
+      const tilt = 35 * Math.PI / 180;
+      m = z.clone().multiplyScalar(Math.cos(tilt)).add(x.multiplyScalar(Math.sin(tilt) * Math.cos(angle))).add(y.multiplyScalar(Math.sin(tilt) * Math.sin(angle)));
+    }
     this.q.setFromUnitVectors(new THREE.Vector3(0, 0, 1), m);
     this.group.quaternion.copy(this.q);
     this.group.scale.setScalar(len);
@@ -159,8 +308,7 @@ export class PulsarBeams {
     const wq = this.group.getWorldQuaternion(new THREE.Quaternion());
     for (const mt of this.mats) {
       const u = mt.uniforms;
-      // a magnetar's beams flicker as its crust shifts
-      u.power.value = this.strong ? 0.85 + 0.15 * Math.sin(time * 9) * Math.sin(time * 3.7) : 0.9;
+      u.power.value = this.kind === 'beam' && this.strong ? power * (0.85 + 0.15 * Math.sin(time * 9) * Math.sin(time * 3.7)) : power;
       u.time.value = time;
       (u.base.value as THREE.Vector3).copy(origin);
       (u.axis.value as THREE.Vector3).set(0, 0, mt.userData.sign).applyQuaternion(wq).normalize();

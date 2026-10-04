@@ -1,4 +1,5 @@
 import { World } from './physics/world';
+import { Feeding } from './physics/feeding';
 import type { Body, Look, Cls, StarState } from './physics/body';
 import { assignHosts, hostOfPoint } from './physics/analysis';
 import { buildPreset, PRESETS } from './physics/presets';
@@ -165,7 +166,9 @@ export class App {
     return null;
   };
   hillOf = (b: Body) => this.hosts.get(b)?.hill ?? Infinity;
-  accRate = (b: Body) => this.view.accRate(b);
+  /** what compact objects have swallowed, settling into discs and lighting jets */
+  readonly feeding = new Feeding();
+  accRate = (b: Body) => this.feeding.get(b)?.rate ?? 0;
 
   /** world position of the view centre */
   centre(): P3 {
@@ -469,6 +472,7 @@ export class App {
     let got = 0;
     if (!this.paused) {
       got = this.world.step(this.warp * dtReal, now + 11);
+      this.feeding.update(this.world, got, dtReal);
       const inst = dtReal > 0 ? got / dtReal : 0;
       this.rate = this.rate ? this.rate + (inst - this.rate) * Math.min(1, dtReal * 3) : inst;
     }
@@ -508,7 +512,7 @@ export class App {
     this.view.render({
       bodies: this.world.bodies, visual: this.visual, sources: this.world.sources,
       hostOf: this.hostOf, hillOf: this.hillOf, flags: this.flags, selected: this.selected, focus: this.focus,
-      dtSim: got, dtReal, timeReal: now / 1000, simTime: this.world.time,
+      dtSim: got, dtReal, timeReal: now / 1000, simTime: this.world.time, disc: b => this.feeding.get(b),
     });
     this.updateLabels();
     this.onFrame();

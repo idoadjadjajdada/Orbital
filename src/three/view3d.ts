@@ -23,7 +23,7 @@ import { Giant, HULL_BAR } from './giant';
 import { starMaterial, tickStar, dropStar } from './star';
 import { Lights, LIGHT_GLSL } from './lights';
 import { HoleLook } from './hole';
-import { NebulaLook, PulsarBeams, DustDisc } from './exotic';
+import { NebulaLook, PulsarLook, DustDisc } from './exotic';
 
 /**
  * The sandbox seen from inside it, at true scale. The scene is laid out in
@@ -49,7 +49,7 @@ interface Obj {
   /** a black hole's traced look, and when its disc's extent was last measured */
   hole?: HoleLook; holeT?: number;
   /** a nebula's shell round its star, a pulsar's beams, a young star's dusty disc; the shell's radius (AU) and when it was measured */
-  neb?: NebulaLook; beams?: PulsarBeams; dust?: DustDisc; shellR?: number; shellT?: number;
+  neb?: NebulaLook; beams?: PulsarLook; dust?: DustDisc; shellR?: number; shellT?: number;
 }
 
 const VERT = /* glsl */ `
@@ -470,6 +470,8 @@ export class View3D {
     this.sky = starField();
     this.sky.renderOrder = -2;
     this.scene.add(this.sky);
+    this.galaxy = milkyWay();
+    this.scene.add(this.galaxy);
     this.lights = new Lights(this.scene, this.glowTex);
     this.ground = new Ground(this.scene, this.lights.uniforms);
     this.ground.onFind = (what, note) => this.found(what, note);
@@ -1334,7 +1336,7 @@ export class View3D {
         mk.push(rel[0], rel[1], rel[2]);
         mc.push(t[0], t[1], t[2]);
       }
-      const glowy = b.cls === 'star' || b.cls === 'wd' || b.cls === 'ns' || b.look.white || b.look.wormhole || (b.cls === 'bh' && this.app.accRate(b) > 0);
+      const glowy = b.cls === 'star' || b.cls === 'wd' || b.cls === 'ns' || b.look.white || b.look.wormhole || (b.cls === 'bh' && this.app.feeding.level(b) > 0.02);
       if (angPx < 0.6 && !glowy && !b.feed) continue;
       seen.add(b);
       let o = this.objs.get(b);
@@ -1349,6 +1351,7 @@ export class View3D {
     }
     setPoints(this.markers, mk, mc);
     this.sky.visible = !tunnel;
+    this.galaxy.visible = !tunnel;
 
     // particles: gas and debris
     const pp: number[] = [], pc: number[] = [];
@@ -1929,7 +1932,7 @@ export class View3D {
       group.add(m);
     } else if (b.cls === 'bh') {
       o.kind = 'hole';
-      o.hole = new HoleLook(this.glowTex);
+      o.hole = new HoleLook(this.glowTex, this.skyCube());
       group.add(o.hole.group);
     } else if (b.cls === 'star' || b.cls === 'wd' || b.cls === 'ns') {
       o.kind = 'star';
@@ -2103,6 +2106,31 @@ export class View3D {
     } else u.hasAtmo.value = 0;
   }
 
+  /**
+   * the sky at infinity as a cube map, made once: what a black hole's traced rays look up along their bent
+   * paths, so the stars behind it are lensed and its shadow is a hole in them
+   */
+  private skyCubeTex: THREE.CubeTexture | null = null;
+  /** the Milky Way: the faint glow behind the stars */
+  private galaxy: THREE.Mesh;
+  private skyCube() {
+    if (!this.skyCubeTex) {
+      const rt = new THREE.WebGLCubeRenderTarget(1024, { generateMipmaps: false });
+      const cc = new THREE.CubeCamera(1e16, 1e19, rt);
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x000000);
+      const pts = new THREE.Points(this.sky.geometry, this.sky.material);
+      pts.frustumCulled = false;
+      const gal = new THREE.Mesh(this.galaxy.geometry, this.galaxy.material);
+      gal.frustumCulled = false;
+      gal.renderOrder = -3;
+      scene.add(gal, pts);
+      cc.update(this.renderer, scene);
+      this.skyCubeTex = rt.texture;
+    }
+    return this.skyCubeTex;
+  }
+
   /** a star's temperature for its look: a neutron star's surface is a million degrees, an X-ray glare */
   private teffOf(b: Body) { return b.cls === 'ns' ? 6e5 : b.star?.teff ?? (b.cls === 'wd' ? 25000 : 5772); }
 
@@ -2111,11 +2139,11 @@ export class View3D {
     const now = performance.now() / 1000;
     const res = this.renderer.getDrawingBufferSize(new THREE.Vector2());
     if (b.look.pulsar) {
-      if (!o.beams) { o.beams = new PulsarBeams(!!b.look.magnetar); o.group.add(o.beams.group); }
+      if (!o.beams) { o.beams = new PulsarLook(!!b.look.magnetar); o.group.add(o.beams.group); }
       const axis = new THREE.Vector3(...bodyAxis(b));
-      // turned at the speed it spins, slowed to something the eye can follow (a pulsar's thirty turns a second would strobe)
+      // its beams turned at the speed it spins, slowed to something the eye can follow (a pulsar's thirty turns a second would strobe)
       const period = Math.max(b.look.magnetar ? 5 : 1.6, 2 * Math.PI / Math.max(1e-9, Math.abs(b.spin)));
-      o.beams.update(axis, (now / period) * 2 * Math.PI, 4000, this.camera, res, now);
+      o.beams.update(axis, (now / period) * 2 * Math.PI, this.camera, res, now % 4200);
     }
     if (b.kind === 'pne' || b.kind === 'snr') {
       if (!o.shellT || now - o.shellT > 4) {
@@ -2152,24 +2180,25 @@ export class View3D {
     if (!o.holeT || now - o.holeT > 4000) {
       o.holeT = now;
       const ds: number[] = [];
+      // (only gas bound to the hole: going round it, not flying past)
+      const GM = 4 * Math.PI * Math.PI * b.m;
       for (const p of this.app.world.bodies) {
         if (!p.alive || !p.isParticle) continue;
-        const d = Math.hypot(p.x - b.x, p.y - b.y, p.z - b.z) / rs;
-        if (d < 3e6) ds.push(d);
+        const r = Math.hypot(p.x - b.x, p.y - b.y, p.z - b.z), d = r / rs;
+        const v2 = (p.vx - b.vx) ** 2 + (p.vy - b.vy) ** 2 + (p.vz - b.vz) ** 2;
+        if (d < 3e6 && v2 < 2 * GM / r) ds.push(d);
       }
       ds.sort((x, y) => x - y);
       look.setOuter(ds.length > 30 ? Math.max(16, Math.min(2e6, ds[Math.floor(ds.length * 0.85)])) : 16);
     }
-    // how hard it is fed: by what it is given (a quasar's, a microquasar's), or by what falls in
-    const rate = this.app.accRate(b);
-    const fed = rate > 0 ? Math.max(0, Math.min(1, (Math.log10(rate / (2.2e-8 * b.m)) + 4) / 4)) : 0;
-    const feeding = b.feed > 0 && b.feedLeft > 0;
-    const glow = Math.max(feeding ? 0.85 : 0, fed);
-    const axis = new THREE.Vector3(b.lx, b.ly, b.lz);
-    if (axis.lengthSq() < 1e-20) axis.set(0, 0, 1);
+    // its disc as it has built up from what it has actually swallowed (physics/feeding.ts): none round a hole
+    // that has eaten nothing, growing over a meal, fading after; a fed nucleus starts with it in place
+    const st = this.app.feeding.get(b);
+    const glow = st?.level ?? 0, jet = st?.jet ?? 0;
+    const axis = new THREE.Vector3(...(st?.axis ?? [0, 0, 1]));
     // stellar holes' discs are hotter (X-ray bright); a quasar's runs cooler at the same brightness
     const hue = b.m < 1e3 ? 1 : 0.4;
-    look.update(axis, glow, feeding ? 1 : fed, this.camera, this.renderer.getDrawingBufferSize(new THREE.Vector2()), (now / 1000) % 4200, hue);
+    look.update(axis, glow, jet, this.camera, this.renderer.getDrawingBufferSize(new THREE.Vector2()), (now / 1000) % 4200, hue);
   }
 
 
@@ -2301,6 +2330,48 @@ function glowTexture() {
 }
 
 /** the sky at infinity: stars in their real spread of colour and brightness */
+/**
+ * The Milky Way across the sky: the faint band of the galaxy's disc seen from inside it, brightest toward
+ * its centre (in Sagittarius, ecliptic longitude 266°, latitude −5.5°; its pole at 180°, +30°), crossed by
+ * dark lanes of dust. Faint, as it is: it is what a black hole's shadow shows up against.
+ */
+function milkyWay() {
+  const D = Math.PI / 180;
+  const dir = (lon: number, lat: number) => new THREE.Vector3(Math.cos(lat * D) * Math.cos(lon * D), Math.cos(lat * D) * Math.sin(lon * D), Math.sin(lat * D));
+  const m = new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, depthTest: false, fog: false,
+    uniforms: { pole: { value: dir(180, 30) }, centre: { value: dir(266, -5.5) } },
+    vertexShader: /* glsl */ `
+      varying vec3 vD;
+      void main() { vD = position; vec4 p = projectionMatrix * mat4(mat3(modelViewMatrix)) * vec4(position, 1.0); gl_Position = p.xyww; }`,
+    fragmentShader: /* glsl */ `
+      uniform vec3 pole;
+      uniform vec3 centre;
+      varying vec3 vD;
+      float hash3(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+      float vnoise3(vec3 x) {
+        vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(mix(hash3(i), hash3(i + vec3(1, 0, 0)), f.x), mix(hash3(i + vec3(0, 1, 0)), hash3(i + vec3(1, 1, 0)), f.x), f.y),
+                   mix(mix(hash3(i + vec3(0, 0, 1)), hash3(i + vec3(1, 0, 1)), f.x), mix(hash3(i + vec3(0, 1, 1)), hash3(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+      }
+      void main() {
+        vec3 d = normalize(vD);
+        float b = asin(clamp(dot(d, pole), -1.0, 1.0));
+        float toC = dot(d, centre);
+        float n = vnoise3(d * 6.0) * 0.5 + vnoise3(d * 14.0) * 0.3 + vnoise3(d * 35.0) * 0.2;
+        float band = exp(-pow(b / 0.16, 2.0)) * (0.55 + 0.8 * n) + exp(-pow(b / 0.45, 2.0)) * 0.18;
+        float bulge = exp(-pow(acos(clamp(toC, -1.0, 1.0)) / 0.35, 2.0)) * 0.9;
+        float lanes = 1.0 - 0.6 * smoothstep(0.55, 0.75, vnoise3(d * 9.0 + 3.0)) * exp(-pow(b / 0.06, 2.0));
+        float I = (band * (0.6 + 0.6 * max(toC, 0.0)) + bulge) * lanes * 0.045;
+        gl_FragColor = vec4(vec3(0.95, 0.88, 0.78) * I, 1.0);
+      }`,
+  });
+  const s = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 32), m);
+  s.frustumCulled = false;
+  s.renderOrder = -3;
+  return s;
+}
+
 function starField() {
   const n = 5000, pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
   let s = 12345;
