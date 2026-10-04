@@ -538,6 +538,18 @@ walls and furniture cut through at knee to head height. So you climb the
 stairs step by step, go in and out through real doorways, and stop at a desk
 or a bunk. Inside, the ceiling lights nearest you come on.
 
+**The ground close up** is lit pixel by pixel. Within a couple of hundred
+metres the shader tilts the light over a relief of grit, stones and hummocks,
+so they catch the sun, and shows what the ground is made of:
+- steep or rough ground is bare rock in strata, cracked;
+- loose ground has stones and pebbles standing out of it;
+- the sand of Mars and Titan lies in wind ripples;
+- ice is smooth and cracked in long lines, glinting where a facet turns the
+  sun to you;
+- Io's and Venus's lava rock is dark and pitted with gas bubbles.
+
+It fades out with distance, so it costs nothing further off.
+
 **The growth lab** is a bench of six glass chambers in front of the dome's
 greenhouse racks. Each chamber runs one experiment: a soil, a plant, and
 whatever you did to the soil first, grown under lights at a day a minute, its

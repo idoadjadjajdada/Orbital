@@ -2,6 +2,7 @@
 
 What's in the game, newest first. The README has the full description.
 
+- **The ground close up**: lit pixel by pixel over its relief; rock in strata, stones and pebbles, sand ripples, cracked and glinting ice, pitted lava rock (fa4f147, 4d02d5c); [before and after](Feedback/2026-10-04.md#feature-better-textures-in-general-and-specifically-on-the-land-of-planets-and-things)
 - **Dock and Go aboard** for every station in Mission Control (62bddbc)
 - **The notes app** (with its own home-screen icon) at https://idoadjadjajdada.github.io/Orbital/notes/: read, tick, edit and add to these notes from a phone; and `AGENTS.md`, the brief for anyone working on the project
 - **Ruins** on the worlds, rare, tinted to the ground, walkable, logged (4d8f3ac)
