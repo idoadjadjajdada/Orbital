@@ -286,17 +286,49 @@ you land on your feet; `G` brings the ship down beside you. Mission control
 lists the real landing sites and flies you to any of them.
 
 **The ground** comes from the same painter as the world's map, so Olympus
-Mons, Hellas, the maria and the Natural Earth continents are where the map has
-them, scaled to each world's measured relief (the spread of its elevations
-from LOLA, MOLA and Magellan: the Moon's maria sit 2 km below its highlands,
-Olympus 25 km over Hellas). Below what the map can hold, fractal hills, crater
-fields at every scale on airless worlds (fresh and worn), boulders strewn in a
-power law, and dunes where there is sand and wind carry the detail down to the
-metre. It is built in a worker as rings round the point under you, fine
-underfoot and coarse at the horizon, and rebuilt as you move. Venus's and
+Mons, Hellas, the maria and the continents are where the map has them, scaled
+to each world's measured relief (the spread of its elevations from LOLA, MOLA
+and Magellan: the Moon's maria sit 2 km below its highlands, Olympus 25 km
+over Hellas). The Earth's land stands on NASA's SRTM topography, so the
+Himalaya, the Andes, the Alps, Tibet and the Altiplano are where they are, as
+high as they are, and how rugged the ground is follows the measured relief
+round it: sharp ridges and glacier-cut valleys in the high ranges, gentle
+swells on the plains. Below what the map can hold, fractal hills, crater
+fields at every scale on airless worlds (fresh and worn), boulders, and dunes
+where there is sand and wind carry the detail down to the metre. Above the
+tree line the ground is bare rock, above the snow line snow (both lower
+toward the poles), and steep slopes shed their snow and soil to show crags.
+
+It is one continuous world, the same wherever you stand: a fixed lattice of
+tiles on a cube round it, each split into four finer ones near you, coarse at
+the horizon and down to half a metre underfoot, built in two workers and kept
+for when you come back. A tile is always the same tile, and the boulders on it
+come from a lattice fixed to the world, so walking never changes the ground in
+front of you. Venus's and
 Titan's maps are their cloud tops, so their ground has its own painters, from
 the radar: Ishtar, Maxwell Montes, Aphrodite; Titan's dune seas, Xanadu and
 its northern methane seas. Seas are flat and shine.
+
+**Mountains you can find.** The great summits are raised to their measured
+heights in their own shapes, sites Mission control flies you to: Everest, K2,
+Kangchenjunga and Makalu as horns with arêtes, Mont Blanc and Denali as
+massifs, Kilimanjaro, Fuji, Elbrus, Rainier and Etna as volcanoes with summit
+craters, Mauna Kea and Mauna Loa as shields, the Matterhorn, Uluru's sheer
+monolith; on Mars, **Olympus Mons** whole — its nested caldera, the long
+shield and the cliffs up to 8 km high round its foot — and Mount Sharp; on the
+Moon, Mons Hadley and Huygens. A made-up rocky world gets folded mountain belts
+where its crust is pushed together.
+
+**Arches, overhangs and caves.** A heightfield cannot hold an arch or a cave,
+so these are rock of their own standing on the ground, on a fixed lattice
+about a kilometre a cell, each cell's setting deciding what it holds: natural
+arches and stands of hoodoos in sandstone deserts (Mars is full of them),
+rock shelters under overhangs, frost-split spires on rugged ground, limestone
+caves with stalactites in wet country, ice caves on frozen worlds, lava tubes
+in the Moon's maria. Their rock stops you; walk into a cave and its floor
+carries you, its roof stops your jumps, the daylight dies away behind you and
+your helmet lamp shows the way (shaded rock outside gets light bounced off the
+sunlit ground).
 
 **The sky** is the colour the air makes it: blue on the Earth, butterscotch
 with blue sunsets on Mars (its dust lights a sky the thin gas alone could not),
@@ -306,6 +338,10 @@ thickly as the air and its dust make it — on the Earth a mountain 60 km off is
 a pale shape and one past 100 km is gone, and the buildings and craft on the
 ground fade with it, as do their labels, which also stop at the horizon;
 under Venus's clouds the light comes from the whole sky.
+
+**What the day hides.** Under a daylit sky only what is bright enough shows:
+the Sun, the Moon's disc; faint moons and planets, the belts' rubble and their
+labels fade out until dusk.
 
 **Light you bring.** `N` switches on the ship's floodlight: a beam from its
 nose that reaches the ground from orbit, so the night side can be seen (on foot
@@ -363,8 +399,17 @@ the nearest:
 - a **rover** drives off a lander, or is dropped on its own, and stops every
   60 m to sample the rock (a lake-bed mudstone, haematite blueberries,
   anorthosite, a nickel-iron meteorite…);
-- a **station**, ISS-sized, goes into orbit; a **base** is built on the ground
-  beside the landed ship.
+- a **station**, ISS-sized, goes into orbit;
+- a **base** or a **launch pad** is built where you choose: a see-through model
+  stands where you look, red where it cannot go (water, too steep, too close
+  to something), and `F` builds it there;
+- an **orbital lamp** is hung over where you are.
+
+From the ground, anything going up into space leaves from a **launch pad** on
+its rocket: build one first. The Earth starts with the **ISS** in its real
+orbit (420 km, 51.6°) and bases with launch pads beside Cape Canaveral and
+Baikonur. Bases stand level on a terrace and pads on their aprons, ground you
+walk and land on.
 
 Each reports as it goes. **View** any of them and the camera goes to it; a
 rover you can drive. Their labels show in the view.
@@ -376,7 +421,65 @@ nearest, the mouse steers, and when you let go it holds a hover. Low down it
 levels itself; `L` brings it straight down onto its legs (gently, slowing as
 the ground comes up). `F` steps out onto the ground; walk back to it and `F`
 boards again; `L` (or a push on the stick) lifts off. Fly back within a
-hundred metres of the ship and `F` docks it in the hangar.
+hundred metres of the ship and `F` docks it in the hangar. With a launch pad it
+shuttles by itself: from a pad, `F` flies it up to the ship and into the
+hangar; out of the hangar near a world with a pad, `F` flies it there and sets
+it down on the pad's circle. Touch the controls to take it back.
+
+### Inside the station and the bases
+
+**The station** is laid out as the ISS is, inside and out from one list of
+modules, and you float through it (`W` `A` `S` `D` the way you look, `Space`
+`C` up and down): the docking adapter, Zvezda's galley and sleep stations, the
+Unity node with the Columbus lab (experiments, a glovebox, lettuce growing
+under pink light) on one side and Kibo's robotics post and airlock on the
+other, Tranquility's life support and treadmill with the **Cupola** under it
+— seven windows looking down at the world turning below — Destiny's command
+post and comms, and stowage with the suits. Racks, cables, handrails and light
+strips line every module; the screens show live readings (the orbit, the
+ground track, the air and water, the arm). From the helm, **dock** with a
+station (the ship flies to it if it is far) and the ship's airlock opens into
+it; leave by Kibo's airlock on a spacewalk and come back in the same way.
+
+**A base** has the commons dome (its table with the world turning over it as a
+hologram, the command console, the galley, the hydroponics), a lab dome with
+the sample analyser and spectrometer, quarters with the suit room, a garage
+with its rover, and an airlock; windows in the domes look out. Walk in through
+its airlock or its garage door. Its console (or `G` on the ground near it)
+**calls the ship to its pad**, and the ship flies over and lands there; the
+garage's rover drives out of the big door with you at the wheel.
+
+### The suit and what you ride
+
+**The suit** reads what is outside and does what it takes to keep you alive:
+sealed and pressurised in a vacuum, a hard shell against Venus's 92 bar,
+cooling at full in its 460 °C, heaters on Titan, filters against sulphur
+dioxide, ammonia or hydrogen cyanide, shielding against radiation (Jupiter's
+belts at Io and Europa would kill you in hours without it), the visor open only
+where the air is fit to breathe. Doing it costs oxygen and power, faster the
+harsher it is outside; the visor shows them, it warns when they run low and
+carries a reserve, and the ship's airlock, a base's suit room and the station
+top it up. Its kit: the scanner (`R`), the lamp (`N`), a **jetpack** (`J`, then
+`Space` to fire) and a **sampler** (`T`) that fills a case of ten samples for a
+lab to analyse into the log.
+
+On the ground `B` brings out a **buggy** like the Apollo rovers, and `B` again a
+**hover bike**, fast, riding a metre over rock, sand and water alike.
+
+### The ship and the animals
+
+The ship has a long prow under the bridge glass, a dorsal spine with a glass
+bubble over the commons' skylight, swept wings with engine nacelles at their
+tips, a shroud round the main engines, canted tail fins, RCS blocks, sensor
+domes, running lights and its name on its flanks — none of it over a window.
+
+Each of the Earth's animals is built to its own body plan — the elephant's
+trunk, tusks and ears, the giraffe's neck and patches, the zebra's stripes,
+the bison's hump, antlered deer and moose, maned lions and spotted cats, foxes
+with their brushes, bears and apes, penguins, birds, scorpions — and a made-up
+world's animals get body plans of their own from their seed (six legs or four,
+stilts or stumps, eye-stalks, crests, glowing spots). They walk with their legs
+swinging in a gait, heads nodding and tails swaying; birds flap.
 
 ### The instruments
 
@@ -664,8 +767,11 @@ src/pixel/     the map renderer: surface maps (worlds.ts paints the real ones, b
 src/pixel/data/earth.ts     generated from Natural Earth by tools/fetch-earth.py
 src/pixel/data/mars-*       Mars' heights and colour, baked by tools/bake-mars.py (marsdata.ts loads them)
 src/pixel/data/sun-map.jpg  the Sun's surface, baked by tools/bake-sun.py (star.ts animates it)
+src/pixel/data/earth-height.png  the Earth's land elevation (NASA SRTM), baked by tools/bake-earth-height.py (earthdata.ts loads it)
 src/three/     the 3D view (three.js, loaded on demand), its flying controls, the ship (hull.ts), its consoles (panels.ts, survey.ts) and its scope;
-               the ground (terrain.ts, built in terrainworker.ts; ground.ts draws it with its sky and what stands on it), giant
+               the ground (terrain.ts, its tiles built in terrainworker.ts and chosen in tiles.ts; ground.ts draws it with its sky and
+               what stands on it), real mountains (peaks.ts), arches and caves (landforms.ts), interiors (interior.ts) and being in
+               them (visit.ts), choosing where to build (placer.ts), the suit and vehicles (suit.ts), animals (fauna.ts), giant
                interiors (giant.ts), the craft (fleet.ts, craftmesh.ts), what the instruments read (science.ts), real sites (sites.ts),
                the stars (star.ts), black holes (hole.ts), nebulae, pulsars and dusty discs (exotic.ts) and the lights you bring (lights.ts)
 src/physics/data/moons.ts   generated from JPL by tools/fetch-moons.py
