@@ -285,6 +285,39 @@ void main() {
 /** the great storms that turn on themselves (lon E, lat, half-sizes °, as the painters place them): Jupiter's Great Red Spot, Neptune's Great Dark Spot */
 const VORTEX: Record<string, [number, number, number, number]> = { Jupiter: [60, -22, 8.5, 6], Neptune: [30, -22, 9, 5.8] };
 
+const GLOW_VERT = /* glsl */ `
+#include <common>
+#include <logdepthbuf_pars_vertex>
+uniform float K;
+varying vec3 vL;
+void main() {
+  vL = position * K;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  #include <logdepthbuf_vertex>
+}`;
+const GLOW_FRAG = /* glsl */ `
+#include <common>
+#include <logdepthbuf_pars_fragment>
+uniform vec3 col;
+uniform vec3 camL;
+uniform float K;
+uniform float strength;
+varying vec3 vL;
+void main() {
+  #include <logdepthbuf_fragment>
+  vec3 d = normalize(vL - camL);
+  // how near the line of sight passes the centre, in the body's radii
+  float tc = -dot(camL, d);
+  float x = tc > 0.0 ? length(camL + d * tc) : length(camL);
+  // (just inside the limb too, to cover the gap between the round body and its many-sided mesh)
+  if (x < 0.95) discard;
+  float y = max(0.0, x - 1.0);
+  float I = (exp(-y / 0.22) * 0.5 + exp(-y / 1.1) * 0.08 + exp(-y / 4.0) * 0.012) * (1.0 - smoothstep(0.7 * K, K, x)) * strength;
+  // dithered, so the faint wide glare does not show 8-bit steps
+  float n = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+  gl_FragColor = vec4(max(vec3(0.0), col * I + (n - 0.5) / 255.0), 1.0);
+}`;
+
 const PART_VERT = /* glsl */ `
 #include <common>
 #include <logdepthbuf_pars_vertex>
@@ -335,7 +368,7 @@ export class View3D {
   readonly lights: Lights;
   /** the air's haze, for the meshes on the ground (the ground's own shader has its own) */
   private haze = new THREE.FogExp2(0x000000, 0);
-  private sphere = new THREE.SphereGeometry(1, 48, 24);
+  private sphere = new THREE.SphereGeometry(1, 128, 64);
   private labels: HTMLElement;
   private labelEls = new Map<Body | string, HTMLElement>();
   controls: Controls3D;
@@ -1931,11 +1964,29 @@ export class View3D {
     return o;
   }
 
+  /**
+   * the glare round a bright body, `k` of its radii out: a shell round it whose every pixel works out how
+   * near its line of sight passes the body, so it is right from any distance, inside it or out
+   * (a sprite that size misdraws close up)
+   */
   private glow(color: number, k: number) {
-    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.glowTex, color, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }));
-    s.scale.setScalar(k * 2);
+    const m = new THREE.ShaderMaterial({
+      vertexShader: GLOW_VERT, fragmentShader: GLOW_FRAG, side: THREE.BackSide, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      uniforms: { col: { value: new THREE.Color(color) }, camL: { value: new THREE.Vector3() }, K: { value: k }, strength: { value: 1 } },
+    });
+    const s = new THREE.Mesh(this.sphere, m);
+    s.scale.setScalar(k);
+    s.frustumCulled = false;
     s.name = 'glow';
     return s;
+  }
+
+  /** point a body's glare at the eye: the eye in the body's own units */
+  private aimGlow(g: THREE.Group, glow: THREE.Mesh, r: number, gg: number, b: number) {
+    const u = (glow.material as THREE.ShaderMaterial).uniforms;
+    (u.col.value as THREE.Color).setRGB(r, gg, b);
+    g.updateMatrixWorld(true);
+    (u.camL.value as THREE.Vector3).copy(g.worldToLocal(this.camera.getWorldPosition(new THREE.Vector3())));
   }
 
   private update(b: Body, o: Obj, stars: Body[], Rm: number) {
@@ -1949,14 +2000,14 @@ export class View3D {
       const mesh = g.children[0] as THREE.Mesh;
       if (o.mat) tickStar(o.mat, b.name === 'Sun' || b.look.real === 'Sun', this.teffOf(b), performance.now() / 1000);
       else (mesh.material as THREE.MeshBasicMaterial).color.setRGB(c[0], c[1], c[2]);
-      const glow = g.children[1] as THREE.Sprite;
-      if (b.name === 'Sun' || b.look.real === 'Sun') glow.material.color.setRGB(1, 0.78, 0.42);
-      else glow.material.color.setRGB(c[0], c[1], c[2]);
+      const glow = g.children[1] as THREE.Mesh;
       g.scale.setScalar(Rm);
+      if (b.name === 'Sun' || b.look.real === 'Sun') this.aimGlow(g, glow, 1, 0.78, 0.42);
+      else this.aimGlow(g, glow, c[0], c[1], c[2]);
       this.surrounds(b, o, Rm);
       return;
     }
-    if (o.kind === 'white' && o.mat) tickStar(o.mat, false, 60000, performance.now() / 1000);
+    if (o.kind === 'white' && o.mat) { tickStar(o.mat, false, 60000, performance.now() / 1000); g.scale.setScalar(Rm); this.aimGlow(g, g.children[1] as THREE.Mesh, 0.86, 0.91, 1); }
     if (o.kind === 'worm') tickMouth(g.getObjectByName('mouth') as THREE.Group, performance.now() / 1000, 1);
     if (o.kind !== 'world') {
       g.scale.setScalar(Rm);
