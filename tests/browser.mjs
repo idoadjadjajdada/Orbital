@@ -212,8 +212,9 @@ try {
   await page.keyboard.press('KeyF');
   await page.waitForTimeout(200);
   const f0 = await page.evaluate(() => window.orbital.v3.foot.p.z);
-  await page.keyboard.down('KeyS'); await page.waitForTimeout(600); await page.keyboard.up('KeyS');
-  ok('F leaves the helm, and you can walk the ship in the wormhole', await page.evaluate(f => { const v = window.orbital.v3; return v.mode === 'walk' && v.foot.p.z > f + 0.5 && !!v.ship.worm; }, f0));
+  await page.keyboard.down('KeyS');
+  ok('F leaves the helm, and you can walk the ship in the wormhole', await until(page, f => { const v = window.orbital.v3; return v.mode === 'walk' && v.foot.p.z > f + 0.5 && !!v.ship.worm; }, f0));
+  await page.keyboard.up('KeyS');
   await page.evaluate(() => { const v = window.orbital.v3; v.foot.p.set(0, 0, -19.6); v.foot.yaw = 0; v.foot.pitch = -0.6; });
   ok('the helm is in reach', await until(page, () => window.orbital.v3.prompt?.label === 'Take the helm'));
   await page.keyboard.press('KeyF');
@@ -221,8 +222,10 @@ try {
   await page.waitForFunction(() => !window.orbital.v3.ship.worm, null, { timeout: 30000 });
   ok('the wormhole comes out at the Sun and drains the drive', await page.evaluate(() => window.orbital.v3.nearest().b?.name === 'Sun' && window.orbital.v3.ship.charge < 0.2));
   await page.keyboard.press('KeyO');
-  await page.keyboard.down('KeyW'); await page.waitForTimeout(1500); await page.keyboard.up('KeyW');
-  ok('O overdrive flies faster than light', await page.evaluate(() => Math.hypot(...window.orbital.v3.ship.nav.vel) > 3e8));
+  // (held until it is going faster than light: frames can be slow in a software renderer)
+  await page.keyboard.down('KeyW');
+  ok('O overdrive flies faster than light', await until(page, () => Math.hypot(...window.orbital.v3.ship.nav.vel) > 3e8));
+  await page.keyboard.up('KeyW');
   await page.keyboard.press('KeyO');
   const view0 = await page.evaluate(() => window.orbital.v3.ship.view);
   await page.keyboard.press('KeyZ');
@@ -327,8 +330,9 @@ try {
   await page.evaluate(() => { const v = window.orbital.v3; v.lights.remove(v.lights.lamps[0]); });
   ok('Apollo 11 is found and logged', await until(page, () => window.orbital.v3.logbook.finds.some(f => /Apollo 11/.test(f.what))));
   const s0 = await page.evaluate(() => [...window.orbital.v3.surf.n]);
-  await page.keyboard.down('KeyW'); await page.waitForTimeout(1500); await page.keyboard.up('KeyW');
-  ok('W walks on the ground', await page.evaluate(n => { const m = window.orbital.v3.surf.n; return Math.hypot(m[0] - n[0], m[1] - n[1], m[2] - n[2]) * 1737e3 > 1; }, s0));
+  await page.keyboard.down('KeyW');
+  ok('W walks on the ground', await until(page, n => { const m = window.orbital.v3.surf.n; return Math.hypot(m[0] - n[0], m[1] - n[1], m[2] - n[2]) * 1737e3 > 1; }, s0));
+  await page.keyboard.up('KeyW');
   await page.keyboard.press('Space');
   await page.waitForTimeout(400);
   ok('Space jumps, and in a sixth of a g you stay up', await page.evaluate(() => window.orbital.v3.surf.y > 0.6));
