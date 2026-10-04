@@ -350,8 +350,9 @@ export class Renderer {
         // a thin disc is hotter inward as r^-3/4: red at the rim, blue-white at the inner edge
         // (the gas's own heat counts only past the warmth it is set going with: a shock, a collision)
         const h = Math.max((b.heat - 0.6) * 2.5, Math.min(1, Math.pow((3 * inner) / nd, 0.75)));
-        c = blackbody(2500 + 30000 * h * h);
-        w = 0.5 + 2.5 * h * h;
+        // in the disc's fire colours (deep orange far out, gold to white inward), never quite dark: the torus shows
+        c = near.cls === 'bh' ? [1, 0.32 + 0.6 * h, 0.06 + 0.7 * h * h] : blackbody(2500 + 30000 * h * h);
+        w = (near.cls === 'bh' ? 2.4 : 0.5) + 2.5 * h * h;
         sz = 0.04 * nd * this.scale;
       } else if (b.cls === 'gasp') {
         const base = hex3(b.look.c1), h = b.heat;
@@ -549,7 +550,7 @@ export class Renderer {
     // (never drawn longer than the screen: zoomed in on a giant hole it would be billions of pixels)
     const rs = schwarzschild(b.m);
     const len = Math.min(2 * (this.W + this.H), Math.max(30, rs * this.scale * (800 + 6000 * j.power)));
-    // the disc it feeds from: out to most of the gas round it, measured now and then
+    // the disc it feeds from: its bright inner part (the gas further out is drawn as gas), measured now and then
     let ext = this.discExt.get(b);
     if (!ext || s.timeReal - ext.t > 3) {
       const ds: number[] = [];
@@ -558,7 +559,7 @@ export class Renderer {
       ext = { t: s.timeReal, r: ds.length > 30 ? Math.max(16, Math.min(2e6, ds[Math.floor(ds.length * 0.85)])) : 16 };
       this.discExt.set(b, ext);
     }
-    if (b.cls === 'bh') drawAccretion(this.ctx, b, d.sx, d.sy, rs * this.scale, Math.min(ext.r, (this.W + this.H) / Math.max(1e-9, rs * this.scale)), j.power, s.timeReal);
+    if (b.cls === 'bh') drawAccretion(this.ctx, b, d.sx, d.sy, rs * this.scale, Math.min(ext.r, 60, (this.W + this.H) / Math.max(1e-9, rs * this.scale)), j.power, s.timeReal);
     drawJet(this.ctx, b, d.sx, d.sy, d.r, j.power, len, s.timeReal, this.haloFn);
   }
 

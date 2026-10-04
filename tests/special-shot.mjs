@@ -31,6 +31,8 @@ try {
   if (process.env.HIDEUI !== '0') await page.evaluate(() => document.querySelectorAll('.hud, #inspector, .toasts').forEach(e => { e.style.visibility = 'hidden'; }));
   await page.screenshot({ path: `${out}-map.png` });
   await page.evaluate(() => document.querySelectorAll('.hud, #inspector, .toasts').forEach(e => { e.style.visibility = ''; }));
+  // MAPONLY=1: just the map
+  if (process.env.MAPONLY) { console.log('saved', out); process.exit(0); }
   await page.keyboard.press('KeyV');
   await page.waitForFunction(() => window.orbital.v3?.active, null, { timeout: 30000 });
   const place = ([k, d, el, ext]) => {
@@ -48,7 +50,9 @@ try {
     v.travel = null;
     v.ship.nav.anchor = b; v.ship.nav.off = dir.map(q => q * ext * d); v.ship.nav.vel = [0, 0, 0];
     const V = v.camera.position.constructor;
-    v.ship.quat.setFromUnitVectors(new V(0, 0, -1), new V(-dir[0], -dir[1], -dir[2]));
+    // looking at it, its disc's axis up the screen
+    const M = new window.__THREE.Matrix4().lookAt(new V(0, 0, 0), new V(-dir[0], -dir[1], -dir[2]), new V(z[0], z[1], z[2]));
+    v.ship.quat.setFromRotationMatrix(M);
     v.ship.view = 'chase';
   };
   await page.evaluate(place, [key, +dist, +el, info.ext]);

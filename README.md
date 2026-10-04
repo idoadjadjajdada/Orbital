@@ -73,13 +73,16 @@ the rings behind it.
 ray of light back through the hole's gravity (the photon orbit equation in
 Schwarzschild space). Rays that fall in make the shadow, 2.6 horizons across;
 rays that skim the photon sphere make the thin ring round it; rays that cross
-the accretion disc pick up its light, so the far side of the disc shows bent
-up over the top of the hole and under it, as in *Interstellar*. The disc runs
-from the innermost stable orbit out to the gas round the hole (out past a
-million horizons round TON 618), white-hot inside, gold, then dull red,
-following the thin-disc temperature law. Its gas goes round at the orbital
-speed of each radius, and the side coming toward you is brighter and bluer
-(Doppler beaming at up to half the speed of light). From far off a fed hole
+the accretion disc pick up its light, so seen edge-on the far side of the
+disc arches up over the top of the hole and its underside shows as a ring
+beneath it, as in NASA's visualisations and *Interstellar*. The disc burns
+deep red through orange to gold and near white where it is brightest, bright
+from the innermost stable orbit out to a few tens of horizons (the thin-disc
+temperature law) and drawn out by the shear into fine streaks; the dim gas
+further out (round TON 618, a torus hundreds of horizons across) glows deep
+orange. Its gas goes round at the orbital speed of each radius, and the side
+coming toward you is brighter (Doppler beaming at up to half the speed of
+light). From far off a fed hole
 is a brilliant point, as quasars are. Its jets are glowing plasma along the
 spin axis, brightest down the spine, with knots streaming outward. The stars
 behind a hole are lensed into arcs. On the map the same disc is drawn tilted

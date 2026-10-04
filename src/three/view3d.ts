@@ -1353,15 +1353,22 @@ export class View3D {
     // particles: gas and debris
     const pp: number[] = [], pc: number[] = [];
     // gas a traced look already draws (a hole's disc, a nebula's shell) is not drawn again as dots over it
-    const drawn: { b: Body; r: number }[] = [];
+    const drawn: { b: Body; r: number }[] = [], tori: { b: Body; r: number }[] = [];
     for (const [b, o] of this.objs) {
       if (!o.group.visible) continue;
-      if (o.hole && o.hole.outer > 20) drawn.push({ b, r: o.hole.outer * schwarzschild(b.m) * 1.15 });
+      // (only within the disc's bright part: the dim gas beyond shows as itself, a torus round the hole)
+      if (o.hole && o.hole.outer > 20) { drawn.push({ b, r: Math.min(o.hole.outer, 60) * schwarzschild(b.m) }); tori.push({ b, r: o.hole.outer * schwarzschild(b.m) * 1.3 }); }
       if (o.neb && o.neb.mesh.visible && o.shellR) drawn.push({ b, r: o.shellR * 2 });
     }
     if (!blind) for (const p of app.world.bodies) {
       if (!p.alive || p.source || !p.isParticle) continue;
       if (p.cls === 'gasp' && drawn.some(q => Math.hypot(p.x - q.b.x, p.y - q.b.y, p.z - q.b.z) < q.r)) continue;
+      // a hole's torus glows in its disc's colours, deep orange
+      if (p.cls === 'gasp' && tori.some(q => Math.hypot(p.x - q.b.x, p.y - q.b.y, p.z - q.b.z) < q.r)) {
+        pp.push((p.x - P[0]) * AU_M, (p.y - P[1]) * AU_M, (p.z - P[2]) * AU_M);
+        pc.push(1, 0.36, 0.08);
+        continue;
+      }
       pp.push((p.x - P[0]) * AU_M, (p.y - P[1]) * AU_M, (p.z - P[2]) * AU_M);
       const c = p.look.c1, h = p.heat;
       const r = ((c >> 16) & 255) / 255, g = ((c >> 8) & 255) / 255, bl = (c & 255) / 255;
