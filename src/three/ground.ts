@@ -138,27 +138,27 @@ void main() {
   // octave coming in once it spans a few pixels; its slope tilts the light and it mottles the colour
   float fwm = max(length(fwidth(vFar)), 1e-3), br = 0.0, Hh = 0.0, amp = 1.0;
   // (frequencies a whole number of times round the far lattice's period, 2^20 m, so the tiles meet)
-  float f = floor(1048576.0 / 5000.0) / 1048576.0;
-  for (int k = 0; k < 7; k++) {
-    float vis = 1.0 - smoothstep(0.12, 0.35, f * fwm);
-    float v = n3(vFar * f + float(k) * 7.0) - 0.5;
-    Hh += v * amp * vis * 0.1 / f;
+  float fq = floor(1048576.0 / 4000.0) / 1048576.0;
+  for (int k = 0; k < 4; k++) {
+    float vis = 1.0 - smoothstep(0.12, 0.35, fq * fwm);
+    float v = n3(vFar * fq + float(k) * 7.0) - 0.5;
+    Hh += v * amp * vis * 0.1 / fq;
     br += v * amp * vis;
-    f = floor(f * 2.6 * 1048576.0) / 1048576.0;
-    amp *= 0.8;
+    fq = floor(fq * 3.1 * 1048576.0) / 1048576.0;
+    amp *= 0.75;
   }
   #ifdef CRATERS
-  f = floor(1048576.0 / 40000.0) / 1048576.0;
-  for (int k = 0; k < 5; k++) {
-    float vis = 1.0 - smoothstep(0.06, 0.2, f * fwm);
-    vec3 q = vFar * f, i = floor(q);
+  fq = floor(1048576.0 / 40000.0) / 1048576.0;
+  for (int k = 0; k < 4; k++) {
+    float vis = 1.0 - smoothstep(0.06, 0.2, fq * fwm);
+    vec3 q = vFar * fq, i = floor(q);
     float there = step(h3(i + float(k) * 17.0), 0.5);
     vec3 c = i + 0.35 + 0.3 * vec3(h3(i + 1.3), h3(i + 2.7), h3(i + 5.1));
     float r = 0.1 + 0.2 * h3(i + 9.2) * h3(i + 9.2), dd = length(q - c) / r;
     float bowl = dd < 1.0 ? -(1.0 - dd * dd) * 0.55 : 0.0, rim = exp(-(dd - 1.0) * (dd - 1.0) / 0.05) * 0.22;
-    Hh += vis * there * (bowl + rim) * r / f * craterK;
+    Hh += vis * there * (bowl + rim) * r / fq * craterK;
     br += vis * there * (rim * 2.0 + bowl * 0.4) * craterK;
-    f = floor(f * 2.6 * 1048576.0) / 1048576.0;
+    fq = floor(fq * 2.6 * 1048576.0) / 1048576.0;
   }
   #endif
   vec3 col = vCol * (1.0 + clamp(br, -1.0, 1.0) * 0.14 * (1.0 - vSea));

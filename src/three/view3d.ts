@@ -2395,7 +2395,9 @@ export class View3D {
     // near enough that the map's finest grain is bigger than a pixel (straight below you it is, within a
     // couple of radii up, before the world looks big): the shader with the ground below the grain
     if (o.near && o.surf) {
-      const near = px > 650 || g.position.length() < 3 * Rm;
+      // (not once the ground is built round you: it covers the world to the horizon, and the sphere under it, hidden,
+      // would still be shaded pixel by pixel)
+      const near = (px > 650 || g.position.length() < 3 * Rm) && !(this.ground.body === b && this.ground.ready);
       o.surf.material = near ? o.near : o.mat!;
       if (near) o.mat!.uniforms.rad.value = Rm;
     }
