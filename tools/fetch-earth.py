@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Bake the Earth's surface classes from Natural Earth (public domain) into
-src/pixel/data/earth.ts: an equirectangular map, 1024 x 512, one class per
+src/pixel/data/earth.ts: an equirectangular map, 4096 x 2048 (about 10 km a cell), one class per
 texel, run-length encoded. The renderer colours and details it.
 
 Classes: 0 ocean, 1 land, 2 ice, 3 desert, 4 lake, 5 mountains, 6 tundra.
@@ -11,7 +11,7 @@ Classes: 0 ocean, 1 land, 2 ice, 3 desert, 4 lake, 5 mountains, 6 tundra.
 """
 import base64, json, os, sys, urllib.request
 
-W, H = 1024, 512
+W, H = 4096, 2048
 BASE = 'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/'
 LAYERS = ['ne_50m_land', 'ne_50m_glaciated_areas', 'ne_50m_lakes', 'ne_50m_geography_regions_polys']
 

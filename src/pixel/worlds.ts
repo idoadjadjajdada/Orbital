@@ -19,7 +19,12 @@ import { EARTH_DEM, EARTH_M } from './earthdata';
 export type V3 = [number, number, number];
 
 /** one texel: colour 0–1, height (0.5 is the datum), glow, shine, cloud cover */
-export interface Tx { r: number; g: number; b: number; h: number; e: number; s: number; c: number }
+export interface Tx {
+  r: number; g: number; b: number; h: number; e: number; s: number; c: number;
+  /** near a coast, how far into the sea (0.5 the shore, more out to sea, less inland), for the map to keep the coast's
+   * line finer than its texels; −1 elsewhere, where the map keeps \`s\` */
+  w?: number;
+}
 /** how finely to paint: noise octaves and crater scales, from the map's size */
 export interface Detail { oct: number; craters: number; res: number }
 export type Painter = (o: Tx, lat: number, lon: number, n: V3, d: Detail) => void;
@@ -215,15 +220,36 @@ function earthClouds(n: V3, latD: number, oct: number, seed = 0) {
   return ss(0.56, 0.78, k) * 0.9;
 }
 
+/**
+ * the Earth's surface class at a point. The classes are 39 km cells; read cell by cell, coasts are
+ * staircases. So whether it is land or water comes from how much of the four cells round the point is
+ * land, smoothly, with a fractal wander that frays the coasts into capes and bays; and which land or
+ * water, from the nearest cell of that kind
+ */
+function earthClass(latD: number, lonE: number, n: V3, oct: number): { cls: number; q: number } {
+  const C = earthCls!, wet = (c: number) => c === 0 || c === 4;
+  const x = ((lonE + 180) / 360) * EARTH_W - 0.5, y = Math.max(0, Math.min(EARTH_H - 1.001, ((90 - latD) / 180) * EARTH_H - 0.5));
+  const x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0;
+  const at = (i: number, j: number) => C[j * EARTH_W + (((i % EARTH_W) + EARTH_W) % EARTH_W)];
+  const c00 = at(x0, y0), c10 = at(x0 + 1, y0), c01 = at(x0, y0 + 1), c11 = at(x0 + 1, y0 + 1);
+  const land = (wet(c00) ? 0 : (1 - fx) * (1 - fy)) + (wet(c10) ? 0 : fx * (1 - fy)) + (wet(c01) ? 0 : (1 - fx) * fy) + (wet(c11) ? 0 : fx * fy);
+  // (the wander: a few km to tens, finer and finer)
+  const q = land + (fbm(n[0] * 90 + 3, n[1] * 90, n[2] * 90, Math.min(oct, 5)) - 0.5) * 0.55;
+  const isLand = q > 0.5;
+  // the nearest cell of the chosen kind, else any of the four
+  const cs = [c00, c10, c01, c11], ws = [(1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy];
+  let best = -1, bw = -1;
+  for (let k = 0; k < 4; k++) if (wet(cs[k]) !== isLand && ws[k] > bw) { bw = ws[k]; best = cs[k]; }
+  return { cls: best >= 0 ? best : isLand ? 1 : 0, q };
+}
+
 export function paintEarth(o: Tx, lat: number, lon: number, n: V3, d: Detail) {
   earthData();
   const latD = lat / D, lonE = lon / D > 180 ? lon / D - 360 : lon / D;
-  // jitter the lookup a little so coasts are not stair-stepped at high resolution
-  const jit = d.res > 600 ? 0.9 : d.res > 300 ? 0.5 : 0;
-  const ju = jit ? (fbm(n[0] * 40, n[1] * 40, n[2] * 40, 3) - 0.5) * jit : 0, jv = jit ? (fbm(n[0] * 40 + 9, n[1] * 40, n[2] * 40, 3) - 0.5) * jit : 0;
-  const ci = Math.floor((((lonE + 180) / 360) * EARTH_W + ju + EARTH_W) % EARTH_W);
-  const cj = Math.max(0, Math.min(EARTH_H - 1, Math.floor(((90 - latD) / 180) * EARTH_H + jv)));
-  const cls = earthCls![cj * EARTH_W + ci];
+  const ec = earthClass(latD, lonE, n, d.oct), cls = ec.cls;
+  // (the shore's line, kept finer than the map's texels: it changes by under one across a texel, so between texels the map
+  // can find where 0.5 falls)
+  o.w = Math.max(0, Math.min(1, 0.5 - (ec.q - 0.5) * 0.4));
   const shelf = field(earthShelf!, latD, lonE), inland = field(earthInland!, latD, lonE);
   const alat = Math.abs(latD);
   const v = fbm(n[0] * 14, n[1] * 14, n[2] * 14, d.oct);
@@ -280,6 +306,8 @@ export function paintTerran(o: Tx, n: V3, latD: number, sea: number, seed: numbe
   const h = fbm(sx * 1.3, sy * 1.3, sz * 1.3, d.oct + 1);
   const alat = Math.abs(latD);
   const v = fbm(n[0] * 14 + seed, n[1] * 14, n[2] * 14, d.oct);
+  // the shore's line, finer than the map's texels (see Tx.w)
+  o.w = Math.max(0, Math.min(1, 0.5 - (h - sea) * 8));
   if (h < sea) {
     const sh = ss(sea - 0.08, sea, h);
     set(o, [c1[0] * (0.45 + 0.4 * sh), c1[1] * (0.45 + 0.4 * sh), c1[2] * (0.5 + 0.4 * sh)]);

@@ -170,6 +170,11 @@ export class TileSet {
     const ox = mod(t.c[0] * R, P), oy = mod(t.c[1] * R, P), oz = mod(t.c[2] * R, P);
     for (let v = 0; v < nv; v++) { off[v * 3] = ox; off[v * 3 + 1] = oy; off[v * 3 + 2] = oz; }
     g.setAttribute('grain', new THREE.BufferAttribute(off, 3));
+    // and a far coarser one, for the detail seen from the air: its period 2^20 m, still exact to a few cm
+    const F = 1 << 20, far = new Float32Array(nv * 3);
+    const fx = mod(t.c[0] * R, F), fy = mod(t.c[1] * R, F), fz = mod(t.c[2] * R, F);
+    for (let v = 0; v < nv; v++) { far[v * 3] = fx; far[v * 3 + 1] = fy; far[v * 3 + 2] = fz; }
+    g.setAttribute('far', new THREE.BufferAttribute(far, 3));
     const mesh = new THREE.Mesh(g, this.mat);
     mesh.position.set(t.c[0] * R, t.c[1] * R, t.c[2] * R);
     mesh.visible = false;

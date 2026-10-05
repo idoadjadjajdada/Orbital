@@ -487,7 +487,7 @@ export class Fleet {
       iss.orbit = { r, plane: qb.clone().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 51.6 * Math.PI / 180)), ph: 1.1, w: Math.sqrt(GM / r ** 3) };
       iss.state = 'orbit'; iss.status = 'in orbit, crewed';
       this.note(iss, 'In orbit since 1998: 420 km up, an orbit every 93 minutes, crewed without a break since 2000');
-      for (const [name, lat, lon, head] of [['Canaveral Base', 28.52, -80.68, 0.6], ['Baikonur Base', 45.94, 63.35, 2.1]] as const) {
+      for (const [name, lat, lon, head] of [['Canaveral Base', 28.585, -80.65, 0.6], ['Baikonur Base', 45.94, 63.35, 2.1]] as const) {
         const c = this.make('base', b, name);
         c.state = 'surface'; c.n = dirOf(lat, lon); c.head = head; c.build = 1; c.status = 'crewed';
         this.note(c, 'A base beside the spaceport: habitats, a lab, a garage, a pad for the ship');

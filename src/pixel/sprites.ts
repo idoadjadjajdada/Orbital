@@ -163,7 +163,7 @@ export function bakeSprite(p: SpriteIn): { size: number; data: Uint8ClampedArray
             // a soft terminator: no relief lit past it
             const term = Math.max(0, Math.min(1, (dl0 + 0.04) / 0.1));
             diff = 0.035 + Math.max(0, dl) * term;
-            if (smp.s && H) glint = Math.pow(Math.max(0, dot(n, H)), 60) * 0.7 * term;
+            if (smp.s > 0.5 && H) glint = Math.pow(Math.max(0, dot(n, H)), 60) * 0.7 * term;
           }
           r = ar * diff * lc[0] + glint; g = ag * diff * lc[1] + glint; b = ab * diff * lc[2] + glint;
           // a lit atmosphere glows at the limb

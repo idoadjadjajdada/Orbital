@@ -49,6 +49,7 @@ const GROUND_VERT = /* glsl */ `
 attribute float sea;
 attribute float rock;
 attribute vec3 grain;
+attribute vec3 far;
 #ifdef CAVE
 attribute float sky;
 varying float vSky;
@@ -58,6 +59,7 @@ varying vec3 vP;
 varying vec3 vCol;
 varying float vSea;
 varying vec3 vLocal;
+varying vec3 vFar;
 varying float vRock;
 // the ground's tangent directions: in its own frame (where the texture lies) and in the view's (where the light falls)
 varying vec3 vT1;
@@ -71,6 +73,7 @@ void main() {
   vCol = color;
   vSea = sea;
   vLocal = position + grain;
+  vFar = position + far;
   vRock = rock;
   vT1 = normalize(cross(normal, abs(normal.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));
   vT2 = cross(normal, vT1);
@@ -100,12 +103,15 @@ uniform float alien;
 #ifndef KIND
 #define KIND 0
 #endif
+// how cratered the ground is, seen from the air (CRATERS where it is at all)
+uniform float craterK;
 ${LIGHT_GLSL}
 varying vec3 vN;
 varying vec3 vP;
 varying vec3 vCol;
 varying float vSea;
 varying vec3 vLocal;
+varying vec3 vFar;
 varying float vRock;
 varying vec3 vT1;
 varying vec3 vT2;
@@ -126,10 +132,42 @@ void main() {
   #endif
   float d = length(vP);
   vec3 V = -vP / max(d, 1e-3);
+  #ifdef HIGH
+  // ---- from the air (HIGH: a couple of km up and more, where nothing near shows): the ground below the tiles'
+  // grain, hills and hollows from kilometres down to tens of metres, and on old airless ground craters, each
+  // octave coming in once it spans a few pixels; its slope tilts the light and it mottles the colour
+  float fwm = max(length(fwidth(vFar)), 1e-3), br = 0.0, Hh = 0.0, amp = 1.0;
+  // (frequencies a whole number of times round the far lattice's period, 2^20 m, so the tiles meet)
+  float f = floor(1048576.0 / 5000.0) / 1048576.0;
+  for (int k = 0; k < 7; k++) {
+    float vis = 1.0 - smoothstep(0.12, 0.35, f * fwm);
+    float v = n3(vFar * f + float(k) * 7.0) - 0.5;
+    Hh += v * amp * vis * 0.1 / f;
+    br += v * amp * vis;
+    f = floor(f * 2.6 * 1048576.0) / 1048576.0;
+    amp *= 0.8;
+  }
+  #ifdef CRATERS
+  f = floor(1048576.0 / 40000.0) / 1048576.0;
+  for (int k = 0; k < 5; k++) {
+    float vis = 1.0 - smoothstep(0.06, 0.2, f * fwm);
+    vec3 q = vFar * f, i = floor(q);
+    float there = step(h3(i + float(k) * 17.0), 0.5);
+    vec3 c = i + 0.35 + 0.3 * vec3(h3(i + 1.3), h3(i + 2.7), h3(i + 5.1));
+    float r = 0.1 + 0.2 * h3(i + 9.2) * h3(i + 9.2), dd = length(q - c) / r;
+    float bowl = dd < 1.0 ? -(1.0 - dd * dd) * 0.55 : 0.0, rim = exp(-(dd - 1.0) * (dd - 1.0) / 0.05) * 0.22;
+    Hh += vis * there * (bowl + rim) * r / f * craterK;
+    br += vis * there * (rim * 2.0 + bowl * 0.4) * craterK;
+    f = floor(f * 2.6 * 1048576.0) / 1048576.0;
+  }
+  #endif
+  vec3 col = vCol * (1.0 + clamp(br, -1.0, 1.0) * 0.14 * (1.0 - vSea));
+  #else
   // close up, the grain of the ground: pebbles, dust, scuffs
   float near = 1.0 - smoothstep(20.0, 600.0, d);
   float g1 = n3(vLocal * 1.0), g2 = n3(vLocal * 0.125), g3 = n3(vLocal * 7.0);
   vec3 col = vCol * (1.0 + ((g1 - 0.5) * 0.3 + (g3 - 0.5) * 0.25 * (1.0 - smoothstep(2.0, 30.0, d))) * near + (g2 - 0.5) * 0.18);
+  #endif
   #ifndef CAVE
   // grass, where the ground is grassy (grass.ts makes the same test for its tufts): on the Earth ground with more
   // green than red or blue, elsewhere ground the colour of the plants; never on a cliff
@@ -158,6 +196,16 @@ void main() {
   // ---- the ground close up: what it is made of, in relief, lit pixel by pixel
   vec3 Nd = N;
   float glint = 0.0;
+  #ifdef HIGH
+  if (vSea < 0.5) {
+    vec3 px = dFdx(vFar), py = dFdy(vFar);
+    vec2 ta = vec2(dot(px, vT1), dot(px, vT2)), tb = vec2(dot(py, vT1), dot(py, vT2));
+    float det = ta.x * tb.y - ta.y * tb.x, hx = dFdx(Hh), hy = dFdy(Hh);
+    vec2 g = abs(det) > 1e-9 ? vec2(hx * tb.y - hy * ta.y, ta.x * hy - tb.x * hx) / det : vec2(0.0);
+    g *= min(1.0, 1.5 / max(length(g), 1e-6));
+    Nd = normalize(N - vW1 * g.x - vW2 * g.y);
+  }
+  #else
   float closeK = 1.0 - smoothstep(40.0, 160.0, d);
   if (closeK > 0.0 && vSea < 0.5) {
     // bare rock where it is steep or rough; else the world's own ground: regolith, sand, ice, soil or lava rock
@@ -247,6 +295,7 @@ void main() {
     g *= closeK;
     Nd = normalize(N - vW1 * g.x - vW2 * g.y);
   }
+  #endif
   vec3 c;
   if (vSea > 0.5) {
     // the sea: small waves, the sky reflected at a glancing angle, a glint of the sun
@@ -383,7 +432,7 @@ export class Ground {
       uniforms: {
         sunDir: { value: new THREE.Vector3(0, 0, 1) }, sunCol: { value: new THREE.Vector3(1, 1, 1) }, ambient: { value: new THREE.Vector3(0.03, 0.03, 0.03) },
         fogCol: { value: new THREE.Vector3() }, fogK: { value: 0 }, time: { value: 0 }, seaUp: { value: new THREE.Vector3() },
-        lush: { value: 0 }, leaf: { value: new THREE.Vector3(0.3, 0.45, 0.15) }, alien: { value: 0 },
+        lush: { value: 0 }, leaf: { value: new THREE.Vector3(0.3, 0.45, 0.15) }, alien: { value: 0 }, craterK: { value: 0 },
         ...lightUniforms,
       },
     });
@@ -483,6 +532,11 @@ export class Ground {
     const kind = b.look.real === 'Venus' || st === 'lava' ? 4 : st === 'ice' ? 2 : st === 'desert' ? 1 : st === 'terran' || st === 'ocean' ? 3 : 0;
     // and whether grass can grow on it (the shader for a bare world leaves the grass out)
     const grass = b.look.real === 'Earth' || this.lifeInfo.forms.some(f => f.kind === 'plant');
+    // and how cratered, seen from the air: old airless ground all the way down; under air, weathered away (Mars' thin
+    // air leaves some; the Earth's, Venus' and Titan's none); Io's lava covers them as they form
+    const bar = this.atmo.bar, craters = b.look.real === 'Io' || kind === 4 ? 0 : bar > 0.05 ? 0 : bar > 1e-3 ? 0.5 : 1;
+    this.mat.uniforms.craterK.value = craters;
+    if (('CRATERS' in this.mat.defines) !== craters > 0) { if (craters > 0) this.mat.defines.CRATERS = ''; else delete this.mat.defines.CRATERS; this.mat.needsUpdate = true; }
     for (const m of [this.mat, this.caveMat]) {
       if (m.defines.KIND !== kind) { m.defines.KIND = kind; m.needsUpdate = true; }
       if (('GRASS' in m.defines) !== grass) { if (grass) m.defines.GRASS = ''; else delete m.defines.GRASS; m.needsUpdate = true; }
@@ -546,6 +600,10 @@ export class Ground {
     alt = r - spec.R - (this.sample.sea ? 0 : hHere);
     // the tiles round the viewer
     this.tiles.frame(vb);
+    // a couple of km up, the ground's shader for the air: its detail from kilometres down to tens of metres, and none of
+    // the close-up (one more shader, compiled the first time; going up and down, the two are kept)
+    const high = alt > (this.mat.defines.HIGH !== undefined ? 1500 : 2500);
+    if ((this.mat.defines.HIGH !== undefined) !== high) { if (high) this.mat.defines.HIGH = ''; else delete this.mat.defines.HIGH; this.mat.needsUpdate = true; }
     // the light on the ground
     const u = this.mat.uniforms;
     u.time.value = this.t;

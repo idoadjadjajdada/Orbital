@@ -52,6 +52,10 @@ interface Obj {
   /** the map drawn (its own copy once cratered), the shared one it came from, and its textures: colour and glow; height, cloud and shine */
   map?: SurfaceMap; base?: SurfaceMap; owned?: boolean; tex?: THREE.DataTexture; aux?: THREE.DataTexture;
   seen: Set<object>; mat?: THREE.ShaderMaterial; clouds?: THREE.Mesh; jet?: THREE.Group; style?: string;
+  /** a world's sphere, and its shader for when it is near: the map's detail and finer (see FRAG's CLOSE) */
+  surf?: THREE.Mesh; near?: THREE.ShaderMaterial;
+  /** how cratered its ground is below the map's grain (none under real air, all without) */
+  craterK?: number;
   /** a black hole's traced look, and when its disc's extent was last measured */
   hole?: HoleLook; holeT?: number;
   /** a nebula's shell round its star, a pulsar's beams, a young star's dusty disc; the shell's radius (AU) and when it was measured */
@@ -132,6 +136,11 @@ uniform float detail;
 uniform float time;
 uniform float gas;
 uniform vec4 vortex;
+/** close up: how cratered the ground is below the map's grain (airless worlds 1), and the world's radius (m) */
+uniform float craterK;
+uniform float rad;
+/** on a world with seas, the height of their surface on the map (−1 without): the relief is never shaded below it */
+uniform float seaLevel;
 ${LIGHT_GLSL}
 varying vec3 vObj;
 varying vec3 vWorldN;
@@ -139,6 +148,39 @@ varying vec3 vWorldP;
 varying vec3 vEast;
 varying vec3 vNorth;
 ${MAP_UV}
+#ifdef CLOSE
+/**
+ * the ground below the map's grain, in the world's radii: hills and hollows, octave on octave, and on an
+ * old airless world craters, one to a cell, smaller and smaller. Each octave comes in once it spans a few
+ * pixels (\`fw\`, the size of a pixel in radii), so nothing finer than the screen can show flickers
+ */
+float relief(vec3 n, float fw, out float bright) {
+  float h = 0.0, f = 380.0, a = 1.0;
+  bright = 0.0;
+  for (int k = 0; k < 4; k++) {
+    float vis = 1.0 - smoothstep(0.12, 0.35, f * fw);
+    float v = vnoise3(n * f + float(k) * 7.13) - 0.5;
+    h += v * a * vis * 0.07 / f;
+    bright += v * a * vis;
+    f *= 2.7; a *= 0.78;
+  }
+  #ifdef CRATERS
+  f = 150.0;
+  for (int k = 0; k < 5; k++) {
+    float vis = (1.0 - smoothstep(0.06, 0.2, f * fw)) * craterK;
+    vec3 q = n * f, i = floor(q);
+    float there = step(hash3(i + float(k) * 17.0), 0.55);
+    vec3 c = i + 0.35 + 0.3 * vec3(hash3(i + 1.3), hash3(i + 2.7), hash3(i + 5.1));
+    float r = 0.1 + 0.2 * pow(hash3(i + 9.2), 2.0), d = length(q - c) / r;
+    float bowl = d < 1.0 ? -(1.0 - d * d) * 0.55 : 0.0, rim = exp(-pow((d - 1.0) / 0.22, 2.0)) * 0.22;
+    h += vis * there * (bowl + rim) * r / f;
+    bright += vis * there * (rim * 2.0 + bowl * 0.4 + (hash3(i + 4.4) < 0.15 ? 0.5 * (1.0 - smoothstep(0.8, 1.6, d)) : 0.0));
+    f *= 2.6;
+  }
+  #endif
+  return h;
+}
+#endif
 /**
  * a giant's weather, moved on by k seconds: the belts and zones slide past each other on their
  * alternating jets, and a great oval storm (vortex: centre lon, lat, half-sizes, degrees) turns
@@ -177,17 +219,49 @@ void main() {
     tex = mix(t1, t2, abs(2.0 * p1 - 1.0));
   } else tex = texture2D(map, uv);
   vec4 ax = texture2D(aux, uv);
+  // how much is sea: the map keeps the Earth's shore as a value through its texels, 0.5 on the shore itself
+  float wetM = smoothstep(0.45, 0.55, ax.b);
   // relief: the slope of the height map tilts the surface
-  float h = ax.r + ax.a / 255.0;
+  // (the sea's floor is no part of the relief seen from above: its surface is flat, so no cliff along every coast)
+  float h = max(ax.r + ax.a / 255.0, seaLevel);
   vec4 aE = texture2D(aux, uv + vec2(texel.x, 0.0)), aN = texture2D(aux, uv + vec2(0.0, texel.y));
-  float hE = aE.r + aE.a / 255.0, hN = aN.r + aN.a / 255.0;
+  float hE = max(aE.r + aE.a / 255.0, seaLevel), hN = max(aN.r + aN.a / 255.0, seaLevel);
   float cl = max(0.05, sqrt(1.0 - n.z * n.z));
   vec2 g = vec2((hE - h) / (texel.x * 6.2831853) / cl, (hN - h) / (texel.y * 3.14159265));
+  #ifdef CLOSE
+  // the coast below the map's grain: where the map's texels are part sea, part land (blended), a sharp shore
+  // wandering through them, the land's colour from a texel inland and the sea's from one out to sea, and the
+  // map's step in height there, which would outline its texels, flattened
+  float s0 = ax.b - 0.5;
+  if (gas < 0.5 && (s0 * (aE.b - 0.5) < 0.0 || s0 * (aN.b - 0.5) < 0.0 || abs(s0) < 0.06)) {
+    vec2 gs = vec2(aE.b - ax.b, aN.b - ax.b), dir = dot(gs, gs) > 1e-10 ? normalize(gs) : vec2(1.0, 0.0);
+    float fwc = max(length(fwidth(vObj)), 1e-7);
+    float wob = (vnoise3(n * 6000.0) - 0.5) * 0.05 + (vnoise3(n * 16000.0 + 3.1) - 0.5) * 0.03 * (1.0 - smoothstep(0.1, 0.3, 16000.0 * fwc));
+    float q = ax.b + wob, aa = max(fwidth(q), 0.004);
+    wetM = smoothstep(0.5 - aa, 0.5 + aa, q);
+    vec4 cSea = texture2D(map, uv + dir * texel * 1.5), cLand = texture2D(map, uv - dir * texel * 1.5);
+    tex = mix(cLand, cSea, wetM);
+  }
+  #endif
   // and close up, finer grain than the map holds
   float fine = detail > 0.0 ? vnoise3(n * 900.0) * 0.6 + vnoise3(n * 2600.0) * 0.4 : 0.5;
   vec3 N0 = normalize(vWorldN);
   vec3 N = normalize(N0 - bump * (normalize(vEast) * g.x + normalize(vNorth) * g.y));
   vec3 col = tex.rgb * (1.0 + detail * (fine - 0.5) * 0.25);
+  #ifdef CLOSE
+  // below the map's grain: its slope, from its change across the pixel, tilts the light (not on the sea)
+  if (gas < 0.5) {
+    float fw = max(length(fwidth(vObj)), 1e-7), br;
+    float land = 1.0 - wetM;
+    float Hd = relief(n, fw, br) * rad * land;
+    vec3 dpx = dFdx(vWorldP), dpy = dFdy(vWorldP);
+    vec3 r1 = cross(dpy, N0), r2 = cross(N0, dpx);
+    float det = dot(dpx, r1);
+    vec3 gr = sign(det) * (dFdx(Hd) * r1 + dFdy(Hd) * r2);
+    N = normalize(abs(det) * N - gr);
+    col *= 1.0 + clamp(br, -1.0, 1.0) * 0.16 * land;
+  }
+  #endif
   // a giant's cloud tops close up: fine streaks drawn out along the latitudes, drifting
   if (gas > 0.0) col *= 1.0 + (vnoise3(n * vec3(260.0, 260.0, 1400.0) + vec3(time * 0.04, 0.0, 0.0)) - 0.5) * 0.14 + (vnoise3(n * vec3(900.0, 900.0, 4000.0)) - 0.5) * 0.06;
   vec3 V = normalize(-vWorldP);
@@ -206,7 +280,7 @@ void main() {
     vec3 c = col * (0.025 + ambientX + max(dl, 0.0) * term * lightCol + lampLight(vWorldP, N));
     // a glint off the sea
     vec3 H = normalize(lightDir + V);
-    c += ax.b * pow(max(dot(N0, H), 0.0), 90.0) * 0.55 * term * lightCol;
+    c += wetM * pow(max(dot(N0, H), 0.0), 90.0) * 0.55 * term * lightCol;
     col = c;
   } else col *= 0.45 + ambientX + lampLight(vWorldP, normalize(vWorldN));
   // lightning in a giant's belts, seen on its night side
@@ -2209,10 +2283,22 @@ export class View3D {
           atmo: { value: new THREE.Vector3() }, hasAtmo: { value: 0 }, bump: { value: o.map.gas ? 0.01 : 0.05 }, detail: { value: o.map.gas ? 0 : 1 },
           lightL: { value: new THREE.Vector3(1, 0, 0) }, ringProf: { value: null }, ringIn: { value: 0 }, ringOut: { value: 0 },
           time: { value: 0 }, gas: { value: o.map.gas ? 1 : 0 }, vortex: { value: new THREE.Vector4(...(VORTEX[b.look.real ?? ''] ?? [0, 0, 0, 0])) },
+          craterK: { value: 0 }, rad: { value: 1 },
+          seaLevel: { value: b.look.real === 'Earth' || (!b.look.real && (b.look.style === 'terran' || b.look.style === 'ocean')) ? 0.5 : -1 },
           ...this.lights.uniforms,
         },
       });
-      group.add(new THREE.Mesh(this.sphere, o.mat));
+      o.surf = new THREE.Mesh(this.sphere, o.mat);
+      group.add(o.surf);
+      // the same, with the ground below the map's grain: for when the world is near (one more shader, compiled the first
+      // time), with craters (CRATERS) on a world that keeps them: old airless ground all the way down; under air,
+      // weathered away (Mars' thin air leaves some; the Earth's, Venus' and Titan's none); Io's lava covers them
+      if (!o.map.gas) {
+        const bar = atmosphere(b, this.stars()).bar;
+        o.craterK = b.look.real === 'Io' || b.look.style === 'lava' ? 0 : bar > 0.05 ? 0 : bar > 1e-3 ? 0.5 : 1;
+        o.near = new THREE.ShaderMaterial({ vertexShader: WORLD_VERT, fragmentShader: FRAG, defines: o.craterK ? { CLOSE: '', CRATERS: '' } : { CLOSE: '' }, uniforms: o.mat.uniforms });
+        o.mat.uniforms.craterK.value = o.craterK;
+      }
       if (o.map.cloud) {
         const cm = new THREE.ShaderMaterial({
           vertexShader: VERT, fragmentShader: CLOUD_FRAG, transparent: true, depthWrite: false, side: THREE.DoubleSide,
@@ -2306,6 +2392,13 @@ export class View3D {
     const px = (Rm / Math.max(1, g.position.length())) / (Math.tan((this.camera.fov * Math.PI) / 360) / (window.innerHeight / 2));
     // up to 2048 across when a world fills the view
     const want = MapService.widthFor(px * 2, 2048);
+    // near enough that the map's finest grain is bigger than a pixel (straight below you it is, within a
+    // couple of radii up, before the world looks big): the shader with the ground below the grain
+    if (o.near && o.surf) {
+      const near = px > 650 || g.position.length() < 3 * Rm;
+      o.surf.material = near ? o.near : o.mat!;
+      if (near) o.mat!.uniforms.rad.value = Rm;
+    }
     if (o.style !== lookKey(b.look) || o.base!.w < want) {
       const m = maps.want(b.look, want);
       if (o.style !== lookKey(b.look) || m !== o.base) {

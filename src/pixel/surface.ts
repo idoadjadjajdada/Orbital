@@ -14,7 +14,7 @@ import { REAL, paintTerran, cratered, ss, type Tx, type Detail, type V3 } from '
  */
 export interface SurfaceMap {
   w: number; h: number;
-  rgb: Float32Array; emit: Float32Array; spec: Uint8Array;
+  rgb: Float32Array; emit: Float32Array; spec: Float32Array;
   /** relief, 0–1 with 0.5 the datum: for shading the hills and craters */
   height: Float32Array;
   /** cloud cover 0–1, drawn over the ground, or null for a world without weather */
@@ -44,7 +44,7 @@ export function mapJob(look: Look, w: number): MapJob {
   const paint = look.real ? REAL[look.real] : undefined;
   const clouds = look.real === 'Earth' || (!paint && (st === 'terran' || st === 'ocean'));
   const map: SurfaceMap = {
-    w: W, h: H, rgb: new Float32Array(W * H * 3), emit: new Float32Array(W * H), spec: new Uint8Array(W * H),
+    w: W, h: H, rgb: new Float32Array(W * H * 3), emit: new Float32Array(W * H), spec: new Float32Array(W * H),
     height: new Float32Array(W * H), cloud: clouds ? new Float32Array(W * H) : null, gas,
   };
   const d = detailFor(W);
@@ -62,11 +62,11 @@ export function mapJob(look: Look, w: number): MapJob {
         for (let i = 0; i < W; i++) {
           const lon = ((i + 0.5) / W) * 2 * Math.PI;
           const n: V3 = [cl * Math.cos(lon), cl * Math.sin(lon), sl];
-          o.r = o.g = o.b = 0.5; o.h = 0.5; o.e = 0; o.s = 0; o.c = 0;
+          o.r = o.g = o.b = 0.5; o.h = 0.5; o.e = 0; o.s = 0; o.c = 0; o.w = -1;
           at(o, lat, lon, n, d);
           const k = j * W + i;
           map.rgb[k * 3] = Math.max(0, Math.min(1, o.r)); map.rgb[k * 3 + 1] = Math.max(0, Math.min(1, o.g)); map.rgb[k * 3 + 2] = Math.max(0, Math.min(1, o.b));
-          map.height[k] = o.h; map.emit[k] = o.e; map.spec[k] = o.s;
+          map.height[k] = o.h; map.emit[k] = o.e; map.spec[k] = o.w! >= 0 ? o.w! : o.s;
           if (map.cloud) map.cloud[k] = o.c;
         }
         if (performance.now() - t0 > budget) break;
