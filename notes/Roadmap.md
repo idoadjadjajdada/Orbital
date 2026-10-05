@@ -13,7 +13,8 @@ What's next, in order. Move things up or down; tick them when done.
 - [ ] The hangar's own rover model stays visible after the rover drives out: hide it while it's out
 - [x] Add interior to orbiting stations: reachable from Mission Control (Dock, then Go aboard) (62bddbc). ([message](Feedback/2026-10-04.md#feature-add-interior-to-orbiting-stations))
 - [x] Better textures in general and specifically on the land of planets and things. ([message](Feedback/2026-10-04.md#feature-better-textures-in-general-and-specifically-on-the-land-of-planets-and-things)) Done for the land close up (fa4f147, 4d02d5c).
-- [ ] Better textures seen from orbit and from the air: the rest of "better textures in general"
+- [x] Better textures seen from orbit and from the air: the rest of "better textures in general" (32e87c0) ([message](Feedback/2026-10-05.md#textures-from-orbit-and-the-ships-model-to-download))
+- [x] The ship's 3D model as a file to download (c310445) ([message](Feedback/2026-10-05.md#textures-from-orbit-and-the-ships-model-to-download))
 
 ## Later
 - [ ] Interiors you can walk through in the rockets (cabins, ladders, cargo decks)

@@ -10,3 +10,10 @@ Model packs, where they are used, and how they're packed. Originals are in `tool
 | Modular Rocket Fleet | rocket-courier, -wayfarer, -mammoth | Rockets flying crew and cargo between pads, bases and stations (`src/three/rocketry.ts`, `fleet.ts`) |
 
 Unused so far from the rocket pack: the door and hatch animations, the seat and cockpit camera sockets, the exhaust sockets.
+
+## Made here
+
+| What | Where | How |
+|---|---|---|
+| The ship's 3D model, outside and in | `public/ship/orbital-ship.glb` and `.usdz`, on the site at https://idoadjadjajdada.github.io/Orbital/ship/ | `node tools/export-ship.mjs` writes both from the game's own ship; run it again after changing the ship |
+| The Earth's surface classes (ocean, land, ice, desert, lake, mountains, tundra) | `src/pixel/data/earth.ts`, 4096 × 2048 | `python3 tools/fetch-earth.py` bakes them from Natural Earth's 1:50 million land, lakes, glaciers and regions (public domain) |
