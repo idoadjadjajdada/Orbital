@@ -12,6 +12,7 @@ What looks wrong, and where: the world and the latitude and longitude from the r
 - Locally, the browser test's touch part times out when run after other parts in the same process (CI runs each part separately, where it passes).
 
 ## Fixed
+- [x] Trying to dock with a station, it kept flying away: the ship flew to where it was, not where it was going, and trailed it by nine kilometres (21c210e). ([message](Feedback/2026-10-05.md#docking-the-station-flies-away))
 - [x] The ship's dorsal spine was built upside down, hanging into the aft passage and engineering; the tail fins dipped into engineering; the hull's plating showed above engineering's door (6039531)
 - [x] Near a world, the ship and you on a spacewalk were not carried round with it: the ground slid away underneath while you came down to land (09cc9fd). ([message](Feedback/2026-10-04.md#gravity-the-ships-looks-and-the-map))
 - [x] Going from 3D to the map left the 3D picture frozen over it, with only the labels drawn (09cc9fd). ([message](Feedback/2026-10-04.md#gravity-the-ships-looks-and-the-map))
