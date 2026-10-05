@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Orbital ship</title>
+<style>
+  :root { color-scheme: dark; --bg: #0d1017; --card: #161b26; --text: #e8e6e1; --dim: #9aa1ad; --accent: #e07a4a; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 26px; margin: 0 0 4px; }
+  p { color: var(--dim); margin: 0 0 18px; }
+  .pic { display: block; border-radius: 12px; overflow: hidden; background: #1a1e26; margin-bottom: 18px; }
+  .pic img { display: block; width: 100%; height: auto; }
+  .btns { display: flex; flex-wrap: wrap; gap: 10px; }
+  .btn { display: inline-block; padding: 12px 16px; border-radius: 10px; background: var(--card); color: var(--text); text-decoration: none; border: 1px solid #2a3140; }
+  .btn.main { background: var(--accent); border-color: var(--accent); color: #1a0f08; font-weight: 600; }
+  small { display: block; color: var(--dim); margin-top: 4px; font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>The Orbital ship</h1>
+  <p>The ship from the game, outside and in: the bridge, quarters, lab, commons, engineering and the hangar with Lander 1, about 60 m from nose to nozzles.</p>
+  <!-- on an iPhone or iPad, rel="ar" opens the model in Quick Look, where it can be set down in the room -->
+  <a class="pic" rel="ar" href="orbital-ship.usdz"><img src="preview.jpg" alt="The ship, seen from ahead and to port"></a>
+  <div class="btns">
+    <a class="btn main" rel="ar" href="orbital-ship.usdz"><img src="preview.jpg" alt="" style="display:none">View in AR (iPhone, iPad)<small>USDZ · 5.8 MB</small></a>
+    <a class="btn" href="orbital-ship.glb" download>Download glTF<small>GLB · 2.4 MB · Blender and most 3D apps</small></a>
+    <a class="btn" href="orbital-ship.usdz" download>Download USDZ<small>Apple's format · 5.8 MB</small></a>
+  </div>
+</main>
+</body>
+</html>
