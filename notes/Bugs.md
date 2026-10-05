@@ -3,8 +3,7 @@
 What looks wrong, and where: the world and the latitude and longitude from the readout help, and so does a screenshot.
 
 ## Open
-- [ ] 
-
+- [ ] "caves" arent really caves, they're above ground structures with a tunnel. There ([message](Feedback/2026-10-04.md#bug-caves-arent-really-caves-theyre-above-ground-structures-with-a-tunnel-there))
 ## Known limits
 - From inside the ship, its outside (seen through the windows) is drawn in plain paint, not shining metal: a software renderer would light it behind every wall.
 - Rocket flights, landings and descents run on frame time, so they are slower when frames are slow.
