@@ -320,6 +320,16 @@ where there is sand and wind carry the detail down to the metre. Above the
 tree line the ground is bare rock, above the snow line snow (both lower
 toward the poles), and steep slopes shed their snow and soil to show crags.
 
+**From orbit and from the air**, a world keeps its detail as you come down.
+The Earth's coasts come from Natural Earth's coastlines at about 10 km, and
+close up the globe draws the shore sharper than its map. Close to any world,
+hills and hollows show finer than the map holds, and craters too where a world
+keeps them: the Moon and other airless worlds are cratered at every size,
+Mars somewhat, the Earth, Venus, Titan and Io not at all. From a couple of
+kilometres up, the ground shows relief from kilometres down to tens of
+metres, in a shader for the air that drops the close-up detail it could not
+show from there.
+
 It is one continuous world, the same wherever you stand: a fixed lattice of
 tiles on a cube round it, each split into four finer ones near you, coarse at
 the horizon and down to half a metre underfoot, built in two workers and kept
@@ -626,6 +636,11 @@ belly; white strobes flash on the fin, the belly and the chin, and the roofs
 carry vents, boxes and conduits. Inside, every wall has a kick plate with a
 line of guide light along the floor, a rail at waist height, ribs at its ends
 and a cove of light under the ceiling.
+
+The ship's 3D model, outside and in, is on the site at
+[/ship/](https://idoadjadjajdada.github.io/Orbital/ship/) to download: GLB for
+Blender and most 3D apps, and USDZ, which an iPhone or iPad opens in Quick
+Look and AR. `node tools/export-ship.mjs` makes both from the game's own ship.
 
 Near a world, the ship (and Lander 1, and you on a spacewalk) turns with it, so
 the ground holds still under you while you come down; low over the ground a
