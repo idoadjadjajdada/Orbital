@@ -493,7 +493,9 @@ try {
   const iss = await page.evaluate(() => window.orbital.v3.fleet.crafts.find(c => c.name === 'ISS').id);
   await page.click(`.panel3 button[data-act="cdock"][data-id="${iss}"]`);
   ok('Dock in Mission Control flies the ship to a station to dock', await page.evaluate(() => window.orbital.v3.travel?.dock?.name === 'ISS'));
-  await page.evaluate(() => { const v = window.orbital.v3, c = v.fleet.crafts.find(x => x.name === 'ISS'); v.travel = null; const p = v.visit.worldOf(c, new v.camera.position.constructor(0, 0, 0)), a = c.b; v.ship.nav.anchor = a; v.ship.nav.off = [p[0] - a.x, p[1] - a.y, p[2] - a.z]; v.ship.nav.vel = [0, 0, 0]; v.visit.dock(c); v.panels.show('mission'); });
+  // (the station is going round the Earth at 7.7 km/s: the ship has to catch it up, not just fly to where it was)
+  ok('the ship catches the station up and docks', await page.waitForFunction(() => window.orbital.v3.visit.docked?.name === 'ISS', null, { timeout: 150000 }).then(() => true, () => false));
+  await page.evaluate(() => window.orbital.v3.panels.show('mission'));
   await page.click(`.panel3 button[data-act="cdock"][data-id="${iss}"]`);
   ok('docked, Go aboard takes you inside it', await until(page, () => window.orbital.v3.mode === 'inside' && window.orbital.v3.visit.docked?.name === 'ISS'));
   ok('a rocket can be stacked on a free pad', await page.evaluate(() => { const f = window.orbital.v3.fleet, pad = f.crafts.find(c => c.name === 'Canaveral Launch Pad'); const c = f.stack('courier', pad); return typeof c !== 'string' && c.state === 'surface' && c.build === 0; }));

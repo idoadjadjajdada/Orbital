@@ -454,7 +454,7 @@ export class View3D {
   /** what you can do right now where you are looking, if anything */
   prompt: { label: string; act: () => void } | null = null;
   /** the ship flying itself somewhere: to a body, or to a point (the suit), and how close to stop */
-  travel: { b: Body | null; at?: () => V3; stop: number; name: string; land?: boolean; dock?: Craft } | null = null;
+  travel: { b: Body | null; at?: () => V3; stop: number; name: string; land?: boolean; dock?: Craft; was?: V3 } | null = null;
   /** inside a station or a base, docking, the base's pad */
   visit!: Visit;
   /** choosing where a base or launch pad goes */
@@ -702,14 +702,16 @@ export class View3D {
     const t = this.app.world.time, dt = t - this.spinT;
     this.spinT = t;
     if (!(dt > 0)) return;
-    const movers: { m: Mover; q: THREE.Quaternion }[] = [];
-    if (!this.landing && !this.ship.worm) movers.push({ m: this.ship.nav, q: this.ship.quat });
+    const movers: { m: Mover; q: THREE.Quaternion; k?: number }[] = [];
+    // (the autopilot, chasing something that moves on its own, keeps up with it by itself)
+    const free = !this.landing && !this.ship.worm && !this.travel?.at, ride = this.rideStation(free);
+    if (free) movers.push({ m: this.ship.nav, q: this.ship.quat, k: 1 - ride });
     if (this.mode === 'eva') movers.push({ m: this.suit.nav, q: this.suit.quat });
     if (this.shuttle.state === 'flying') movers.push({ m: this.shuttle.nav, q: this.shuttle.quat });
     for (const { m, q } of movers) {
       const b = m.anchor;
       if (!b || !b.alive || !b.spin) continue;
-      const x = Math.hypot(m.off[0], m.off[1], m.off[2]) / b.r, k = x <= 2 ? 1 : x >= 4 ? 0 : (4 - x) / 2;
+      const x = Math.hypot(m.off[0], m.off[1], m.off[2]) / b.r, k = (x <= 2 ? 1 : x >= 4 ? 0 : (4 - x) / 2) * (movers.find(o => o.m === m)?.k ?? 1);
       const turn = b.spin * dt * k;
       // (a jump in time — a preset loaded, the clock wound on — moves nothing)
       if (k === 0 || Math.abs(turn) > 1) continue;
@@ -722,6 +724,35 @@ export class View3D {
       m.off = [o.x, o.y, o.z]; m.vel = [v.x, v.y, v.z];
       q.premultiply(dq);
     }
+  }
+
+  /** where each station was (m from its world) last frame */
+  private stationWas = new Map<Craft, THREE.Vector3>();
+  /**
+   * near a station in orbit, the ship goes round with it: within 10 km it keeps its place by the station (so
+   * you can fly up to its port), less and less out to 20 km. How much it rode along, 0–1 (none unless `apply`;
+   * the stations' places are kept every frame either way)
+   */
+  private rideStation(apply: boolean): number {
+    const sh = this.ship, A = sh.nav.anchor;
+    let best: Craft | null = null, bd = 20e3;
+    const now = new Map<Craft, THREE.Vector3>();
+    for (const c of this.fleet.crafts) {
+      if (c.kind !== 'station' || c.state !== 'orbit' || !c.b.alive) continue;
+      const at = this.fleet.local(c);
+      now.set(c, at);
+      if (c.b !== A) continue;
+      const d = Math.hypot(at.x - sh.nav.off[0] * AU_M, at.y - sh.nav.off[1] * AU_M, at.z - sh.nav.off[2] * AU_M);
+      if (d < bd) { bd = d; best = c; }
+    }
+    const was = best ? this.stationWas.get(best) : undefined;
+    this.stationWas = now;
+    if (!apply || !best || !was || this.visit.docked) return 0;
+    const k = bd < 10e3 ? 1 : (20e3 - bd) / 10e3, m = now.get(best)!.clone().sub(was);
+    // (a jump — a preset loaded, the clock wound on — is not a ride)
+    if (m.length() > 5e3) return 0;
+    for (let j = 0; j < 3; j++) sh.nav.off[j] += (m.getComponent(j) * k) / AU_M;
+    return k;
   }
 
   /** ride with whatever pulls hardest where a mover is */
@@ -1832,11 +1863,20 @@ export class View3D {
       // close the gap exponentially, no faster than the drive allows
       const want = gap > 0 ? Math.min((gap * AU_M) / 1.2, sh.cap(this.nearest(p).alt)) : 0;
       sh.thrust = gap > 0 ? 1 : 0;
-      for (let k = 0; k < 3; k++) v[k] += ((d[k] / dist) * want - v[k]) * Math.min(1, dt * 3);
+      // and keep up with a target that moves on its own (a station in its orbit, 7.7 km/s round the Earth): its
+      // velocity, relative to what the ship rides with, added to the chase
+      const tv: V3 = [0, 0, 0], A = n.anchor;
+      if (t.at) {
+        const rel: V3 = [q[0] - (A?.x ?? 0), q[1] - (A?.y ?? 0), q[2] - (A?.z ?? 0)];
+        if (t.was && dt > 0) for (let k = 0; k < 3; k++) tv[k] = ((rel[k] - t.was[k]) * AU_M) / dt;
+        t.was = rel;
+      }
+      for (let k = 0; k < 3; k++) v[k] += ((d[k] / dist) * want + tv[k] - v[k]) * Math.min(1, dt * 3);
       turnTo(sh.quat, d, dt * 3);
       if (gap < t.stop * 0.05 + 5 / AU_M || (this.mode === 'pilot' && this.controls.moving())) {
         this.travel = null;
         if (gap < t.stop * 0.05 + 5 / AU_M) v.fill(0);
+        t.was = undefined;
         if (this.autoOd) { sh.od = false; this.autoOd = false; }
         if (t.land && gap < t.stop * 0.05 + 5 / AU_M) this.landOrLift();
         if (t.dock && gap < t.stop * 0.05 + 5 / AU_M) this.visit.dock(t.dock);
