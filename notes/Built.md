@@ -2,7 +2,7 @@
 
 What's in the game, newest first. The README has the full description.
 
-- **Worlds from orbit and from the air**: sharp coasts from 10 km coastline data; detail below the map's grain close to a world, craters on airless ground all the way down; the ground from the air in relief (32e87c0); [pictures](Feedback/2026-10-05.md#textures-from-orbit-and-the-ships-model-to-download)
+- **Worlds from orbit and from the air**: sharp coasts from 10 km coastline data; detail below the map's grain close to a world, craters on airless ground all the way down; the ground from the air in relief (32e87c0, 63f1c84); [pictures](Feedback/2026-10-05.md#textures-from-orbit-and-the-ships-model-to-download)
 - **The ship's 3D model** to download, GLB and USDZ, at https://idoadjadjajdada.github.io/Orbital/ship/ (c310445)
 - **Docking that catches the station**: Dock chases a station round its orbit and docks; within 10 km the ship goes round with the station, so you can fly to its port by hand (21c210e)
 - **The ship's new look**: shining plates with their seams in relief, a darker belly, strobes, roof fittings; inside, guide lights, rails, ribs and cove lights (6039531); [pictures](Feedback/2026-10-04.md#gravity-the-ships-looks-and-the-map)
