@@ -431,6 +431,8 @@ export class Ground {
   private caveMat: THREE.ShaderMaterial;
   /** the ground's tiles */
   readonly tiles: TileSet;
+  /** the people of this world, who built its ruins, if one lives here */
+  ruinPeople: string | null = null;
   /** the arches, spires, overhangs and caves round you */
   readonly forms: FormSet;
   private paint: ReturnType<typeof groundPainter> | null = null;
@@ -682,6 +684,8 @@ export class Ground {
     // rare everywhere; a little less rare on worlds with a past, and where a people lives now
     const rate = L?.tier === 'intelligent' ? 0.04 : b.look.real === 'Earth' ? 0.003 : 0.006;
     const people = L?.tier === 'intelligent' ? L.forms.find(f => f.kind === 'people')?.name ?? null : null;
+    this.ruinPeople = people;
+    this.ruins.spin(this.t);
     this.ruins.frame({ R: spec.R, seed: Math.floor(b.look.seed % 9973) + 17, rate, people, built: m => this.platformAt(m) > -Infinity, sampleAt: m => { const h = groundAt(spec, m, 1, this.sample, this.paint ?? undefined, this.det), q = this.sample; return { h: q.sea ? 0 : h, sea: q.sea, r: q.r, g: q.g, b: q.b }; } }, n);
     const first = this.ruins.near[0];
     if (first && first.d < 80 && !this.found.has(first.r.key)) {

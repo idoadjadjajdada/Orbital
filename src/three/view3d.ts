@@ -1234,6 +1234,13 @@ export class View3D {
 
   // ---------------------------------------------------------------- the rockets
   /** a rocket standing within a few metres of you on foot */
+  /** an artefact in a ruin, within reach of you on foot */
+  artefactNear() {
+    const S = this.surf, G = this.ground;
+    if (this.mode !== 'surface' || !G.spec || !G.ruins.near.length) return null;
+    return G.ruins.artefactAt(S.n, G.spec.R, S.foot);
+  }
+
   rocketNear() {
     const S = this.surf;
     if (this.mode !== 'surface' || !S.b) return null;
@@ -1881,6 +1888,7 @@ export class View3D {
       else if (way) this.prompt = way;
       else if (this.shuttle.near(this.surf.b, this.surf.n)) this.prompt = { label: 'Board Lander 1', act: () => this.shuttle.board() };
       else if (this.rocketNear()) { const r = this.rocketNear()!; this.prompt = { label: `The ${r.name}: load it, fly it, ride it`, act: () => this.panels.show('rocket', r.id) }; }
+      else if (this.artefactNear()) { const r = this.artefactNear()!; this.prompt = { label: `Pick up ${r.art!.name}`, act: () => { this.ground.ruins.take(r); this.found(`Artefact: ${r.art!.name}`, `From ${r.name}: ${r.art!.about}`); } }; }
       else this.prompt = { label: 'Scan here', act: () => this.panels.show('scan') };
     } else if (this.mode === 'shuttle') this.prompt = this.shuttle.prompt();
     else if (this.mode === 'inside') { this.prompt = this.visit.prompt(); this.visit.screens(dt); }

@@ -280,12 +280,15 @@ export class Visit {
   /** the base's rover out of the hangar's open end, and you at its controls */
   private roverOut(c: Craft) {
     const f = this.v.fleet, H = BUILDINGS[2];
+    // (one rover to a hangar: out already, you go to it)
+    const out = f.crafts.find(x => x.garage === c.id && x.state !== 'lost');
+    if (out) { this.v.viewCraft(out.id); this.toast(`${out.name} is out already: here it is`); return; }
     // out past the end of the apron, heading away from the hangar
     const p = at(H, 13, 0, 0), p2 = at(H, 17, 0, 0);
     const n = f.onBase(c, p.x, p.z), n2 = f.onBase(c, p2.x, p2.z);
     const r = f.launch('rover', c.b, new THREE.Vector3(), n);
     const [e, nn] = tangent(n), dd = [n2[0] - n[0], n2[1] - n[1], n2[2] - n[2]];
-    r.state = 'surface'; r.n = n; r.status = 'driving'; r.name = `${c.name} rover`;
+    r.state = 'surface'; r.n = n; r.status = 'driving'; r.name = `${c.name} rover`; r.garage = c.id;
     r.head = Math.atan2(dd[0] * e[0] + dd[1] * e[1] + dd[2] * e[2], dd[0] * nn[0] + dd[1] * nn[1] + dd[2] * nn[2]);
     this.v.viewCraft(r.id);
     this.toast('Out through the big door. W S to drive, A D to steer; F to get out');

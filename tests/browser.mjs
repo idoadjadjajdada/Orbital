@@ -464,9 +464,13 @@ try {
   ok('it grows, and the harvest is logged', await until(page, () => window.orbital.v3.logbook.finds.some(f => /^Grown: Lettuce in Potting soil/.test(f.what) && /100% of what potting soil gives/.test(f.note))));
   ok('the chamber shows the plant', await page.evaluate(() => { const v = window.orbital.v3, c = v.fleet.crafts.find(q => q.name === 'Canaveral Base'); let n = 0; c.inside.group.getObjectByName('growlab').traverse(o => { if (o.isMesh && o.geometry.type === 'SphereGeometry') n++; }); return n >= 8; }));
   await stand(28, -6, 28, 4, -0.2);
+  ok('the hangar\'s rover stands in its bay', await page.evaluate(() => { const c = window.orbital.v3.fleet.crafts.find(q => q.name === 'Canaveral Base'), v = []; c.mesh.traverse(o => { if (o.name === 'hangar-rover') v.push(o.visible); }); return v.length > 3 && v.every(x => x); }));
   ok('the hangar\'s rover is in reach', await until(page, () => window.orbital.v3.prompt?.label === 'The rover: drive it out'));
   await page.keyboard.press('KeyF');
   ok('F drives it out of the hangar', await until(page, () => window.orbital.v3.mode === 'craft' && window.orbital.v3.fleet.crafts.some(c => c.kind === 'rover' && /rover/.test(c.name))));
+  // (the hangar's own rover: its pieces of the model, there in the bay until it drives out)
+  const parked = () => { const c = window.orbital.v3.fleet.crafts.find(q => q.name === 'Canaveral Base'), out = []; c.mesh.traverse(o => { if (o.name === 'hangar-rover') out.push(o.visible); }); return out; };
+  ok('the hangar\'s bay is empty while its rover is out', await until(page, p => { const v = eval(p)(); return v.length > 3 && v.every(x => !x); }, `(${parked})`));
   clean('base');
   }
 

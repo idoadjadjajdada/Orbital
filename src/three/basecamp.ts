@@ -70,6 +70,8 @@ export function gridOf(name: ModelName, root: THREE.Object3D): Grid {
     for (let q: THREE.Object3D | null = m; q; q = q.parent) if (q.name === 'roof') return;
     const mat = (m.material as THREE.Material).name;
     if (mat === 'glow') return;
+    // (the hangar's rover is not a wall: it drives out)
+    if (m.name === 'hangar-rover') return;
     const pos = m.geometry.getAttribute('position'), idx = m.geometry.getIndex();
     const n = idx ? idx.count / 3 : pos.count / 3;
     for (let t = 0; t < n; t++) {
@@ -216,6 +218,7 @@ export function baseModel(): THREE.Group {
     holders.push({ B, g: h });
     load(B.model).then(m => {
       if (!m) return;
+      if (B.model === 'vault-hangar') splitRover(m);
       const o = m.clone();
       gridOf(B.model, m);
       h.remove(stand);
@@ -225,6 +228,64 @@ export function baseModel(): THREE.Group {
   }
   g.userData.buildings = holders;
   return g;
+}
+
+/** the hangar's rover in its bay, in the hangar's own frame: the model's pieces wholly inside this box */
+const ROVER_BAY = new THREE.Box3(new THREE.Vector3(1.2, 0.05, -0.9), new THREE.Vector3(4.8, 2.4, 1.9));
+
+/**
+ * The hangar's model has its rover built into it. Its pieces (the triangles joined at their corners: the
+ * wheels, the chassis, the cab and its windows, the lights, the mast) are taken out into meshes of their own,
+ * each called 'hangar-rover', so the rover can go from the bay when it drives out (once, on the model itself,
+ * so every base's copy has them)
+ */
+function splitRover(root: THREE.Object3D) {
+  if (root.userData.roverSplit) return;
+  root.userData.roverSplit = true;
+  root.updateMatrixWorld(true);
+  const meshes: THREE.Mesh[] = [];
+  root.traverse(o => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
+  for (const m of meshes) {
+    let roof = false;
+    for (let q: THREE.Object3D | null = m; q; q = q.parent) if (q.name === 'roof') roof = true;
+    if (roof) continue;
+    const g = m.geometry.index ? m.geometry.toNonIndexed() : m.geometry, pos = g.getAttribute('position'), n = pos.count / 3;
+    // the pieces: triangles that share a corner
+    const up = Array.from({ length: n }, (_, k) => k), find = (k: number): number => { while (up[k] !== k) { up[k] = up[up[k]]; k = up[k]; } return k; };
+    const seen = new Map<string, number>(), v = new THREE.Vector3();
+    const inBay = new Array<boolean>(n);
+    for (let t = 0; t < n; t++) {
+      let inside = true;
+      for (let c = 0; c < 3; c++) {
+        v.fromBufferAttribute(pos, t * 3 + c);
+        const key = `${v.x.toFixed(4)},${v.y.toFixed(4)},${v.z.toFixed(4)}`, o = seen.get(key);
+        if (o === undefined) seen.set(key, t); else up[find(o)] = find(t);
+        if (!ROVER_BAY.containsPoint(v.applyMatrix4(m.matrixWorld))) inside = false;
+      }
+      inBay[t] = inside;
+    }
+    // a piece is the rover's if every triangle of it is in the bay
+    const whole = new Map<number, boolean>();
+    for (let t = 0; t < n; t++) { const r = find(t); whole.set(r, (whole.get(r) ?? true) && inBay[t]); }
+    const rover: number[] = [], rest: number[] = [];
+    for (let t = 0; t < n; t++) (whole.get(find(t)) ? rover : rest).push(t);
+    if (!rover.length) continue;
+    const part = (tris: number[]) => {
+      const out = new THREE.BufferGeometry();
+      for (const [name, a] of Object.entries(g.attributes)) {
+        const src = a as THREE.BufferAttribute, k = src.itemSize, arr = new (src.array.constructor as Float32ArrayConstructor)(tris.length * 3 * k);
+        tris.forEach((t, i) => { for (let c = 0; c < 3 * k; c++) arr[i * 3 * k + c] = src.array[t * 3 * k + c]; });
+        out.setAttribute(name, new THREE.BufferAttribute(arr, k, src.normalized));
+      }
+      out.computeBoundingSphere();
+      return out;
+    };
+    const r = new THREE.Mesh(part(rover), m.material);
+    r.name = 'hangar-rover';
+    r.position.copy(m.position); r.quaternion.copy(m.quaternion); r.scale.copy(m.scale);
+    m.geometry = part(rest);
+    m.parent!.add(r);
+  }
 }
 
 // ---------------------------------------------------------------- what there is to use

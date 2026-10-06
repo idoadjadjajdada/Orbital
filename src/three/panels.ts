@@ -463,6 +463,9 @@ export class Panels {
     h += '<div class="pgrid">' + stat('Gravity', `${(g / 9.81).toFixed(3)} g`) + stat('Air pressure', air.bar > 1e-4 ? `${air.bar.toPrecision(3)} bar` : 'vacuum')
       + stat('Temperature', `${Math.round(air.T)} K · ${Math.round(air.T - 273.15)} °C`) + stat('Daylight', G.daylight > 0.6 ? 'day' : G.daylight > 0.05 ? 'twilight' : 'night') + '</div>';
     h += `<div class="psub">Air here</div>${G.atmo.kind === 'thin' || G.atmo.kind === 'thick' ? atmoTable({ ...G.atmo, bar: air.bar, T: air.T }) : atmoTable(G.atmo)}`;
+    // a ruin near: what the scan reads from it
+    const ru = G.ruins.near[0];
+    if (ru && ru.d < 150) h += `<div class="psub">Ruins here</div>${G.ruins.read(ru.r, G.ruinPeople).map(t => `<div class="prow tight"><div>${esc(t)}</div></div>`).join('')}`;
     const cp = composition(b);
     if (cp.rows.length) h += `<div class="psub">Under your feet</div><div class="prow tight"><div><span class="pdot" style="background:rgb(${Math.round(smp.r * 255)},${Math.round(smp.g * 255)},${Math.round(smp.b * 255)})"></span> ${smp.rock > 0.5 ? 'rocky, boulder-strewn' : 'fine soil and pebbles'}</div></div>${bars(cp.rows)}`;
     const L = G.lifeInfo!;

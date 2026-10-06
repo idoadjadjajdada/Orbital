@@ -21,6 +21,11 @@ import { gridOf, gridAt } from './basecamp';
  * as the bases' buildings do (basecamp.ts). Only the ones within a few
  * kilometres are drawn; the nearest is labelled from twice that; coming
  * within eighty metres logs it.
+ *
+ * In each site's main ruin something was left behind: an artefact, glinting
+ * where you can reach it (under the arch, in the shrine, at the foot of the
+ * obelisk), to pick up for the log. And the suit's scan reads a ruin: how old
+ * it is, what it is made of, and from its doorways how tall its builders were.
  */
 
 export interface RuinCtx {
@@ -36,7 +41,30 @@ export interface RuinCtx {
   people: string | null;
 }
 
-export interface Ruin { key: string; n: V3; h: number; model: ModelName; s: number; rot: number; tint: THREE.Color; name: string }
+export interface Ruin {
+  key: string; n: V3; h: number; model: ModelName; s: number; rot: number; tint: THREE.Color; name: string;
+  /** what was left in it (the site's main ruin only) */
+  art?: { name: string; about: string };
+  /** how long ago it was built, years */
+  age: number;
+}
+
+/** an artefact as it lies: where (body frame, and m over the datum), and the ruin it is in */
+interface Lying { r: Ruin; n: V3; h: number; obj: THREE.Object3D }
+
+const ARTS = [
+  'a carved tablet', 'a stone figurine', 'a disc of polished stone', 'a ring of dark metal', 'a broken mask',
+  'a sealed jar', 'a bead of coloured glass', 'a seal cut with a sign', 'a lamp of carved stone', 'a fragment of a star map',
+];
+const MARKS = [
+  'its marks run in rows, like writing nobody can read',
+  'it shows the sky over this place, the stars as they stood when it was made',
+  'worn smooth where hands held it',
+  'cut with a pattern that repeats, and repeats again smaller inside itself',
+  'it shows a figure with its arms raised to something above it',
+  'a hole runs through it, as if it was worn on a cord',
+  'its surface is scored with lines that meet at this very place, as on a map',
+];
 
 const CELL = 4000, SHOW = 3000, LABEL = 6000;
 const hash = (a: number, b: number, c: number) => { const x = Math.sin(a * 127.1 + b * 311.7 + c * 74.7) * 43758.5453; return x - Math.floor(x); };
@@ -139,7 +167,10 @@ export class Ruins {
       // the stone: the ground's colour, a little paler, with some of its own
       const tint = new THREE.Color(Math.min(1, at.r * 1.35 + 0.08), Math.min(1, at.g * 1.35 + 0.08), Math.min(1, at.b * 1.35 + 0.08)).lerp(STONE, 0.25);
       const mn = RUINS[Math.floor(g(4) * RUINS.length)];
-      out.push({ key: `${f}/${ci}/${cj}/${q}`, n, h: lo - 0.15 * s, model: mn, s, rot: g(5) * Math.PI * 2, tint, name: WHAT[mn] });
+      // a few centuries to a few million years old: older where nothing wears it away (or where a people lives, younger)
+      const age = Math.round(300 * 10 ** (h(8) * 4 * (c.people ? 0.6 : 1)));
+      const art = q === 0 ? { name: ARTS[Math.floor(h(9) * ARTS.length)], about: `${MARKS[Math.floor(h(11) * MARKS.length)][0].toUpperCase()}${MARKS[Math.floor(h(11) * MARKS.length)].slice(1)}. ${c.people ? `The ${c.people} made it` : 'Whoever made it'}, about ${fmtAge(age)} ago.` } : undefined;
+      out.push({ key: `${f}/${ci}/${cj}/${q}`, n, h: lo - 0.15 * s, model: mn, s, rot: g(5) * Math.PI * 2, tint, name: WHAT[mn], art, age });
     }
     return out;
   }
@@ -165,10 +196,74 @@ export class Ruins {
     o.scale.setScalar(r.s);
     this.group.add(o);
     v.obj = o;
+    if (r.art && !this.taken.has(r.key)) this.lay(r, o, R);
+  }
+
+  /** the artefacts picked up already */
+  readonly taken = new Set<string>();
+  private lying = new Map<string, Lying>();
+
+  /** put a ruin's artefact down in it: the nearest open spot to its middle (on the ground, or a step), glinting */
+  private lay(r: Ruin, o: THREE.Object3D, R: number) {
+    let spot: { x: number; z: number; y: number } | null = null;
+    for (let ring = 0; ring < 12 && !spot; ring++) for (let k = 0; k < Math.max(1, ring * 6) && !spot; k++) {
+      const a = (k / Math.max(1, ring * 6)) * Math.PI * 2, x = Math.cos(a) * ring * 0.4, z = Math.sin(a) * ring * 0.4;
+      const g = gridAt(r.model, x, z);
+      if (!g) spot = { x, z, y: 0 };
+      else if (!g.solid && g.floor !== null && g.floor < 1.2) spot = { x, z, y: g.floor };
+    }
+    if (!spot) return;
+    const a = artefactMesh();
+    a.position.set(spot.x, spot.y + 0.35 / r.s, spot.z);
+    a.scale.setScalar(1 / r.s);
+    o.add(a);
+    // where it is on the world: from the ruin's frame (east, up, north turned by its rotation) back to a direction
+    o.updateMatrixWorld(true);
+    const w = a.getWorldPosition(new THREE.Vector3()).applyMatrix4(this.group.matrixWorld.clone().invert()), l = w.length();
+    this.lying.set(r.key, { r, n: [w.x / l, w.y / l, w.z / l], h: l - R - 0.35, obj: a });
+  }
+
+  /** an artefact within reach of someone standing at n with their feet at `foot` m: its ruin, what it is */
+  artefactAt(n: V3, R: number, foot: number): Ruin | null {
+    for (const v of this.lying.values()) {
+      if (!v.obj.parent) { this.lying.delete(v.r.key); continue; }
+      const d = Math.acos(Math.min(1, n[0] * v.n[0] + n[1] * v.n[1] + n[2] * v.n[2])) * R;
+      if (d < 2.4 && Math.abs(foot - v.h) < 2.5) return v.r;
+    }
+    return null;
+  }
+
+  /** pick an artefact up: gone from where it lay */
+  take(r: Ruin) {
+    this.taken.add(r.key);
+    const v = this.lying.get(r.key);
+    if (v) { v.obj.parent?.remove(v.obj); this.lying.delete(r.key); }
+  }
+
+  /** the artefacts glint and turn */
+  spin(t: number) {
+    for (const v of this.lying.values()) {
+      v.obj.rotation.y = t * 0.8;
+      const glow = v.obj.getObjectByName('glint') as THREE.Sprite | undefined;
+      if (glow) glow.material.opacity = 0.55 + 0.35 * Math.sin(t * 2.5);
+    }
+  }
+
+  /** what the suit's scan reads from a ruin */
+  read(r: Ruin, people: string | null): string[] {
+    const door = 2.1 * r.s, tall = door / 1.25;
+    return [
+      `${r.name[0].toUpperCase()}${r.name.slice(1)}, built about ${fmtAge(r.age)} ago${r.age > 1e5 ? ': older than any people we know of' : ''}`,
+      `Cut from the stone of the ground here, and laid without mortar; tool marks on the inside faces`,
+      `Its doorways stand ${door.toFixed(1)} m: built by, or for, beings about ${tall.toFixed(1)} m tall${tall > 2.6 ? ', far taller than us' : tall > 1.9 ? ', a little taller than us' : ''}`,
+      people ? `In the style of the ${people}` : 'Who built it is not known: no people lives here now',
+      r.art ? (this.taken.has(r.key) ? `You took ${r.art.name} from it` : `Something lies in it: ${r.art.name}`) : 'Nothing left in it',
+    ];
   }
 
   private drop(o: THREE.Object3D) {
     this.group.remove(o);
+    for (const [k, v] of this.lying) if (v.obj.parent === o) this.lying.delete(k);
     o.traverse(x => { const m = x as THREE.Mesh; if (m.isMesh) (m.material as THREE.Material).dispose(); });
   }
 
@@ -187,4 +282,36 @@ export class Ruins {
     }
     return null;
   }
+}
+
+/** years, as you would say them */
+function fmtAge(y: number) {
+  if (y >= 1e6) return `${(y / 1e6).toFixed(y < 1e7 ? 1 : 0)} million years`;
+  if (y >= 1e4) return `${Math.round(y / 1000)} thousand years`;
+  return `${Math.round(y / 100) * 100} years`;
+}
+
+/** an artefact: a small carved thing of the ruin's own sort, with a glint over it so it can be found */
+function artefactMesh() {
+  const g = new THREE.Group();
+  g.name = 'artefact';
+  const m = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 0), new THREE.MeshStandardMaterial({ color: 0xd8b060, emissive: 0x3a2a08, metalness: 0.6, roughness: 0.35, flatShading: true }));
+  m.scale.set(1, 1.4, 1);
+  g.add(m);
+  const glint = new THREE.Sprite(new THREE.SpriteMaterial({ map: glintTexture(), color: 0xffe2a0, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+  glint.name = 'glint';
+  glint.scale.setScalar(0.9);
+  g.add(glint);
+  return g;
+}
+let glintTex: THREE.Texture | null = null;
+function glintTexture() {
+  if (glintTex) return glintTex;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 64;
+  const c = cv.getContext('2d')!, gr = c.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.25, 'rgba(255,240,200,0.5)'); gr.addColorStop(1, 'rgba(255,220,160,0)');
+  c.fillStyle = gr; c.fillRect(0, 0, 64, 64);
+  glintTex = new THREE.CanvasTexture(cv);
+  return glintTex;
 }

@@ -79,6 +79,8 @@ export interface Craft {
   crew?: number; stores?: number;
   /** days it has been out of supplies; the warnings given (stores low, out) */
   short?: number; warned?: number;
+  /** a rover's: the base whose hangar it drove out of */
+  garage?: number;
 }
 
 /** a crew of six, and three months' stores: what a base or station starts with */
@@ -329,6 +331,11 @@ export class Fleet {
       const chute = m.getObjectByName('chute');
       if (chute) chute.visible = c.state === 'descent' && this.air(c.b).bar > 0.005 && c.vz < 200;
       if (c.kind === 'base' || c.kind === 'pad') m.scale.setScalar(0.05 + 0.95 * c.build);
+      // a base's own rover is gone from its hangar while it is out driving
+      if (c.kind === 'base' && m.visible) {
+        const out = this.crafts.some(x => x.garage === c.id && x.state !== 'lost');
+        m.traverse(o => { if (o.name === 'hangar-rover') o.visible = !out; });
+      }
       if (c.rocket) {
         const tr = c.rocket.trip, ph = tr ? phase(tr) : null;
         const burn = !!ph && (ph.part !== 'cruise' || (tr!.hop ? ph.u < 0.08 || ph.u > 0.92 : tr!.t - tr!.Ta < 4));
