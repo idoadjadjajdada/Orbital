@@ -34,6 +34,10 @@ import { apolloMesh, flagMesh, lrvMesh, landerMesh, roverMesh, veneraMesh, huyge
  * wander, and — on the few with a civilisation — towns.
  */
 
+/** how many cave ramps the ground's shader cuts out at once */
+const CAVE_RAMPS = 24;
+const ramps = () => Array.from({ length: CAVE_RAMPS }, () => new THREE.Vector3());
+
 const FRAG_NOISE = /* glsl */ `
 // (a hash without the streaks the simpler ones leave at high frequencies: Dave Hoskins' hash13)
 float h3(vec3 p) { p = mod(p, 289.0); vec3 q = fract(p * 0.1031); q += dot(q, q.zyx + 31.32); return fract((q.x + q.y) * q.z); }
@@ -105,6 +109,15 @@ uniform float alien;
 #endif
 // how cratered the ground is, seen from the air (CRATERS where it is at all)
 uniform float craterK;
+// the ramps down into the caves near: each a segment of floor (A to B) under the cave's up U, with its
+// half width, the height of its roof's arch and of the arch's centre over the floor (in S); the land
+// inside their air is cut away
+#define CAVE_RAMPS 24
+uniform int caveN;
+uniform vec3 caveA[CAVE_RAMPS];
+uniform vec3 caveB[CAVE_RAMPS];
+uniform vec3 caveU[CAVE_RAMPS];
+uniform vec3 caveS[CAVE_RAMPS];
 ${LIGHT_GLSL}
 varying vec3 vN;
 varying vec3 vP;
@@ -123,6 +136,20 @@ varying float vSky;
 ${FRAG_NOISE}
 void main() {
   #include <logdepthbuf_fragment>
+  #ifndef CAVE
+  // the land over a cave's ramp is not there: the ramp's air is (caves.ts, inRamp)
+  for (int i = 0; i < CAVE_RAMPS; i++) {
+    if (i >= caveN) break;
+    vec3 U = caveU[i], AB = caveB[i] - caveA[i], v = vP - caveA[i];
+    vec3 abh = AB - U * dot(AB, U), vh = v - U * dot(v, U);
+    float t = clamp(dot(vh, abh) / max(dot(abh, abh), 1e-6), 0.0, 1.0);
+    vec3 r = v - AB * t;
+    float dy = dot(r, U), dh = length(r - U * dy);
+    vec3 S = caveS[i];
+    float ex = dh / S.x, ey = (dy - S.z) / S.y;
+    if (dy > 0.0 && ex * ex + ey * ey < 1.0) discard;
+  }
+  #endif
   vec3 N = normalize(vN);
   // how much of the sky (and the sun) reaches here: all of it on open ground, little deep in a cave
   float sky = 1.0;
@@ -433,6 +460,7 @@ export class Ground {
         sunDir: { value: new THREE.Vector3(0, 0, 1) }, sunCol: { value: new THREE.Vector3(1, 1, 1) }, ambient: { value: new THREE.Vector3(0.03, 0.03, 0.03) },
         fogCol: { value: new THREE.Vector3() }, fogK: { value: 0 }, time: { value: 0 }, seaUp: { value: new THREE.Vector3() },
         lush: { value: 0 }, leaf: { value: new THREE.Vector3(0.3, 0.45, 0.15) }, alien: { value: 0 }, craterK: { value: 0 },
+        caveN: { value: 0 }, caveA: { value: ramps() }, caveB: { value: ramps() }, caveU: { value: ramps() }, caveS: { value: ramps() },
         ...lightUniforms,
       },
     });
@@ -492,7 +520,7 @@ export class Ground {
   standAt(n: V3, foot: number) {
     const h = this.heightAt(n, 0.3), sea = this.sample.sea;
     if (!this.spec) return { h, sea, roof: Infinity, solid: false, inside: null as Form | null, dark: 0 };
-    const g = this.forms.ground(this.spec, n, foot);
+    const g = this.forms.ground(this.spec, n, foot, sea ? 0 : h);
     // a ruin: its steps and plinths to stand on, its stone in the way
     const rs = this.ruins.near.length && g.floor === null ? this.ruins.structureAt(n, this.spec.R) : null;
     if (rs) {
@@ -505,6 +533,9 @@ export class Ground {
     if (st && st.floor !== null && g.floor === null) return { h: st.floor, sea: false, roof: Infinity, solid: st.solid || st.floor > foot, inside: null, dark: 0 };
     return { h: g.floor ?? (sea ? 0 : h), sea: g.floor === null && sea, roof: g.roof, solid: g.solid || !!st?.solid, inside: g.inside, dark: g.dark };
   }
+
+  /** is the land at n cut away, down into a cave? */
+  cutAt(n: V3) { return !!this.spec && this.forms.cutAt(this.spec, n, () => this.heightAt(n, 0.5)); }
 
   /** the up direction (unit, body frame) of the ground at n: from the heights around it */
   normalAt(n: V3, span = 1.5): V3 {
@@ -630,6 +661,16 @@ export class Ground {
       this.forms.frame(spec, n, alt, this.formSample);
       for (const f of this.forms.near(spec, n, 80)) if (!this.found.has(f.key)) { this.found.add(f.key); this.onFind(f.name, f.about); }
     } else this.forms.clear();
+    // the caves' ramps, where the land is cut away: from the body's frame to the view's
+    // (the nearest first, as many as the shader takes)
+    const rs = this.forms.ramps().map(q => ({ q, d: q.a.clone().add(q.b).multiplyScalar(0.5).applyQuaternion(this.q).add(rel).length() })).sort((a, b) => a.d - b.d).slice(0, CAVE_RAMPS).map(o => o.q), A = u.caveA.value as THREE.Vector3[], B = u.caveB.value as THREE.Vector3[], U = u.caveU.value as THREE.Vector3[], S = u.caveS.value as THREE.Vector3[];
+    rs.forEach((q, k) => {
+      A[k].copy(q.a).applyQuaternion(this.q).add(rel);
+      B[k].copy(q.b).applyQuaternion(this.q).add(rel);
+      U[k].copy(q.up).applyQuaternion(this.q);
+      S[k].set(q.hw, q.hgt, q.fl);
+    });
+    u.caveN.value = rs.length;
     if (alt < 3000) this.life(dt, n, alt);
     else if (this.floraAt || this.critters.length) this.clearLife();
   }
@@ -856,13 +897,13 @@ export class Ground {
       this.scatter(n);
     }
     // the trees: fixed to the world, modelled near you
-    this.flora.frame({ R, seed: Math.floor(b.look.seed % 9973), built: m => this.platformAt(m) > -Infinity, heightAt: m => { const h = this.heightAt(m, 0.5); return { h, sea: this.sample.sea }; } }, n, this.plants.kinds, this.plants.density, this.plants.tint);
+    this.flora.frame({ R, seed: Math.floor(b.look.seed % 9973), built: m => this.platformAt(m) > -Infinity || this.cutAt(m), heightAt: m => { const h = this.heightAt(m, 0.5); return { h, sea: this.sample.sea }; } }, n, this.plants.kinds, this.plants.density, this.plants.tint);
     // the grass: in the ground's colour (its texture, in the shader) and, round you on foot, in tufts
     const u = this.mat.uniforms, g = this.plants.grass;
     u.lush.value = g.lush;
     u.alien.value = g.leaf ? 1 : 0;
     if (g.leaf) (u.leaf.value as THREE.Vector3).set(g.leaf.r, g.leaf.g, g.leaf.b);
-    if (alt < 150) this.grass.frame({ R, seed: Math.floor(b.look.seed % 9973), built: m => this.platformAt(m) > -Infinity, sampleAt: m => { const h = this.heightAt(m, 0.5), q = this.sample; return { h, sea: q.sea, r: q.r, g: q.g, b: q.b, rock: q.rock }; } }, n, g.lush, g.leaf, this.t);
+    if (alt < 150) this.grass.frame({ R, seed: Math.floor(b.look.seed % 9973), built: m => this.platformAt(m) > -Infinity || this.cutAt(m), sampleAt: m => { const h = this.heightAt(m, 0.5), q = this.sample; return { h, sea: q.sea, r: q.r, g: q.g, b: q.b, rock: q.rock }; } }, n, g.lush, g.leaf, this.t);
     else if (this.grass.mesh.count) this.grass.clear();
     // the animals wander
     for (const c of this.critters) {

@@ -350,16 +350,22 @@ shield and the cliffs up to 8 km high round its foot — and Mount Sharp; on the
 Moon, Mons Hadley and Huygens. A made-up rocky world gets folded mountain belts
 where its crust is pushed together.
 
-**Arches, overhangs and caves.** A heightfield cannot hold an arch or a cave,
-so these are rock of their own standing on the ground, on a fixed lattice
-about a kilometre a cell, each cell's setting deciding what it holds: natural
-arches and stands of hoodoos in sandstone deserts (Mars is full of them),
-rock shelters under overhangs, frost-split spires on rugged ground, limestone
+**Arches, overhangs and caves.** A heightfield cannot hold an arch or a cave.
+Arches, hoodoos, overhangs and spires are rock of their own standing on the
+ground, on a fixed lattice about a kilometre a cell, each cell's setting
+deciding what it holds: natural arches and stands of hoodoos in sandstone
+deserts (Mars is full of them), rock shelters under overhangs, frost-split
+spires on rugged ground. Caves are under the ground (caves.ts): limestone
 caves with stalactites in wet country, ice caves on frozen worlds, lava tubes
-in the Moon's maria. Their rock stops you; walk into a cave and its floor
-carries you, its roof stops your jumps, the daylight dies away behind you and
-your helmet lamp shows the way (shaded rock outside gets light bounced off the
-sunlit ground).
+in the Moon's maria. A ramp cut down into the land (its land cut away in the
+ground's shader) leads into the hill to a network of passages and chambers
+with side passages and a lower level, kept under several metres of rock, its
+floors never steeper than a walk; a lava tube is a great tube 15 m across,
+reached down the rubble where its roof fell in. The rock is one surface (a
+surface net over the passages' air), so the branches open into each other.
+Its walls stop you; its floor carries you, its roof stops your jumps, the
+daylight dies away behind you and your helmet lamp shows the way (shaded rock
+outside gets light bounced off the sunlit ground).
 
 **The sky** is the colour the air makes it: blue on the Earth, butterscotch
 with blue sunsets on Mars (its dust lights a sky the thin gas alone could not),

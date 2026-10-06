@@ -346,7 +346,31 @@ try {
   await page.keyboard.up('KeyW');
   await page.keyboard.press('KeyF');
   ok('F comes back from the rover', await page.evaluate(() => window.orbital.v3.mode === 'surface'));
-  await page.evaluate(() => { const v = window.orbital.v3; v.surf.n = v.ladderFoot(); });
+  // a lava tube near Tranquility Base: in at its mouth, down its ramp under the ground, and its walls in the way
+  const tube = await page.waitForFunction(() => {
+    const v = window.orbital.v3, G = v.ground, q = [...G.forms.placed.values()].find(q => q.f.net), S = v.surf;
+    if (!q) return null;
+    const f = q.f, net = f.net, R = G.spec.R, at = (x, z) => { const m = [0, 1, 2].map(i => f.n[i] + (q.right[i] * x + q.back[i] * z) / R), l = Math.hypot(...m); return m.map(c => c / l); };
+    // a couple of metres out from the mouth, facing down the ramp
+    const a = net.nodes[0], b = net.nodes[Math.min(3, net.nodes.length - 1)], dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz);
+    S.n = at(a.x - dx / l * 2, a.z - dz / l * 2); S.foot = -Infinity; S.y = 0; S.vy = 0; S.pitch = 0;
+    const fd = [0, 1, 2].map(i => q.right[i] * dx + q.back[i] * dz), n = S.n, e0 = [-n[1], n[0], 0], el = Math.hypot(e0[0], e0[1]), E = [e0[0] / el, e0[1] / el, 0];
+    const N = [n[1] * E[2] - n[2] * E[1], n[2] * E[0] - n[0] * E[2], n[0] * E[1] - n[1] * E[0]];
+    S.yaw = Math.atan2(-(fd[0] * E[0] + fd[1] * E[1] + fd[2] * E[2]), fd[0] * N[0] + fd[1] * N[1] + fd[2] * N[2]);
+    v.placeSurf();
+    return f.key;
+  }, null, { timeout: 60000 }).then(h => h.jsonValue(), () => null);
+  ok('a lava tube near Tranquility Base: its way in cut down into the ground', !!tube && await page.evaluate(() => { const G = window.orbital.v3.ground, q = [...G.forms.placed.values()].find(q => q.f.net); return G.forms.ramps().length > 0 && q.f.net.segs.some(s => !s.ramp); }));
+  await page.keyboard.down('KeyW');
+  ok('W walks down into it, under the ground', await page.waitForFunction(() => { const v = window.orbital.v3, S = v.surf; return !!S.inside && S.foot < v.ground.heightAt(S.n, 0.5) - 2.5; }, null, { timeout: 60000 }).then(() => true, () => false));
+  await page.keyboard.up('KeyW');
+  // turned to the wall and walking into it: you stay in the tunnel
+  const f0 = await page.evaluate(() => { const S = window.orbital.v3.surf; S.yaw += Math.PI / 2; return S.foot; });
+  await page.keyboard.down('KeyW');
+  await page.waitForFunction(() => /Solid rock/.test(document.body.textContent), null, { timeout: 20000 }).catch(() => {});
+  await page.keyboard.up('KeyW');
+  ok('its walls are rock: you stay inside, on its floor', await page.evaluate(f0 => { const v = window.orbital.v3, S = v.surf; return !!S.inside && Math.abs(S.foot - f0) < 1.5 && S.foot < v.ground.heightAt(S.n, 0.5) - 2; }, f0));
+  await page.evaluate(() => { const v = window.orbital.v3; v.surf.foot = -Infinity; v.surf.n = v.ladderFoot(); });
   ok('at the ladder you can board', await until(page, () => window.orbital.v3.prompt?.label === 'Climb the ladder and board'));
   await page.keyboard.press('KeyF');
   ok('F climbs aboard', await page.evaluate(() => window.orbital.v3.mode === 'walk'));
@@ -458,7 +482,7 @@ try {
   });
   await page.waitForFunction(() => window.orbital.v3.ground.ready, null, { timeout: 90000 }).catch(() => {});
   ok('the spaceports start with a rocket on each pad', await page.evaluate(() => { const f = window.orbital.v3.fleet; return ['Canaveral Launch Pad', 'Baikonur Launch Pad'].every(n => !!f.rocketAt(f.crafts.find(c => c.name === n))); }));
-  await page.evaluate(() => { const v = window.orbital.v3, f = v.fleet, c = f.crafts.find(x => x.rocket?.kind === 'wayfarer'); v.toSurface(f.offset(c.n, 9, c.head + Math.PI / 2, c.b.r * 1.495978707e11), c.head - Math.PI / 2); });
+  await page.evaluate(() => { const v = window.orbital.v3, f = v.fleet, c = f.crafts.find(x => x.rocket?.kind === 'wayfarer'); v.toSurface(f.offset(c.n, 7, c.head + Math.PI / 2, c.b.r * 1.495978707e11), c.head - Math.PI / 2); });
   ok('beside it, it can be flown', await until(page, () => /^The Wayfarer 1: load it, fly it, ride it/.test(window.orbital.v3.prompt?.label ?? '')));
   await page.keyboard.press('KeyF');
   ok('F opens its panel: load and destinations', await until(page, () => !!document.querySelector('.panel3 button[data-act="rfly"]')));

@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { V3 } from '../pixel/sprites';
 import { hash, fbm, vnoise } from '../pixel/noise';
 import { faceOf, tangent, type GroundSpec, type GroundSample } from './terrain';
+import { caveNet, caveSurface, caveFloorAt, caveSky, caveDressing, caveReach, inRamp, type CaveNet, type LandAt } from './caves';
 
 /**
  * What the heightfield cannot hold: rock you can walk under and into.
@@ -18,10 +19,10 @@ import { faceOf, tangent, type GroundSpec, type GroundSample } from './terrain';
  *
  * They are placed on a fixed lattice over the world (about a kilometre a
  * cell), each cell deciding from its own hash and its own ground whether it
- * holds one, so the same arch is always in the same place. A cave is a hill of
- * rock with a tunnel winding into it and opening into a chamber, built as one
- * surface from the hill's outside through its mouth to the chamber's end; its
- * floor is what you walk on inside, its walls stop you, and the light from
+ * holds one, so the same arch is always in the same place. A cave is not on
+ * the ground but under it (caves.ts): a ramp cut down into the land leads to
+ * passages and chambers in the rock below, with the land over them; its
+ * floors are what you walk on inside, its walls stop you, and the light from
  * the sky dies away as you go in (the helmet lamp is what you see by).
  */
 
@@ -35,13 +36,13 @@ export interface Form {
   rock: Rock;
   /** where it stands (unit, body frame), the ground's height there (m), and the way it faces (rad from north, east positive) */
   n: V3; h0: number; head: number;
-  /** its size, m (an arch's span, a spire's height, a cave hill's radius) */
+  /** its size, m (an arch's span, a spire's height, how far a cave's passages reach) */
   size: number;
   seed: number;
   name: string;
   about: string;
-  /** a cave's floor along its path, m above h0 (set where it is placed, from the ground under it) */
-  floor?: number[];
+  /** a cave's passages (laid out where it is placed, from the land over them) */
+  net?: CaveNet;
 }
 
 /** the ground, as the forms need to ask about it */
@@ -96,8 +97,8 @@ function formIn(s: GroundSpec, f: number, L: number, cx: number, cy: number, sam
   let t = hash(cx * 3 + 11, cy * 5 + 17, sd + f) * set.w.reduce((x, y) => y[1] + x, 0), kind: FormKind = set.w[0][0];
   for (const [kk, w] of set.w) { if (t < w) { kind = kk; break; } t -= w; }
   const seed = Math.floor(hash(cx, cy, f + 99) * 1e6);
-  // a cave's mouth faces down the slope, out of the hill; the rest any way
-  const head = kind === 'cave' && slope > 0.02 ? Math.atan2(gx, gy) + Math.PI + (hash(cx, cy, 5) - 0.5) * 0.8 : hash(cx, cy, 7) * Math.PI * 2;
+  // a cave's ramp goes into the hill, up the slope (so the land is soon over it); the rest any way
+  const head = kind === 'cave' && slope > 0.02 ? Math.atan2(gx, gy) + (hash(cx, cy, 5) - 0.5) * 0.8 : hash(cx, cy, 7) * Math.PI * 2;
   const size = sizeOf(kind, set.rock, hash(cx + 3, cy + 9, 13));
   const [name, about] = describe(kind, set.rock, s.look.real);
   return { key: `${s.look.real ?? s.look.seed}:${f}/${cx}/${cy}`, kind, rock: set.rock, n, h0, head, size, seed, name, about };
@@ -148,7 +149,7 @@ function sizeOf(kind: FormKind, rock: Rock, h: number) {
     case 'hoodoo': return 8 + 22 * h;
     case 'spire': return (18 + 50 * h) * big;
     case 'shelter': return 9 + 12 * h;
-    case 'cave': return 26 + 16 * h;
+    case 'cave': return caveReach(rock === 'basalt');
   }
 }
 
@@ -168,28 +169,6 @@ function describe(kind: FormKind, rock: Rock, real: string | undefined): [string
 
 // ---------------------------------------------------------------- the shapes, in a form's own frame
 // x to the right, y up, z back toward you (forward is −z); metres, from the ground at its middle
-
-/** the cave's path: a mouth at the hill's side, a winding tunnel, a chamber */
-export interface CavePath { pts: THREE.Vector3[]; w: number[]; hgt: number[]; open: number }
-export function cavePath(f: Form): CavePath {
-  const S = f.size, r = mulberry(f.seed);
-  const pts: THREE.Vector3[] = [], w: number[] = [], hgt: number[] = [];
-  const N = 26, len = S * 1.25, mouthZ = S * 0.72;
-  let x = 0, ang = 0;
-  for (let k = 0; k <= N; k++) {
-    const t = k / N;
-    ang += (r() - 0.5) * 0.5;
-    ang *= 0.85;
-    const z = mouthZ - t * len;
-    x += Math.sin(ang) * (len / N);
-    pts.push(new THREE.Vector3(x, f.floor ? f.floor[k] : 0.15, z));
-    // a narrow passage that opens into a chamber at the end
-    const ch = Math.max(0, (t - 0.62) / 0.38), bulge = Math.sin(Math.min(1, ch) * Math.PI * 0.85);
-    w.push(2.4 + 0.6 * r() + 5.5 * bulge + (t < 0.08 ? 1.2 * (1 - t / 0.08) : 0));
-    hgt.push(2.9 + 0.4 * r() + 4.5 * bulge + (t < 0.08 ? 0.8 * (1 - t / 0.08) : 0));
-  }
-  return { pts, w, hgt, open: mouthZ };
-}
 
 const mulberry = (a: number) => () => { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 
@@ -382,128 +361,20 @@ export function formGeometry(f: Form): THREE.BufferGeometry {
       for (let i = 0; i < M - 1; i++) { const a = lip * M + i, b = a + 1, c = base + lip * M + i, d = c + 1; idx.push(a, c, b, b, c, d); }
       return finish(new Float32Array(pos), idx, new Float32Array(skyv), f, 0.8, 0.12);
     }
-    case 'cave': return caveGeometry(f);
+    case 'cave': return caveGeometry(f, f.net ?? caveNet(f.seed, f.rock === 'basalt', f.rock === 'ice', () => 0), () => 0);
   }
 }
 
-/**
- * A cave: one surface from the back of a hill of rock, over it to its mouth,
- * in through the mouth and along the tunnel to the far wall of the chamber.
- * Each row is a ring of the same number of points: on the hill, a ring round
- * the mouth's axis; in the tunnel, a ring round its path, flattened at the
- * bottom into a floor. Its outside is the air everywhere, so the hill's skin
- * and the tunnel's walls are the same face of one sheet.
- */
-function caveGeometry(f: Form) {
-  const S = f.size, P = cavePath(f), M = 20, rings: THREE.Vector3[][] = [], sky: number[] = [];
-  const top = Math.max(...P.pts.map((p, k) => p.y + P.hgt[k]));
-  const dome = (dir: THREE.Vector3) => {
-    // the hill: a squat, lumpy dome, wider than it is tall
-    const v = fbm(dir.x * 1.6 + f.seed % 97, dir.y * 1.6, dir.z * 1.6, 3);
-    const rr = S * (0.85 + 0.35 * v);
-    // tall enough over the tunnel's highest point, and reaching well down into the ground below
-    return new THREE.Vector3(dir.x * rr, dir.y > 0 ? dir.y * Math.max(rr * 0.62, top + 4) - 1.5 : dir.y * rr - 1.5, dir.z * rr);
-  };
-  // the mouth's frame: the axis points out of the hill along +z
-  const mouth = P.pts[0], ax = new THREE.Vector3(0, 0.12, 1).normalize();
-  const sideA = new THREE.Vector3(1, 0, 0), upA = new THREE.Vector3().crossVectors(ax, sideA).normalize();
-  // the tunnel's ring at k: round the path point, its floor flat
-  const tunnelRing = (k: number) => {
-    const p = P.pts[k], nx = P.pts[Math.min(P.pts.length - 1, k + 1)].clone().sub(P.pts[Math.max(0, k - 1)]).setY(0).normalize();
-    const side = new THREE.Vector3(-nx.z, 0, nx.x);
-    const ring: THREE.Vector3[] = [];
-    for (let i = 0; i < M; i++) {
-      const a = (i / M) * Math.PI * 2 + Math.PI / 2;
-      const c = Math.cos(a), s = Math.sin(a);
-      ring.push(p.clone().addScaledVector(side, -c * P.w[k] / 2).add(new THREE.Vector3(0, s > 0 ? s * P.hgt[k] : Math.max(-0.12, s * 0.12), 0)));
-    }
-    return ring;
-  };
-  // on the hill: rings round the mouth's axis, from the back of the hill (opposite the mouth) to the rim of the mouth
-  const rim0 = tunnelRing(0);
-  for (let j = 0; j <= 14; j++) {
-    const t = j / 14, al = Math.PI * (1 - t * 0.9);
-    const ring: THREE.Vector3[] = [];
-    for (let i = 0; i < M; i++) {
-      // the same bearing round the axis as the tunnel ring's point i, so the rows line up
-      const q = rim0[i].clone().sub(mouth);
-      const be = Math.atan2(q.dot(upA), q.dot(sideA));
-      const dir = ax.clone().multiplyScalar(Math.cos(al)).addScaledVector(sideA, Math.sin(al) * Math.cos(be)).addScaledVector(upA, Math.sin(al) * Math.sin(be)).normalize();
-      ring.push(dome(dir));
-    }
-    rings.push(ring);
-    sky.push(1);
-  }
-  // round the mouth: from the hill's skin in to the tunnel's first ring, a short lip
-  const hillRim = rings[rings.length - 1];
-  rings.push(hillRim.map((p, i) => p.clone().lerp(rim0[i], 0.6)));
-  sky.push(1);
-  for (let k = 0; k < P.pts.length; k++) {
-    rings.push(tunnelRing(k));
-    const into = (P.open - P.pts[k].z);
-    sky.push(Math.exp(-into / (f.rock === 'ice' ? 16 : 7)));
-  }
-  // the end wall: the last ring pulled in to a point
-  const last = P.pts[P.pts.length - 1].clone().add(new THREE.Vector3(0, P.hgt[P.pts.length - 1] * 0.4, -1.5));
-  rings.push(rings[rings.length - 1].map(p => p.clone().lerp(last, 0.7)));
-  sky.push(0);
-  rings.push(rings[rings.length - 1].map(() => last.clone()));
-  sky.push(0);
-  const s = sleeve(rings, sky);
-  // roughen only gently in the tunnel, so its floor stays walkable
-  const g = finish(s.pos, s.idx, s.sky, f, 0, 0);
-  const pos = g.getAttribute('position').array as Float32Array, nrm = g.getAttribute('normal').array as Float32Array;
-  const hillN = 16 * M;
-  for (let i = 0; i < pos.length / 3; i++) {
-    const inside = i >= hillN, y = pos[i * 3 + 1];
-    const amp = inside ? (y < 0.3 ? 0.05 : 0.45) : 1.6;
-    const x = pos[i * 3], z = pos[i * 3 + 2], sc = inside ? 0.6 : 0.09;
-    const d = (fbm(x * sc + f.seed % 1000, y * sc, z * sc, 4) - 0.5) * 2 * amp;
-    pos[i * 3] += nrm[i * 3] * d; pos[i * 3 + 1] += nrm[i * 3 + 1] * d; pos[i * 3 + 2] += nrm[i * 3 + 2] * d;
-  }
-  g.getAttribute('position').needsUpdate = true;
-  g.computeVertexNormals();
-  g.computeBoundingSphere();
+/** a cave's rock, from its passages: the land at its mouth is where its ramp's walls stop */
+function caveGeometry(f: Form, net: CaveNet, land: LandAt) {
+  const c = caveSurface(net, land, f.seed % 1000);
+  const g = finish(c.pos, c.idx, c.sky, f, 0, 0);
+  if (f.rock !== 'basalt') mergeInto(g, caveDressing(net, f.seed).map(d => ({ at: new THREE.Vector3(d.x, d.y, d.z), len: d.len, down: d.down })), f);
   return g;
 }
 
-/** what hangs from a cave's roof and stands on its floor: stalactites and stalagmites, or ice, or crystals */
-export function caveDressing(f: Form): { at: THREE.Vector3; len: number; down: boolean }[] {
-  if (f.kind !== 'cave' || f.rock === 'basalt') return [];
-  const P = cavePath(f), r = mulberry(f.seed + 7), out: { at: THREE.Vector3; len: number; down: boolean }[] = [];
-  for (let k = 8; k < P.pts.length - 1; k++) {
-    const n = Math.floor(r() * (k > 16 ? 5 : 2));
-    for (let m = 0; m < n; m++) {
-      const p = P.pts[k].clone(), down = r() < 0.6;
-      const side = (r() - 0.5) * P.w[k] * 0.8;
-      p.x += side;
-      if (down) p.y += P.hgt[k] * (0.92 - 0.25 * (side / P.w[k]) ** 2 * 4);
-      out.push({ at: p, len: 0.3 + r() * (k > 16 ? 2.2 : 0.8), down });
-    }
-  }
-  return out;
-}
-
-/** inside a cave's tunnel (local x, z)? its floor's height there and how high its roof is; null if not in it */
-export function caveFloor(P: CavePath, x: number, z: number): { floor: number; roof: number; t: number } | null {
-  let best = Infinity, bk = -1, bt = 0;
-  for (let k = 0; k < P.pts.length - 1; k++) {
-    const a = P.pts[k], b = P.pts[k + 1];
-    const ex = b.x - a.x, ez = b.z - a.z, l2 = ex * ex + ez * ez;
-    const t = Math.max(0, Math.min(1, ((x - a.x) * ex + (z - a.z) * ez) / l2));
-    const dx = a.x + ex * t - x, dz = a.z + ez * t - z, d = dx * dx + dz * dz;
-    if (d < best) { best = d; bk = k; bt = t; }
-  }
-  if (bk < 0) return null;
-  const w = P.w[bk] + (P.w[bk + 1] - P.w[bk]) * bt;
-  if (Math.sqrt(best) > w / 2 - 0.45) return null;
-  const a = P.pts[bk], b = P.pts[bk + 1];
-  const floor = a.y + (b.y - a.y) * bt, roof = P.hgt[bk] + (P.hgt[bk + 1] - P.hgt[bk]) * bt;
-  return { floor, roof, t: (bk + bt) / (P.pts.length - 1) };
-}
-
 /** is a point (local, y above the form's ground) inside a form's rock, where you cannot walk? */
-export function formSolid(f: Form, x: number, y: number, z: number, P: CavePath | null): boolean {
+export function formSolid(f: Form, x: number, y: number, z: number): boolean {
   const S = f.size;
   switch (f.kind) {
     case 'arch': {
@@ -518,17 +389,16 @@ export function formSolid(f: Form, x: number, y: number, z: number, P: CavePath 
       const r = Math.hypot(x, (z - S * 0.25) / 0.75);
       return r > S * 0.92 && r < S * 1.15 && z < S * 0.25;
     }
-    case 'cave': {
-      if (P && caveFloor(P, x, z)) return false;
-      const r = Math.hypot(x, z) / (S * 0.85);
-      return r < 0.9 && y < S * 0.62 * Math.sqrt(Math.max(0, 1 - r * r)) - 1;
-    }
+    // (a cave's rock is the ground's: see FormSet.ground)
+    case 'cave': return false;
   }
 }
 
 // ---------------------------------------------------------------- the forms round you
 
-interface Placed { f: Form; obj: THREE.Mesh; path: CavePath | null; right: V3; back: V3 }
+const dot = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+
+interface Placed { f: Form; obj: THREE.Mesh; right: V3; back: V3; /** round a cave's ramp: x0, x1, z0, z1 */ ramp?: number[] }
 
 /** the forms within reach of the viewer: built as they come near, dropped as they go */
 export class FormSet {
@@ -554,11 +424,15 @@ export class FormSet {
       this.list = formsNear(s, n, reach, sample);
     }
     const want = new Set<string>();
-    for (const f of this.list) {
-      const d = Math.acos(Math.min(1, n[0] * f.n[0] + n[1] * f.n[1] + n[2] * f.n[2])) * s.R;
+    // (a cave takes a tenth of a second or so to lay out and build: one a frame, the nearest first)
+    let caves = 0;
+    for (const f of [...this.list].sort((a, b) => dot(n, b.n) - dot(n, a.n))) {
+      const d = Math.acos(Math.min(1, dot(n, f.n))) * s.R;
       if (d > reach + f.size) continue;
       want.add(f.key);
-      if (!this.placed.has(f.key)) this.place(s, f, sample);
+      if (this.placed.has(f.key)) continue;
+      if (f.kind === 'cave' && caves++) continue;
+      this.place(s, f, sample);
     }
     for (const [k, p] of this.placed) if (!want.has(k)) { this.group.remove(p.obj); p.obj.geometry.dispose(); this.placed.delete(k); }
   }
@@ -573,53 +447,89 @@ export class FormSet {
       const l = Math.hypot(...m);
       return [m[0] / l, m[1] / l, m[2] / l];
     };
-    if (f.kind === 'cave' && !f.floor) {
-      // the tunnel's floor clears the ground under it all the way in, climbing gently where the hill rises
-      const P0 = cavePath(f);
-      const fl = P0.pts.map(p => Math.max(0.15, sample(dirAt(p.x, p.z), 1).h - f.h0 + 0.25));
-      for (let k = 1; k < fl.length; k++) fl[k] = Math.max(fl[k], fl[k - 1] - 0.3);
-      for (let k = fl.length - 2; k >= 0; k--) fl[k] = Math.max(fl[k], fl[k + 1] - 0.6);
-      f.floor = fl;
-    }
-    const g = formGeometry(f);
-    const dress = caveDressing(f);
-    if (dress.length) mergeInto(g, dress, f);
+    // the land in the form's frame: its height over the form's ground, the world's curve included
+    const land: LandAt = (x, z) => {
+      const m = dirAt(x, z), c = m[0] * f.n[0] + m[1] * f.n[1] + m[2] * f.n[2];
+      return (s.R + sample(m, 1).h) * c - (s.R + f.h0);
+    };
+    if (f.kind === 'cave' && !f.net) f.net = caveNet(f.seed, f.rock === 'basalt', f.rock === 'ice', land);
+    const g = f.kind === 'cave' ? caveGeometry(f, f.net!, land) : formGeometry(f);
     const obj = new THREE.Mesh(g, this.mat);
     obj.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(...right), new THREE.Vector3(...up), new THREE.Vector3(...back)));
     const r = s.R + f.h0;
     obj.position.set(f.n[0] * r, f.n[1] * r, f.n[2] * r);
     obj.name = f.name;
     this.group.add(obj);
-    this.placed.set(f.key, { f, obj, path: f.kind === 'cave' ? cavePath(f) : null, right, back });
+    let ramp: number[] | undefined;
+    if (f.net) {
+      ramp = [Infinity, -Infinity, Infinity, -Infinity];
+      for (const sg of f.net.segs) if (sg.ramp) for (const k of [sg.i, sg.j]) {
+        const q = f.net.nodes[k], pad = sg.hw + 1;
+        ramp = [Math.min(ramp[0], q.x - pad), Math.max(ramp[1], q.x + pad), Math.min(ramp[2], q.z - pad), Math.max(ramp[3], q.z + pad)];
+      }
+    }
+    this.placed.set(f.key, { f, obj, right, back, ramp });
   }
 
   /** where a direction falls in a placed form's frame: local x, z (m) and the form */
   private local(s: GroundSpec, n: V3) {
-    const out: { p: Placed; x: number; z: number }[] = [];
+    const out: { p: Placed; x: number; z: number; c: number }[] = [];
     for (const p of this.placed.values()) {
       const f = p.f, dx = n[0] - f.n[0], dy = n[1] - f.n[1], dz = n[2] - f.n[2];
       const x = (dx * p.right[0] + dy * p.right[1] + dz * p.right[2]) * s.R, z = (dx * p.back[0] + dy * p.back[1] + dz * p.back[2]) * s.R;
-      if (Math.abs(x) < f.size * 1.6 && Math.abs(z) < f.size * 1.6) out.push({ p, x, z });
+      if (Math.abs(x) < f.size * 1.6 && Math.abs(z) < f.size * 1.6) out.push({ p, x, z, c: n[0] * f.n[0] + n[1] * f.n[1] + n[2] * f.n[2] });
     }
     return out;
   }
 
   /**
    * What is underfoot at `n` for someone whose feet are at height `foot` (m above
-   * the datum): a cave's floor if they are in its tunnel (and its roof), or null
-   * for the open ground; and whether rock stands in the way.
+   * the datum), where the land is at `land`: a cave's floor if they are in it
+   * (and its roof), or null for the open ground; and whether rock stands in the
+   * way (a form's, or the rock round a cave, or the edge of the cut down into one).
    */
-  ground(s: GroundSpec, n: V3, foot: number): { floor: number | null; roof: number; solid: boolean; inside: Form | null; dark: number } {
+  ground(s: GroundSpec, n: V3, foot: number, land: number): { floor: number | null; roof: number; solid: boolean; inside: Form | null; dark: number } {
     let floor: number | null = null, roof = Infinity, solid = false, inside: Form | null = null, dark = 0;
-    for (const { p, x, z } of this.local(s, n)) {
-      const f = p.f, y = foot - f.h0;
-      if (p.path) {
-        const c = caveFloor(p.path, x, z);
-        if (c && y < c.roof + 1) { floor = f.h0 + c.floor; roof = f.h0 + c.floor + c.roof; inside = f; dark = Math.min(1, c.t * 1.6); continue; }
+    for (const { p, x, z, c } of this.local(s, n)) {
+      const f = p.f;
+      if (f.net) {
+        // heights in the cave's frame, and back
+        const y = (s.R + foot) * c - (s.R + f.h0), top = (s.R + land) * c - (s.R + f.h0);
+        const datum = (yl: number) => (s.R + f.h0 + yl) / c - s.R;
+        const k = caveFloorAt(f.net, x, y, z);
+        if (k) { floor = datum(k.floor); roof = datum(k.roof); inside = f; dark = 1 - caveSky(f.net, k.d); continue; }
+        if (y < top - 1.2 || inRamp(f.net, x, top, z)) solid = true;
+        continue;
       }
-      if (formSolid(f, x, Math.max(0, y), z, p.path)) solid = true;
+      if (formSolid(f, x, Math.max(0, foot - f.h0), z)) solid = true;
     }
     return { floor, roof, solid, inside, dark };
+  }
+
+  /** is the land at `n` (its height `land`) cut away, over a cave's ramp? (nothing grows or stands there) */
+  cutAt(s: GroundSpec, n: V3, land: () => number) {
+    for (const { p, x, z, c } of this.local(s, n)) {
+      const net = p.f.net, box = p.ramp;
+      if (!net || !box || x < box[0] || x > box[1] || z < box[2] || z > box[3]) continue;
+      if (inRamp(net, x, (s.R + land()) * c - (s.R + p.f.h0) - 0.05, z)) return true;
+    }
+    return false;
+  }
+
+  /** the ramps down into the caves placed now, for the land to be cut away over them: in the forms' frame (the body's) */
+  ramps() {
+    const out: { a: THREE.Vector3; b: THREE.Vector3; up: THREE.Vector3; hw: number; hgt: number; fl: number }[] = [];
+    for (const p of this.placed.values()) {
+      const net = p.f.net;
+      if (!net) continue;
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(p.obj.quaternion);
+      for (const sg of net.segs) {
+        if (!sg.ramp) continue;
+        const at = (k: number) => new THREE.Vector3(net.nodes[k].x, net.nodes[k].y, net.nodes[k].z).applyQuaternion(p.obj.quaternion).add(p.obj.position);
+        out.push({ a: at(sg.i), b: at(sg.j), up, hw: sg.hw, hgt: sg.up, fl: sg.fl });
+      }
+    }
+    return out;
   }
 
   /** the forms placed now (for the scanner and finds) */
