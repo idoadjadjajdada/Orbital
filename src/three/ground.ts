@@ -536,6 +536,9 @@ export class Ground {
     return { h: g.floor ?? (sea ? 0 : h), sea: g.floor === null && sea, roof: g.roof, solid: g.solid || !!st?.solid, inside: g.inside, dark: g.dark };
   }
 
+  /** something new built on the ground: the plants round you placed again, kept out of it */
+  rebuilt() { this.floraAt = null; this.flora.clear(); this.grass.clear(); }
+
   /** is the land at n cut away, down into a cave? */
   cutAt(n: V3) { return !!this.spec && this.forms.cutAt(this.spec, n, () => this.heightAt(n, 0.5)); }
 
@@ -901,13 +904,13 @@ export class Ground {
       this.scatter(n);
     }
     // the trees: fixed to the world, modelled near you
-    this.flora.frame({ R, seed: Math.floor(b.look.seed % 9973), built: m => this.platformAt(m) > -Infinity || this.cutAt(m), heightAt: m => { const h = this.heightAt(m, 0.5); return { h, sea: this.sample.sea }; } }, n, this.plants.kinds, this.plants.density, this.plants.tint);
+    this.flora.frame({ R, seed: Math.floor(b.look.seed % 9973), built: m => this.platformAt(m) > -Infinity || this.cutAt(m) || !!this.structureAt(m)?.solid, heightAt: m => { const h = this.heightAt(m, 0.5); return { h, sea: this.sample.sea }; } }, n, this.plants.kinds, this.plants.density, this.plants.tint);
     // the grass: in the ground's colour (its texture, in the shader) and, round you on foot, in tufts
     const u = this.mat.uniforms, g = this.plants.grass;
     u.lush.value = g.lush;
     u.alien.value = g.leaf ? 1 : 0;
     if (g.leaf) (u.leaf.value as THREE.Vector3).set(g.leaf.r, g.leaf.g, g.leaf.b);
-    if (alt < 150) this.grass.frame({ R, seed: Math.floor(b.look.seed % 9973), built: m => this.platformAt(m) > -Infinity || this.cutAt(m), sampleAt: m => { const h = this.heightAt(m, 0.5), q = this.sample; return { h, sea: q.sea, r: q.r, g: q.g, b: q.b, rock: q.rock }; } }, n, g.lush, g.leaf, this.t);
+    if (alt < 150) this.grass.frame({ R, seed: Math.floor(b.look.seed % 9973), built: m => this.platformAt(m) > -Infinity || this.cutAt(m) || !!this.structureAt(m)?.solid, sampleAt: m => { const h = this.heightAt(m, 0.5), q = this.sample; return { h, sea: q.sea, r: q.r, g: q.g, b: q.b, rock: q.rock }; } }, n, g.lush, g.leaf, this.t);
     else if (this.grass.mesh.count) this.grass.clear();
     // the animals wander
     for (const c of this.critters) {

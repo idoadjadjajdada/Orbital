@@ -12,7 +12,7 @@ import { speciesIn } from './sites';
 import { MAX_SKY_LAMPS } from './lights';
 import { PLANTS, AMENDS, amended, type Amend, type Soil } from './growlab';
 import { ROCKETS, HOLD_DAYS, phase, type RocketModel } from './rocketry';
-import { CREW0, STORES0 } from './fleet';
+import { CREW0, STORES0, MODULES, isModule } from './fleet';
 
 /**
  * The ship's consoles, as panels over the view: the comms log and the sensor
@@ -181,7 +181,14 @@ export class Panels {
     else if (a === 'gam' && d) { const m = id as Amend; if (d.amends.has(m)) d.amends.delete(m); else d.amends.add(m); }
     else if (a === 'gcancel') gl.draft = null;
     else if (a === 'gsow') { const r = gl.sow(v.app.world.time); if (r) v.app.onToast(`${r.p.name} sown in ${r.s.name}. The chamber runs at a day a minute`); }
-    else if (a === 'gclear') gl.clear(gl.base, Number(id));
+    else if (a === 'gclear') {
+      // a harvest goes into the base's stores, as food
+      const h = gl.harvest(gl.base, Number(id), v.app.world.time), c = v.fleet.byId(gl.base);
+      if (h && c && h.days > 0) {
+        c.stores = Math.round(((c.stores ?? STORES0) + h.days) * 1000) / 1000;
+        v.app.onToast(`Harvest: ${h.p.name}, ${h.yield}% of a good crop: ${h.days} day${h.days === 1 ? '' : 's'} of food into ${c.name}'s stores`);
+      }
+    }
   }
 
   // ---------------------------------------------------------------- a rocket
@@ -260,7 +267,7 @@ export class Panels {
       return `<div class="phero"><div><div class="pbig">Chamber ${d.k + 1}</div><div class="pdim">Choose a soil, a plant and what to do to the soil first; then sow. It runs at a day a minute.</div></div></div>`
         + `<div class="prow"><div><div class="pnm">Soil: ${esc(s.name)}</div></div><span class="pbtns"><button data-act="gsoil" data-id="-1">◀</button><button data-act="gsoil" data-id="1">▶</button></span></div>`
         + this.soilCard(am, s)
-        + `<div class="prow"><div><div class="pnm">Plant: ${esc(p.name)} <span class="pdim">· ${esc(p.latin)}</span></div><div class="pdim">${p.days} days to grow · likes pH ${p.pH[0]}–${p.pH[1]}${p.legume ? ' · a legume' : ''}</div></div><span class="pbtns"><button data-act="gplant" data-id="-1">◀</button><button data-act="gplant" data-id="1">▶</button></span></div>`
+        + `<div class="prow"><div><div class="pnm">Plant: ${esc(p.name)} <span class="pdim">· ${esc(p.latin)}</span></div><div class="pdim">${p.days} days to grow · likes pH ${p.pH[0]}–${p.pH[1]}${p.legume ? ' · a legume' : ''} · a good crop feeds the crew ${p.food} day${p.food === 1 ? '' : 's'}</div></div><span class="pbtns"><button data-act="gplant" data-id="-1">◀</button><button data-act="gplant" data-id="1">▶</button></span></div>`
         + `<div class="plaunch">${AMENDS.map(m => `<button data-act="gam" data-id="${m.id}"${d.amends.has(m.id) ? ' class="on"' : ''}><b>${d.amends.has(m.id) ? '✓ ' : ''}${m.name}</b><span>${esc(m.about)}</span></button>`).join('')}</div>`
         + `<div class="prow"><span class="pbtns"><button data-act="gsow">Sow</button><button data-act="gcancel">Cancel</button></span></div>`;
     }
@@ -272,7 +279,7 @@ export class Panels {
       return `<div class="prow tight"><div><div class="pnm">Chamber ${k + 1}: ${esc(st.p.name)} in ${esc(st.s.name)}${ch.amends.length ? ` <span class="pdim">· ${esc(ch.amends.join(', '))}</span>` : ''}</div><div class="pdim">${what}</div><div class="pbars"><div class="pbar"><span>Grown</span><i style="width:${Math.max(1, st.frac * 100).toFixed(0)}%"></i><b>${Math.round(st.frac * 100)}%</b></div></div></div><span class="pbtns"><button data-act="gclear" data-id="${k}">${st.done ? 'Harvest' : 'Clear'}</button></span></div>`;
     }).join('');
     const shelf = gl.soils().map(s => `<div class="prow tight"><div><div class="pnm">${esc(s.name)}</div><div class="pdim">N ${Math.round(s.N * 100)}% · P ${Math.round(s.P * 100)}% · K ${Math.round(s.K * 100)}% · pH ${s.pH.toFixed(1)}${s.tox > 0.05 ? ` · toxic: ${esc(s.toxWhat)}` : ''}</div></div></div>`).join('');
-    return `<p class="pdim">Six chambers under grow lights, a day a minute. Samples you analyse go on the shelf as soils to try.</p>${rows}<p class="pdim">The shelf: ${gl.soils().length} soils</p>${shelf}`;
+    return `<p class="pdim">Six chambers under grow lights, a day a minute. Samples you analyse go on the shelf as soils to try. What you harvest goes into the base's stores.</p>${rows}<p class="pdim">The shelf: ${gl.soils().length} soils</p>${shelf}`;
   }
 
   /** the buttons for a body: select, fly there, open a wormhole */
@@ -444,7 +451,10 @@ export class Panels {
       + (c.orbit ? stat('Orbit', `${((c.orbit.r - c.b.r * AU_M) / 1000).toFixed(0)} km up`) : '')
       + (c.kind === 'base' ? stat('Built', `${(c.build * 100).toFixed(0)}%`) : '')
       // its crew, and how long its stores last them (a crew of six eats a day's worth a day; a day is a minute here)
-      + ((c.kind === 'base' && c.build >= 1) || c.kind === 'station' ? stat('Crew', `${c.crew ?? CREW0}`) + stat('Stores', (() => { const cr = c.crew ?? CREW0, d = c.stores ?? STORES0; return cr > 0 ? `${Math.floor(d)} days · ${Math.floor(d * CREW0 / cr)} min left` : `${Math.floor(d)} days`; })()) : '')
+      + ((c.kind === 'base' && c.build >= 1) || c.kind === 'station' ? stat('Crew', `${c.crew ?? CREW0}`) + stat('Stores', (() => { const cr = c.crew ?? CREW0, d = c.stores ?? STORES0, rm = v.fleet.room(c), net = cr / CREW0 - (cr > 0 ? rm.food : 0); return cr > 0 ? (net > 0 ? `${Math.floor(d)} days · ${Math.floor(d / net)} min left` : `${Math.floor(d)} days · growing`) : `${Math.floor(d)} days`; })()) : '')
+      // its room, and what its modules make
+      + (c.kind === 'base' && c.build >= 1 ? (() => { const rm = v.fleet.room(c); return stat('Room', `${rm.crew} crew · ${rm.stores} days`) + (rm.food ? stat('Makes', `${rm.food.toFixed(2)} days of stores a day`) : ''); })() : '')
+      + (isModule(c.kind) ? stat('For', esc(v.fleet.byId(c.base ?? -1)?.name ?? 'no base')) + stat('Does', esc(MODULES[c.kind].about)) : '')
       + (c.state === 'descent' ? stat('Altitude', `${(c.alt / 1000).toFixed(1)} km`) : '') + '</div>';
     if (c.profile.length > 1) h += `<div class="psub">Descent profile</div>${profileSvg(c.profile)}<table class="ptab small"><tr><td>Height</td><td>Pressure · temperature</td></tr>${c.profile.filter((_, k) => k % Math.max(1, Math.floor(c.profile.length / 14)) === 0 || k === c.profile.length - 1).map(p => `<tr><td>${p.z.toFixed(1)} km</td><td>${p.bar > 1e-4 ? `${p.bar.toPrecision(3)} bar` : p.bar > 0 ? `${p.bar.toExponential(1)} bar` : 'vacuum'} · ${Math.round(p.T)} K${p.note ? ` · ${esc(p.note)}` : ''}</td></tr>`).join('')}</table>`;
     if (c.kind === 'orbiter' && c.cover >= 0.6) h += this.science(c.b, v.stars());

@@ -2,18 +2,20 @@ import * as THREE from 'three';
 import { AU_M } from '../physics/units';
 import type { V3 } from '../pixel/sprites';
 import type { View3D } from './view3d';
-import { padMesh, baseMesh } from './craftmesh';
+import { padMesh, baseMesh, moduleMesh, type ModuleKind } from './craftmesh';
+import { MODULES, isModule } from './fleet';
 import { bodyQuat } from './ground';
 import { tangent } from './terrain';
 
 /**
- * Choosing where to build: a see-through model of the base or launch pad
- * stands on the ground where you look, green where it can go and red where
- * it cannot (in the sea, on a slope too steep to level, on top of something
- * already there). F builds it there, facing you; Esc gives up.
+ * Choosing where to build: a see-through model of the base, launch pad or
+ * module stands on the ground where you look, green where it can go and red
+ * where it cannot (in the sea, on a slope too steep to level, on top of
+ * something already there; a module only beside a base, within a couple of
+ * hundred metres of it). F builds it there, facing you; Esc gives up.
  */
 export class Placer {
-  kind: 'base' | 'pad' | null = null;
+  kind: 'base' | 'pad' | ModuleKind | null = null;
   /** where it would go, and why not, if not */
   n: V3 | null = null;
   head = 0;
@@ -24,14 +26,15 @@ export class Placer {
 
   constructor(private v: View3D) {}
 
-  start(kind: 'base' | 'pad') {
+  start(kind: 'base' | 'pad' | ModuleKind) {
     this.stop();
     this.kind = kind;
-    this.ghost = kind === 'pad' ? padMesh() : baseMesh(1);
+    this.ghost = isModule(kind) ? moduleMesh(kind) : kind === 'pad' ? padMesh() : baseMesh(1);
     this.ghost.traverse(o => { o.frustumCulled = false; });
     this.v.ground.root.add(this.ghost);
-    this.v.app.onToast(`Look at where the ${kind === 'pad' ? 'launch pad' : 'base'} should go: F builds it there, Esc cancels`);
+    this.v.app.onToast(`Look at where the ${this.what()} should go: F builds it there, Esc cancels`);
   }
+  private what() { return !this.kind ? '' : isModule(this.kind) ? MODULES[this.kind].name.toLowerCase() : this.kind === 'pad' ? 'launch pad' : 'base'; }
 
   stop() {
     if (this.ghost) this.v.ground.root.remove(this.ghost);
@@ -57,7 +60,7 @@ export class Placer {
     // its near edge where you look, the rest beyond
     const hit = o.clone().addScaledVector(d, t1), upv = hit.clone().normalize();
     const flat = d.clone().addScaledVector(upv, -d.dot(upv));
-    if (flat.lengthSq() > 1e-6) hit.addScaledVector(flat.normalize(), this.kind === 'pad' ? 22 : 28);
+    if (flat.lengthSq() > 1e-6) hit.addScaledVector(flat.normalize(), this.kind === 'pad' ? 22 : this.kind === 'base' ? 28 : 10);
     const p = hit.normalize();
     const n: V3 = [p.x, p.y, p.z];
     // facing you
@@ -67,8 +70,11 @@ export class Placer {
     // can it go here?
     const h = g.heightAt(n, 1), sea = g.last_sample.sea, up = g.normalAt(n, 15);
     const slope = Math.acos(Math.min(1, up[0] * n[0] + up[1] * n[1] + up[2] * n[2]));
-    const near = v.fleet.crafts.find(c => c.b === b && (c.kind === 'base' || c.kind === 'pad') && Math.acos(Math.min(1, c.n[0] * n[0] + c.n[1] * n[1] + c.n[2] * n[2])) * spec.R < 90);
-    this.why = sea ? 'That is water' : slope > 0.3 ? 'Too steep to level' : near ? `Too close to ${near.name}` : '';
+    const dist = (c: { n: V3 }) => Math.acos(Math.min(1, c.n[0] * n[0] + c.n[1] * n[1] + c.n[2] * n[2])) * spec.R;
+    // (a base or pad keeps 90 m from the others; a module goes beside a base, clear of its terrace, and 30 m from other modules)
+    const mod = isModule(this.kind), base = mod ? v.fleet.nearestBase(b, n) : null;
+    const near = v.fleet.crafts.find(c => c.b === b && c.state !== 'lost' && (c.kind === 'base' || c.kind === 'pad' || isModule(c.kind)) && dist(c) < (mod ? (c.kind === 'base' ? 62 : 30) : isModule(c.kind) ? 30 : 90));
+    this.why = sea ? 'That is water' : slope > 0.3 ? 'Too steep to level' : near ? `Too close to ${near.name}` : mod && (!base || base.d > 250) ? 'Beside a base: within 250 m of one' : '';
     // the model, standing there
     const r = spec.R + (sea ? 0 : h);
     this.ghost.visible = true;
@@ -91,6 +97,6 @@ export class Placer {
 
   prompt(): { label: string; act: () => void } | null {
     if (!this.kind) return null;
-    return { label: this.why || `Build the ${this.kind === 'pad' ? 'launch pad' : 'base'} here`, act: () => this.confirm() };
+    return { label: this.why || `Build the ${this.what()} here`, act: () => this.confirm() };
   }
 }

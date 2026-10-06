@@ -5,7 +5,7 @@ import type { V3 } from '../pixel/sprites';
 import { groundSpec, groundAt, tangent, type GroundSpec, type GroundSample } from './terrain';
 import { atmosphere, composition, interior, life, gravity, airAt, giantPressure, giantTemp, cloudDecks, rng, type Atmosphere } from './science';
 import { bodyQuat, dirOf, latLonOf, arc } from './ground';
-import { probeMesh, orbiterMesh, landerMesh, roverMesh, stationMesh, baseMesh, padMesh, PAD } from './craftmesh';
+import { probeMesh, orbiterMesh, landerMesh, roverMesh, stationMesh, baseMesh, padMesh, moduleMesh, PAD, MODULE_SIZE, type ModuleKind } from './craftmesh';
 import { ROCKETS, HOLD_DAYS, TURNAROUND, plan, phase, rocketMesh, setDoors, type RocketModel, type RocketState } from './rocketry';
 import { sitesOn } from './sites';
 import { Interior, stationInterior } from './interior';
@@ -32,7 +32,18 @@ import { baseLayer, baseGround, BASE } from './basecamp';
  * orbit while the world turns under them.
  */
 
-export type CraftKind = 'probe' | 'orbiter' | 'lander' | 'rover' | 'station' | 'base' | 'pad' | 'rocket';
+export type CraftKind = 'probe' | 'orbiter' | 'lander' | 'rover' | 'station' | 'base' | 'pad' | 'rocket' | ModuleKind;
+export type { ModuleKind };
+/** what a base's modules do for it: food it makes (days of stores a day, with a crew to tend it), room for crew, room for stores (days) */
+export const MODULES: Record<ModuleKind, { name: string; about: string; food: number; crew: number; stores: number }> = {
+  greenhouse: { name: 'Greenhouse', about: 'Crops under glass: food for its base every day, if there is a crew to tend them', food: 0.35, crew: 0, stores: 0 },
+  drill: { name: 'Ice drill', about: 'Drills for ice and melts it: water and oxygen for its base every day', food: 0.25, crew: 0, stores: 0 },
+  habitat: { name: 'Habitat module', about: 'Quarters for six more crew at its base', food: 0, crew: 6, stores: 0 },
+  silo: { name: 'Storage silos', about: 'Room for six months more of stores at its base', food: 0, crew: 0, stores: 180 },
+};
+export const isModule = (k: CraftKind): k is ModuleKind => k in MODULE_SIZE;
+/** a base, alone: room for this many crew, and this many days of stores */
+export const BASE_CREW = 10, BASE_STORES = 180;
 export const KINDS: { k: CraftKind; name: string; about: string }[] = [
   { k: 'probe', name: 'Probe', about: 'Falls through the atmosphere reading it, to the ground or until it is crushed' },
   { k: 'orbiter', name: 'Orbiter', about: 'Maps the world from a polar orbit: what it is made of, inside and out' },
@@ -41,6 +52,7 @@ export const KINDS: { k: CraftKind; name: string; about: string }[] = [
   { k: 'station', name: 'Station', about: 'An ISS-sized outpost in orbit' },
   { k: 'base', name: 'Base', about: 'Habitats, a lab, a garage and a pad for the ship: you choose where' },
   { k: 'pad', name: 'Launch pad', about: 'Needed to launch craft up from the ground; Lander 1 flies from it to the ship and back' },
+  ...(Object.keys(MODULES) as ModuleKind[]).map(k => ({ k, name: MODULES[k].name, about: `Beside a base: ${MODULES[k].about.replace(/^./, x => x.toLowerCase())}` })),
 ];
 
 export interface Reading { t: number; msg: string }
@@ -79,8 +91,8 @@ export interface Craft {
   crew?: number; stores?: number;
   /** days it has been out of supplies; the warnings given (stores low, out) */
   short?: number; warned?: number;
-  /** a rover's: the base whose hangar it drove out of */
-  garage?: number;
+  /** a rover's: the base whose hangar it drove out of; a module's: the base it serves */
+  garage?: number; base?: number;
 }
 
 /** a crew of six, and three months' stores: what a base or station starts with */
@@ -91,7 +103,7 @@ const LOW = 15;
 const RATIONS = 10;
 
 let nextId = 1;
-const NAMES: Record<CraftKind, string> = { probe: 'Probe', orbiter: 'Orbiter', lander: 'Lander', rover: 'Rover', station: 'Station', base: 'Base', pad: 'Launch pad', rocket: 'Rocket' };
+const NAMES: Record<CraftKind, string> = { probe: 'Probe', orbiter: 'Orbiter', lander: 'Lander', rover: 'Rover', station: 'Station', base: 'Base', pad: 'Launch pad', rocket: 'Rocket', greenhouse: 'Greenhouse', drill: 'Ice drill', habitat: 'Habitat', silo: 'Silos' };
 /** how much pressure a probe stands, bar, and heat, K */
 const PROBE_BAR = 120, PROBE_K = 900;
 
@@ -170,7 +182,7 @@ export class Fleet {
     // the ship has to be close: within a few dozen radii (or a million km of a small world)
     if (shipAlt > Math.max(R * 40, 2e9)) return `Too far from ${b.name}: get within ${(Math.max(R * 40, 2e9) / 1e9).toFixed(1)} million km`;
     const giant = isGiant(b), a = this.air(b);
-    if (kind === 'lander' || kind === 'rover' || kind === 'base' || kind === 'pad') {
+    if (kind === 'lander' || kind === 'rover' || kind === 'base' || kind === 'pad' || isModule(kind)) {
       if (giant) return `${b.name} has no surface: send a probe into it`;
       if (R < 2000) return `${b.name} is too small to land on`;
       const T = a.T;
@@ -241,7 +253,7 @@ export class Fleet {
     const g = new THREE.Group();
     // (a rocket's model goes in when it is stacked: which one depends on the rocket)
     if (k === 'rocket') return g;
-    g.add(k === 'probe' ? probeMesh(true) : k === 'orbiter' ? orbiterMesh() : k === 'lander' ? landerMesh() : k === 'rover' ? roverMesh() : k === 'station' ? stationMesh() : k === 'pad' ? padMesh() : baseMesh(nextId));
+    g.add(isModule(k) ? moduleMesh(k) : k === 'probe' ? probeMesh(true) : k === 'orbiter' ? orbiterMesh() : k === 'lander' ? landerMesh() : k === 'rover' ? roverMesh() : k === 'station' ? stationMesh() : k === 'pad' ? padMesh() : baseMesh(nextId));
     g.traverse(o => { o.frustumCulled = false; });
     return g;
   }
@@ -330,7 +342,7 @@ export class Fleet {
       if (c.inside) c.inside.group.visible = near;
       const chute = m.getObjectByName('chute');
       if (chute) chute.visible = c.state === 'descent' && this.air(c.b).bar > 0.005 && c.vz < 200;
-      if (c.kind === 'base' || c.kind === 'pad') m.scale.setScalar(0.05 + 0.95 * c.build);
+      if (c.kind === 'base' || c.kind === 'pad' || isModule(c.kind)) m.scale.setScalar(0.05 + 0.95 * c.build);
       // a base's own rover is gone from its hangar while it is out driving
       if (c.kind === 'base' && m.visible) {
         const out = this.crafts.some(x => x.garage === c.id && x.state !== 'lost');
@@ -453,8 +465,16 @@ export class Fleet {
 
   private surface(c: Craft, dt: number) {
     const b = c.b, R = b.r * AU_M;
-    if (c.kind === 'base' || c.kind === 'pad') {
-      if (c.build < 1) { c.build = Math.min(1, c.build + dt / 20); if (c.build >= 1) { c.status = c.kind === 'pad' ? 'ready' : 'crewed'; this.note(c, c.kind === 'pad' ? 'Built: ready to launch from' : 'Built and crewed', true); } }
+    if (c.kind === 'base' || c.kind === 'pad' || isModule(c.kind)) {
+      if (c.build < 1) {
+        c.build = Math.min(1, c.build + dt / 20);
+        if (c.build >= 1) {
+          const at = c.base !== undefined ? this.byId(c.base) : null;
+          c.status = c.kind === 'pad' ? 'ready' : c.kind === 'base' ? 'crewed' : `working for ${at?.name ?? 'its base'}`;
+          this.onBuilt(c);
+          this.note(c, c.kind === 'pad' ? 'Built: ready to launch from' : c.kind === 'base' ? 'Built and crewed' : `Built: ${MODULES[c.kind as ModuleKind].about.toLowerCase()}`, true);
+        }
+      }
       return;
     }
     if (c.kind !== 'rover') return;
@@ -522,9 +542,12 @@ export class Fleet {
   }
 
   /** build a base or a launch pad where you chose: it goes up over twenty seconds */
-  build(kind: 'base' | 'pad', b: Body, n: V3, head: number): Craft {
-    const k = this.crafts.filter(c => c.kind === kind && !c.fixed).length + 1;
-    const c = this.make(kind, b, `${NAMES[kind]} ${k}`);
+  build(kind: 'base' | 'pad' | ModuleKind, b: Body, n: V3, head: number): Craft {
+    // a module serves the nearest base, and is named for it
+    const base = isModule(kind) ? this.nearestBase(b, n)?.c ?? null : null;
+    const k = this.crafts.filter(c => c.kind === kind && !c.fixed && (!base || c.base === base.id)).length + 1;
+    const c = this.make(kind, b, base ? `${base.name} ${NAMES[kind].toLowerCase()}${k > 1 ? ` ${k}` : ''}` : `${NAMES[kind]} ${k}`);
+    if (base) c.base = base.id;
     c.fixed = false;
     c.n = n; c.head = head; c.build = 0; c.state = 'surface'; c.status = 'under construction';
     this.note(c, 'Construction started');
@@ -725,10 +748,14 @@ export class Fleet {
     if (to.kind === 'station') { r.docked = true; c.state = 'orbit'; c.status = `docked at ${to.name}`; }
     else { r.docked = false; c.state = 'surface'; c.b = to.b; c.n = this.spot(to); c.head = to.head; c.status = `on ${to.name}`; }
     const L = r.load, got: string[] = [];
+    // (as much as there is room for: the rest stays aboard)
+    const room = this.room(to), keep = { crew: 0, supplies: 0 };
+    if (L.crew) { const fit = Math.max(0, Math.min(L.crew, room.crew - (to.crew ?? CREW0))); keep.crew = L.crew - fit; L.crew = fit; if (keep.crew) got.push(`${keep.crew} stay aboard: no room for them`); }
+    if (L.supplies) { const fit = Math.max(0, Math.min(L.supplies, Math.floor((room.stores - (to.stores ?? STORES0)) / HOLD_DAYS))); keep.supplies = L.supplies - fit; L.supplies = fit; if (keep.supplies) got.push(`${keep.supplies * HOLD_DAYS} days of supplies stay aboard: the stores are full`); }
     if (L.crew) { to.crew = (to.crew ?? CREW0) + L.crew; got.push(`${L.crew} crew aboard ${to.name} (now ${to.crew})`); }
     if (L.supplies) { to.stores = Math.round(((to.stores ?? STORES0) + L.supplies * HOLD_DAYS) * 10) / 10; got.push(`${L.supplies * HOLD_DAYS} days of supplies unloaded (${to.stores} in store)`); }
     if (L.rover && c.state === 'surface') { const rv = this.launch('rover', to.b, new THREE.Vector3(), null, c); rv.name = `${to.name} rover`; got.push(`${rv.name} rolled out`); }
-    r.load = { crew: 0, supplies: 0, rover: false };
+    r.load = { crew: keep.crew, supplies: keep.supplies, rover: false };
     if (r.route) r.route.wait = TURNAROUND;
     if (L.crew || L.supplies) { to.short = 0; to.warned = 0; }
     if (L.crew && /empty/.test(to.status)) to.status = to.kind === 'station' ? 'in orbit, crewed' : 'crewed';
@@ -746,7 +773,9 @@ export class Fleet {
       if (!((c.kind === 'base' && c.state === 'surface' && c.build >= 1) || (c.kind === 'station' && c.state === 'orbit'))) continue;
       const crew = c.crew ?? CREW0;
       if (crew <= 0) continue;
-      const left = Math.max(0, (c.stores ?? STORES0) - days * crew / CREW0);
+      // what its modules make, tended by its crew, up to what it can hold
+      const room = this.room(c);
+      const left = Math.min(Math.max(c.stores ?? STORES0, room.stores), Math.max(0, (c.stores ?? STORES0) - days * crew / CREW0 + days * room.food));
       c.stores = Math.round(left * 1000) / 1000;
       c.crew = crew;
       if (left > 0) {
@@ -764,6 +793,18 @@ export class Fleet {
         this.note(c, `The crew has left ${c.name}: ${RATIONS} days without supplies`, true);
       }
     }
+  }
+
+  /** something has been built on the ground (for the view: the plants round it go) */
+  onBuilt: (c: Craft) => void = () => {};
+  /** a base's modules, built */
+  modules(base: Craft) { return this.crafts.filter(c => c.base === base.id && isModule(c.kind) && c.build >= 1 && c.state === 'surface'); }
+  /** what a base or station has room for (crew, days of stores) and makes (days of stores a day) */
+  room(c: Craft) {
+    if (c.kind !== 'base') return { crew: Infinity, stores: Infinity, food: 0 };
+    const out = { crew: BASE_CREW, stores: BASE_STORES, food: 0 };
+    for (const m of this.modules(c)) { const M = MODULES[m.kind as ModuleKind]; out.crew += M.crew; out.stores += M.stores; out.food += M.food; }
+    return out;
   }
 
   /** a rocket has arrived (for the view: you step out of it, if you were aboard) */
@@ -796,6 +837,12 @@ export class Fleet {
   structureAt(b: Body, n: V3): { floor: number | null; solid: boolean } | null {
     const R = b.r * AU_M;
     for (const c of this.crafts) {
+      // a module: in the way, all of it
+      if (isModule(c.kind) && c.b === b && c.state === 'surface' && c.build >= 1 && arc(c.n, n) * R < 20) {
+        const l = this.toLocal(c, n), [hx, hz] = MODULE_SIZE[c.kind];
+        if (Math.abs(l.x) < hx && Math.abs(l.z) < hz) return { floor: null, solid: true };
+        continue;
+      }
       if (c.kind !== 'base' || c.b !== b || c.state !== 'surface' || c.build < 1 || arc(c.n, n) * R > 60) continue;
       const l = this.toLocal(c, n), g = baseGround(l.x, l.z);
       if (g.building) return { floor: g.floor === null ? null : this.level(c) + g.floor, solid: g.solid };

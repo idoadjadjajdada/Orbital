@@ -17,7 +17,7 @@ import { NavMap } from './navmap';
 import { Ground, bodyQuat, latLonOf, arc } from './ground';
 import { tangent } from './terrain';
 import { gravity, atmosphere } from './science';
-import { Fleet, type CraftKind, type Craft } from './fleet';
+import { Fleet, isModule, type CraftKind, type Craft } from './fleet';
 import { ROCKETS, type RocketModel } from './rocketry';
 import { Visit } from './visit';
 import { Placer } from './placer';
@@ -603,6 +603,7 @@ export class View3D {
     this.fleet.onRocket = (c, at) => this.rocketIn(c, at);
     this.fleet.onInterior = c => { for (const m of c.inside?.monitors ?? []) this.feeds.register(`${c.id}:${m.id}`, m.mesh, `${c.name}: ${m.label}`); };
     this.ground.structureAt = n => (this.ground.body ? this.fleet.structureAt(this.ground.body, n) : null);
+    this.fleet.onBuilt = c => { if (c.b === this.ground.body) this.ground.rebuilt(); };
     this.suitRefill = () => this.kit.refill();
     this.analyseSamples = () => this.kit.analyse();
     this.scene.add(this.camera);
@@ -1144,6 +1145,11 @@ export class View3D {
     // from the ground, anything going up into space goes from a launch pad
     const gw = this.grounded();
     if (gw && this.needsPad(kind, b, gw) && !this.fleet.pads(gw).length) return `Build a launch pad first: from the ground of ${gw.name}, craft go up from a pad`;
+    // a module goes beside a base: you have to be there
+    if (isModule(kind)) {
+      const me = this.mode === 'surface' ? this.surf.n : this.mode === 'inside' && this.visit.at ? this.visit.at.c.n : null, near = gw && me ? this.fleet.nearestBase(gw, me) : null;
+      if (!near || near.d > 1500) return 'Beside a base: stand near one to build it';
+    }
     return '';
   }
 
@@ -1157,7 +1163,7 @@ export class View3D {
 
   /** does sending this craft from the ground of gw mean launching it into space? */
   private needsPad(kind: CraftKind, target: Body, gw: Body) {
-    if (kind === 'base' || kind === 'pad') return false;
+    if (kind === 'base' || kind === 'pad' || isModule(kind)) return false;
     return kind === 'probe' || kind === 'orbiter' || kind === 'station' || target !== gw;
   }
 
@@ -1165,7 +1171,7 @@ export class View3D {
   launch(kind: CraftKind, site?: string) {
     const why = this.launchBlock(kind);
     if (why) { this.app.onToast(why); return; }
-    if (kind === 'base' || kind === 'pad') { this.panels.close(); this.placer.start(kind); return; }
+    if (kind === 'base' || kind === 'pad' || isModule(kind)) { this.panels.close(); this.placer.start(kind); return; }
     const b = this.missionTarget()!;
     let P = this.shipPos(), from = '';
     // from the ground: up off the nearest launch pad, on its rocket

@@ -463,6 +463,10 @@ try {
   await page.evaluate(() => { const v = window.orbital.v3, ch = v.growlab.chambers(v.growlab.base)[0]; ch.start -= 46 / (365.25 * 1440); });
   ok('it grows, and the harvest is logged', await until(page, () => window.orbital.v3.logbook.finds.some(f => /^Grown: Lettuce in Potting soil/.test(f.what) && /100% of what potting soil gives/.test(f.note))));
   ok('the chamber shows the plant', await page.evaluate(() => { const v = window.orbital.v3, c = v.fleet.crafts.find(q => q.name === 'Canaveral Base'); let n = 0; c.inside.group.getObjectByName('growlab').traverse(o => { if (o.isMesh && o.geometry.type === 'SphereGeometry') n++; }); return n >= 8; }));
+  const s0 = await page.evaluate(() => { const v = window.orbital.v3; v.panels.show('growlab'); return v.fleet.crafts.find(q => q.name === 'Canaveral Base').stores ?? 90; });
+  await page.click('.panel3 button[data-act="gclear"][data-id="0"]');
+  ok('the harvest goes into the base\'s stores as food', await page.evaluate(s0 => { const c = window.orbital.v3.fleet.crafts.find(q => q.name === 'Canaveral Base'); return c.stores - s0 > 1.3 && c.stores - s0 < 1.6 && !window.orbital.v3.growlab.chambers(c.id)[0]; }, s0));
+  await page.keyboard.press('Escape');
   await stand(28, -6, 28, 4, -0.2);
   ok('the hangar\'s rover stands in its bay', await page.evaluate(() => { const c = window.orbital.v3.fleet.crafts.find(q => q.name === 'Canaveral Base'), v = []; c.mesh.traverse(o => { if (o.name === 'hangar-rover') v.push(o.visible); }); return v.length > 3 && v.every(x => x); }));
   ok('the hangar\'s rover is in reach', await until(page, () => window.orbital.v3.prompt?.label === 'The rover: drive it out'));
@@ -471,6 +475,16 @@ try {
   // (the hangar's own rover: its pieces of the model, there in the bay until it drives out)
   const parked = () => { const c = window.orbital.v3.fleet.crafts.find(q => q.name === 'Canaveral Base'), out = []; c.mesh.traverse(o => { if (o.name === 'hangar-rover') out.push(o.visible); }); return out; };
   ok('the hangar\'s bay is empty while its rover is out', await until(page, p => { const v = eval(p)(); return v.length > 3 && v.every(x => !x); }, `(${parked})`));
+  // modules beside the base: room and food
+  ok('a greenhouse, an ice drill, a habitat and silos built beside the base give it room and food', await page.evaluate(() => {
+    const v = window.orbital.v3, f = v.fleet, c = f.crafts.find(q => q.name === 'Canaveral Base'), r0 = f.room(c);
+    for (const [k, x, z] of [['greenhouse', -20, 50], ['drill', 25, 52], ['habitat', 70, 0], ['silo', -70, 0]]) { const m = f.build(k, c.b, f.onBase(c, x, z), c.head); m.build = 0.999; }
+    f.step(0.1);
+    const r1 = f.room(c);
+    return r1.crew === r0.crew + 6 && r1.stores === r0.stores + 180 && Math.abs(r1.food - r0.food - 0.6) < 1e-9 && f.crafts.filter(m => m.base === c.id).every(m => /^working for Canaveral Base/.test(m.status));
+  }));
+  ok('they feed its crew: its stores fall slower', await page.evaluate(() => { const f = window.orbital.v3.fleet, c = f.crafts.find(q => q.name === 'Canaveral Base'), s0 = c.stores, crew = c.crew ?? 6; f.live(10); return Math.abs(c.stores - (s0 - 10 * crew / 6 + 10 * f.room(c).food)) < 1e-3; }));
+  ok('a module stands in the way', await page.evaluate(() => { const v = window.orbital.v3, f = v.fleet, c = f.crafts.find(q => q.name === 'Canaveral Base'), g = f.crafts.find(m => m.kind === 'greenhouse' && m.base === c.id); return !!f.structureAt(c.b, g.n)?.solid; }));
   clean('base');
   }
 

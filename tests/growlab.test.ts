@@ -48,6 +48,19 @@ describe('the growth lab', () => {
     expect(done.done).toBe(true);
     expect(done.yield).toBe(100);
   });
+  it('a harvest is food for the crew, as much as the crop was good; an unripe or dead one is none', () => {
+    const gl = new GrowLab();
+    gl.draft = { base: 1, k: 0, soil: 0, plant: PLANTS.findIndex(p => p.id === 'potato'), amends: am() };
+    gl.sow(0);
+    expect(gl.harvest(1, 0, 10 / DAYS_PER_YEAR)).toBeNull();
+    expect(gl.chambers(1)[0]).toBeNull();
+    gl.draft = { base: 1, k: 1, soil: 0, plant: PLANTS.findIndex(p => p.id === 'potato'), amends: am() };
+    gl.sow(0);
+    const h = gl.harvest(1, 1, 90 / DAYS_PER_YEAR)!;
+    expect(h.yield).toBe(100);
+    expect(h.days).toBe(plant('potato').food);
+    expect(gl.chambers(1)[1]).toBeNull();
+  });
   it('analysed samples go on the shelf', () => {
     const gl = new GrowLab();
     gl.addSample(body('Mars'), 'Mars', 'basaltic sand', '18°N 77°E');

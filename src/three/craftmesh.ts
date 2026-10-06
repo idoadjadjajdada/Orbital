@@ -333,3 +333,65 @@ export function alienMesh(seed: number, color: number) {
   }
   return g;
 }
+
+// ---------------------------------------------------------------- a base's modules, built beside it
+/** how far each module reaches from its middle (half its width across, x, and its depth, z), m */
+export const MODULE_SIZE = { greenhouse: [13.5, 5], drill: [5, 5], habitat: [8.5, 4], silo: [7.5, 4] } as const;
+export type ModuleKind = keyof typeof MODULE_SIZE;
+
+/** a module's model: a greenhouse, an ice drill, a habitat module or a pair of storage silos */
+export function moduleMesh(k: ModuleKind): THREE.Group {
+  const g = new THREE.Group();
+  const leaf = lam(0x4f9a4a), soil = lam(0x5a4430);
+  // a low concrete footing under each
+  const [hx, hz] = MODULE_SIZE[k];
+  add(g, box(hx * 2, 0.4, hz * 2), MAT.grey, 0, 0.1, 0);
+  if (k === 'greenhouse') {
+    // a long glass vault on a low wall, rows of crops under it, white end walls with doors
+    const vault = new THREE.CylinderGeometry(4.4, 4.4, 24, 20, 1, true, -Math.PI / 2, Math.PI);
+    add(g, vault, MAT.window, 0, 0.9, 0, 0, 0, Math.PI / 2);
+    for (let k2 = -5; k2 <= 5; k2++) add(g, box(0.08, 4.4, 0.08), MAT.silver, k2 * 2.2, 0.9 + 2.2, 0).scale.set(1, 1, 1);
+    for (const s of [-1, 1]) {
+      add(g, box(24, 0.6, 0.25), MAT.white, 0, 0.6, s * 4.4);
+      add(g, new THREE.CircleGeometry(4.4, 20, 0, Math.PI), MAT.white, s * 12, 0.9, 0, 0, s * Math.PI / 2, 0);
+      add(g, box(0.1, 2.2, 1.4), MAT.dark, s * 12.05, 1.4, 0);
+    }
+    for (let r = -1; r <= 1; r++) {
+      add(g, box(22, 0.5, 1.1), soil, 0, 0.55, r * 2.4);
+      for (let p = 0; p < 18; p++) add(g, new THREE.IcosahedronGeometry(0.42, 0), leaf, -10.5 + p * 1.24, 1.05, r * 2.4 + ((p * 7) % 3 - 1) * 0.15);
+    }
+    for (let k2 = 0; k2 < 3; k2++) add(g, box(22, 0.08, 0.08), MAT.lamp, 0, 4.2, -1.6 + k2 * 1.6);
+  } else if (k === 'drill') {
+    // a derrick over the hole, the drill string down it, a pump house and two tanks of meltwater
+    for (const [x, z] of [[-2, -2], [2, -2], [-2, 2], [2, 2]]) { const leg = add(g, cyl(0.15, 0.15, 14.4, 6), MAT.orange, x * 0.7, 7.3, z * 0.7); leg.rotation.set(z * 0.07, 0, -x * 0.07); }
+    for (let y = 2; y < 14; y += 3) add(g, box(2.9 - y * 0.1, 0.15, 2.9 - y * 0.1), MAT.orange, 0, y, 0);
+    add(g, box(1.6, 1.2, 1.6), MAT.dark, 0, 14.3, 0);
+    add(g, cyl(0.18, 0.18, 14, 8), MAT.silver, 0, 7, 0);
+    add(g, box(3.4, 2.6, 3), MAT.white, -3.2, 1.6, 2.2);
+    for (const z of [-2.6, -0.2]) { add(g, cyl(1.1, 1.1, 3, 14), MAT.silver, 3.4, 1.8, z); add(g, cyl(1.12, 1.12, 0.25, 14), MAT.blue, 3.4, 2.6, z); }
+    add(g, new THREE.SphereGeometry(0.22, 8, 6), MAT.lamp, 0, 15.1, 0);
+  } else if (k === 'habitat') {
+    // two pressurised cylinders on legs either side of a node, a strip of lit windows down each
+    add(g, new THREE.SphereGeometry(2.1, 14, 10), MAT.white, 0, 2.6, 0);
+    for (const s of [-1, 1]) {
+      add(g, cyl(2.3, 2.3, 6.4, 16), MAT.white, s * 4.9, 2.6, 0, 0, 0, Math.PI / 2);
+      add(g, new THREE.SphereGeometry(2.3, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), MAT.white, s * 8.1, 2.6, 0, 0, 0, -s * Math.PI / 2);
+      add(g, box(5.8, 0.4, 0.1), MAT.lamp, s * 4.9, 2.9, 2.28);
+      add(g, box(5.8, 0.4, 0.1), MAT.lamp, s * 4.9, 2.9, -2.28);
+      for (const x of [2.6, 7.2]) for (const z of [-1.4, 1.4]) add(g, cyl(0.12, 0.12, 1.2, 6), MAT.grey, s * x, 0.7, z);
+      add(g, box(6.4, 0.15, 0.4), MAT.orange, s * 4.9, 4.85, 0);
+    }
+    add(g, box(1.2, 2.2, 0.2), MAT.dark, 0, 1.6, 2.05);
+  } else {
+    // two tall silos with domed tops, a ladder up each and a walkway between
+    for (const s of [-1, 1]) {
+      add(g, cyl(3, 3, 9, 20), MAT.white, s * 3.8, 4.8, 0);
+      add(g, new THREE.SphereGeometry(3, 20, 8, 0, Math.PI * 2, 0, Math.PI / 2), MAT.silver, s * 3.8, 9.3, 0);
+      add(g, cyl(3.02, 3.02, 0.4, 20), MAT.orange, s * 3.8, 3, 0);
+      for (let y = 0.8; y < 9; y += 0.45) add(g, box(0.5, 0.05, 0.05), MAT.grey, s * 3.8, y, 3.08);
+    }
+    add(g, box(1.6, 0.2, 1.2), MAT.grey, 0, 9.3, 0);
+  }
+  g.traverse(o => { o.frustumCulled = false; });
+  return g;
+}

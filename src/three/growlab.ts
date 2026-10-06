@@ -47,16 +47,20 @@ export interface Soil {
   rows?: [string, number][];
 }
 
-export interface Plant { id: string; name: string; latin: string; days: number; N: number; P: number; K: number; pH: [number, number]; tol: number; legume: boolean; form: 'rosette' | 'radish' | 'wheat' | 'vine' | 'bush' | 'cress'; fruit?: number }
+export interface Plant {
+  id: string; name: string; latin: string; days: number; N: number; P: number; K: number; pH: [number, number]; tol: number; legume: boolean; form: 'rosette' | 'radish' | 'wheat' | 'vine' | 'bush' | 'cress'; fruit?: number;
+  /** a full chamber's harvest, as food: days of it for a crew of six (at what potting soil gives) */
+  food: number;
+}
 
 export const PLANTS: Plant[] = [
-  { id: 'cress', name: 'Thale cress', latin: 'Arabidopsis thaliana', days: 40, N: 0.5, P: 0.4, K: 0.4, pH: [5.5, 7.5], tol: 0.2, legume: false, form: 'cress' },
-  { id: 'lettuce', name: 'Lettuce', latin: 'Lactuca sativa', days: 45, N: 0.7, P: 0.4, K: 0.6, pH: [6, 7], tol: 0.15, legume: false, form: 'rosette' },
-  { id: 'radish', name: 'Radish', latin: 'Raphanus sativus', days: 28, N: 0.4, P: 0.5, K: 0.5, pH: [6, 7.5], tol: 0.3, legume: false, form: 'radish' },
-  { id: 'wheat', name: 'Dwarf wheat', latin: 'Triticum aestivum', days: 80, N: 0.6, P: 0.5, K: 0.4, pH: [6, 7.5], tol: 0.45, legume: false, form: 'wheat' },
-  { id: 'pea', name: 'Pea', latin: 'Pisum sativum', days: 60, N: 0.6, P: 0.6, K: 0.5, pH: [6, 7.5], tol: 0.2, legume: true, form: 'vine', fruit: 0x5aa83a },
-  { id: 'tomato', name: 'Dwarf tomato', latin: 'Solanum lycopersicum', days: 75, N: 0.7, P: 0.6, K: 0.8, pH: [6, 6.8], tol: 0.35, legume: false, form: 'bush', fruit: 0xd8321e },
-  { id: 'potato', name: 'Potato', latin: 'Solanum tuberosum', days: 90, N: 0.7, P: 0.6, K: 0.9, pH: [5, 6.5], tol: 0.3, legume: false, form: 'bush' },
+  { id: 'cress', name: 'Thale cress', latin: 'Arabidopsis thaliana', days: 40, N: 0.5, P: 0.4, K: 0.4, pH: [5.5, 7.5], tol: 0.2, legume: false, form: 'cress', food: 0.3 },
+  { id: 'lettuce', name: 'Lettuce', latin: 'Lactuca sativa', days: 45, N: 0.7, P: 0.4, K: 0.6, pH: [6, 7], tol: 0.15, legume: false, form: 'rosette', food: 1.5 },
+  { id: 'radish', name: 'Radish', latin: 'Raphanus sativus', days: 28, N: 0.4, P: 0.5, K: 0.5, pH: [6, 7.5], tol: 0.3, legume: false, form: 'radish', food: 1 },
+  { id: 'wheat', name: 'Dwarf wheat', latin: 'Triticum aestivum', days: 80, N: 0.6, P: 0.5, K: 0.4, pH: [6, 7.5], tol: 0.45, legume: false, form: 'wheat', food: 3.5 },
+  { id: 'pea', name: 'Pea', latin: 'Pisum sativum', days: 60, N: 0.6, P: 0.6, K: 0.5, pH: [6, 7.5], tol: 0.2, legume: true, form: 'vine', fruit: 0x5aa83a, food: 2 },
+  { id: 'tomato', name: 'Dwarf tomato', latin: 'Solanum lycopersicum', days: 75, N: 0.7, P: 0.6, K: 0.8, pH: [6, 6.8], tol: 0.35, legume: false, form: 'bush', fruit: 0xd8321e, food: 2 },
+  { id: 'potato', name: 'Potato', latin: 'Solanum tuberosum', days: 90, N: 0.7, P: 0.6, K: 0.9, pH: [5, 6.5], tol: 0.3, legume: false, form: 'bush', food: 4 },
 ];
 
 export const AMENDS = [
@@ -192,6 +196,15 @@ export class GrowLab {
   }
 
   clear(base: number, k: number) { this.chambers(base)[k] = null; }
+  /** a grown chamber's harvest, the chamber cleared: the plant, how well it did, and the food it makes (days for a crew of six) */
+  harvest(base: number, k: number, now: number): { p: Plant; yield: number; days: number } | null {
+    const ch = this.chambers(base)[k];
+    if (!ch) return null;
+    const st = this.state(ch, now);
+    this.clear(base, k);
+    if (!st.done || st.g.dies) return null;
+    return { p: st.p, yield: st.yield, days: Math.round(st.p.food * st.yield / 100 * 10) / 10 };
+  }
 
   /** how far along a chamber is: its day, its size (0–1), done, and how it is doing */
   state(c: Chamber, now: number) {
