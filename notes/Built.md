@@ -2,6 +2,7 @@
 
 What's in the game, newest first. The README has the full description.
 
+- **Caves under the ground**: a ramp cut down into the land, then passages, chambers, side passages and a lower level under several metres of rock; lava tubes 15 m across on the Moon, reached down the rubble where the roof fell in; walls that stop you, daylight fading behind you (c23f94b); [pictures](Feedback/2026-10-04.md#bug-caves-arent-really-caves-theyre-above-ground-structures-with-a-tunnel-there)
 - **The ship is the v2 model**: the new swept hull, furniture in every room that you walk round, new textures on the plating; flames at the new nozzles; the download page has it too (d4a9b6a); [pictures](Feedback/2026-10-06.md#the-new-ship-v2)
 - **Worlds from orbit and from the air**: sharp coasts from 10 km coastline data; detail below the map's grain close to a world, craters on airless ground all the way down; the ground from the air in relief (32e87c0, 63f1c84); [pictures](Feedback/2026-10-05.md#textures-from-orbit-and-the-ships-model-to-download)
 - **The ship's 3D model** to download, GLB and USDZ, at https://idoadjadjajdada.github.io/Orbital/ship/ (c310445)
