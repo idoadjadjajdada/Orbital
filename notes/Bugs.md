@@ -4,6 +4,8 @@ What looks wrong, and where: the world and the latitude and longitude from the r
 
 ## Open
 ## Known limits
+- A rocket has no lights inside: at night its cockpit and cabin are dark.
+- A base's crew and stores are not kept when the page is reloaded (nor is anything else in Mission Control).
 - A cave takes a tenth to a quarter of a second to build when it comes within a couple of kilometres: one a frame, so you may feel a hitch now and then.
 - The ship's furniture (from the v2 model) is solid from 45 cm to 1.7 m above the deck: lower things, like the pipe across engineering, are stepped over.
 - The v2 model's cuts to the old hull are matched to the game's pieces by size. If the ship's code changes a piece, that piece is drawn whole again, and can poke through the new hull, until the model is redone from the new ship.

@@ -5,10 +5,10 @@ What's next, in order. Move things up or down; tick them when done.
 ## Next
 - [x] The ship: better looking, outside and inside (6039531) ([message](Feedback/2026-10-04.md#gravity-the-ships-looks-and-the-map))
 - [x] Call the two views 2D and 3D (09cc9fd) ([message](Feedback/2026-10-04.md#gravity-the-ships-looks-and-the-map))
-- [ ] Rockets: open and close the doors and hatches when boarding (the models carry the animations)
-- [ ] Rockets: a cockpit or cabin camera while riding (the models have a cockpit camera socket)
-- [ ] Rockets: fly back to where it came from, and repeat runs (a supply route)
-- [ ] Bases: crew and stores used up over time, so supply flights matter
+- [x] Rockets: open and close the doors and hatches when boarding (the models carry the animations) (5bfbad1)
+- [x] Rockets: a cockpit or cabin camera while riding (the models have a cockpit camera socket) (5bfbad1)
+- [x] Rockets: fly back to where it came from, and repeat runs (a supply route) (5bfbad1)
+- [x] Bases: crew and stores used up over time, so supply flights matter (5bfbad1)
 - [ ] Ruins: something to find inside them (an artefact for the log, a scan of who built them)
 - [ ] The hangar's own rover model stays visible after the rover drives out: hide it while it's out
 - [x] Add interior to orbiting stations: reachable from Mission Control (Dock, then Go aboard) (62bddbc). ([message](Feedback/2026-10-04.md#feature-add-interior-to-orbiting-stations))
