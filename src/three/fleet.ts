@@ -6,7 +6,7 @@ import { groundSpec, groundAt, tangent, type GroundSpec, type GroundSample } fro
 import { atmosphere, composition, interior, life, gravity, airAt, giantPressure, giantTemp, cloudDecks, rng, type Atmosphere } from './science';
 import { bodyQuat, dirOf, latLonOf, arc } from './ground';
 import { probeMesh, orbiterMesh, landerMesh, roverMesh, stationMesh, baseMesh, padMesh, PAD } from './craftmesh';
-import { ROCKETS, HOLD_DAYS, plan, phase, rocketMesh, type RocketModel, type RocketState } from './rocketry';
+import { ROCKETS, HOLD_DAYS, TURNAROUND, plan, phase, rocketMesh, setDoors, type RocketModel, type RocketState } from './rocketry';
 import { sitesOn } from './sites';
 import { Interior, stationInterior } from './interior';
 import { baseLayer, baseGround, BASE } from './basecamp';
@@ -75,9 +75,18 @@ export interface Craft {
   h0?: number;
   /** a rocket's: where it stands, what it carries, its flight */
   rocket?: RocketState;
-  /** a base's or a station's crew, and the supplies it has (days) */
+  /** a base's or a station's crew, and the supplies it has (days, for a crew of six) */
   crew?: number; stores?: number;
+  /** days it has been out of supplies; the warnings given (stores low, out) */
+  short?: number; warned?: number;
 }
+
+/** a crew of six, and three months' stores: what a base or station starts with */
+export const CREW0 = 6, STORES0 = 90;
+/** stores low: a warning when this many days are left */
+const LOW = 15;
+/** days a crew holds out on emergency rations before it leaves */
+const RATIONS = 10;
 
 let nextId = 1;
 const NAMES: Record<CraftKind, string> = { probe: 'Probe', orbiter: 'Orbiter', lander: 'Lander', rover: 'Rover', station: 'Station', base: 'Base', pad: 'Launch pad', rocket: 'Rocket' };
@@ -302,7 +311,6 @@ export class Fleet {
 
   /** draw them where they are, from the viewer at P */
   frame(dt: number, P: V3, camFov: number) {
-    void dt;
     for (const c of this.crafts) {
       // drawn where it is, from the viewer
       const m = c.mesh;
@@ -328,6 +336,12 @@ export class Fleet {
         if (plume) { plume.visible = burn; if (burn) plume.scale.set(1, 0.85 + 0.3 * Math.random(), 1); }
         const body = m.getObjectByName('rocket-body');
         if (body) body.scale.y = 0.05 + 0.95 * c.build;
+        // its doors and hatches open when someone comes up to it on the ground (to load it, to board, to climb out),
+        // and shut for flight, in a couple of seconds
+        const r = c.rocket, want = !tr && !r.docked && c.build >= 1 && d < 25 ? 1 : 0;
+        r.doors = want > r.doors ? Math.min(want, r.doors + dt / 2) : Math.max(want, r.doors - dt / 1.5);
+        const rm = m.getObjectByName('rocket-model');
+        if (rm) setDoors(rm, r.doors);
       }
       // a pad's rocket is gone for a while after it launches, until the next is stacked
       if (c.kind === 'pad') { const r = m.getObjectByName('rocket'); if (r) r.visible = c.age >= c.odo; }
@@ -562,7 +576,7 @@ export class Fleet {
     const c = this.make('rocket', site.b, `${ROCKETS[kind].name.split(' ')[1]} ${k}`);
     c.mesh.add(rocketMesh(kind));
     c.fixed = fixed;
-    c.rocket = { kind, at: site.id, docked: false, load: { crew: 0, supplies: 0, rover: false }, trip: null, aboard: false, flights: 0 };
+    c.rocket = { kind, at: site.id, docked: false, load: { crew: 0, supplies: 0, rover: false }, trip: null, aboard: false, flights: 0, doors: 0, home: null, route: null };
     c.n = this.spot(site); c.head = site.head; c.state = 'surface';
     c.build = fixed ? 1 : 0;
     c.status = fixed ? `on ${site.name}` : 'stacking';
@@ -580,10 +594,17 @@ export class Fleet {
     if (dest.kind !== 'station' && this.rocketAt(dest)) return `${dest.name} has a rocket on it`;
     const from = r.at !== null ? this.byId(r.at) : null;
     if (!from) return `${c.name} has nowhere to fly from`;
+    // what it carries comes out of where it is loaded: a base's or a station's stores and crew (a spaceport's are endless)
+    if (from.kind === 'base' || from.kind === 'station') {
+      const L = r.load, crew = from.crew ?? CREW0, stores = from.stores ?? STORES0;
+      L.crew = Math.min(L.crew, crew);
+      L.supplies = Math.min(L.supplies, Math.floor(stores / HOLD_DAYS));
+      from.crew = crew - L.crew; from.stores = stores - L.supplies * HOLD_DAYS;
+    }
     const fromGround = !r.docked, toGround = dest.kind !== 'station', hop = fromGround && toGround && from.b === dest.b;
     const dist = hop ? arc(c.n, this.spot(dest)) * c.b.r * AU_M : this.rocketPos(c).distanceTo(toGround ? this.spotPos(dest, 0) : this.dockPos(dest)) * AU_M;
     r.trip = { from: { site: from.id }, to: { site: dest.id }, t: 0, ...plan(hop, dist, fromGround, toGround) };
-    r.at = null; r.docked = false; r.flights++;
+    r.home = from.id; r.at = null; r.docked = false; r.flights++;
     c.state = 'flight'; c.t = 0;
     c.status = `flying to ${dest.name}`;
     const L = r.load, what = [L.crew ? `${L.crew} crew` : '', L.supplies ? `${L.supplies * HOLD_DAYS} days of supplies` : '', L.rover ? 'a rover' : ''].filter(Boolean).join(', ');
@@ -651,11 +672,38 @@ export class Fleet {
     return q.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
   }
 
+  /** keep a rocket flying a load from where it is to `dest` and coming back empty, until it is stopped: '' or why not */
+  runRoute(c: Craft, dest: Craft): string {
+    const r = c.rocket;
+    if (!r || r.at === null) return 'Not a rocket on a pad';
+    const route = { a: r.at, b: dest.id, load: { ...r.load }, runs: 1, wait: 0 };
+    const why = this.fly(c, dest);
+    if (why) return why;
+    r.route = route;
+    this.note(c, `On a supply route to ${dest.name} and back`, true);
+    return '';
+  }
+  stopRoute(c: Craft) {
+    const r = c.rocket;
+    if (!r?.route) return;
+    r.route = null;
+    this.note(c, 'Off its supply route', true);
+  }
+
   /** a rocket's frame: stacking, or along its flight; at the end, landed (or docked) and unloaded */
   private rocketStep(c: Craft, dt: number) {
     const r = c.rocket!;
     if (!r.trip) {
       if (c.build < 1) { c.build = Math.min(1, c.build + dt / 15); if (c.build >= 1) { const st = r.at !== null ? this.byId(r.at) : null; c.status = `on ${st?.name ?? 'the pad'}`; this.note(c, 'Stacked: ready to fly', true); } }
+      // on a supply route: after the turnaround, the next leg (loaded at its home end, empty back to it)
+      const rt = r.route;
+      if (rt && c.build >= 1 && !r.aboard && (rt.wait -= dt) <= 0) {
+        const home = r.at === rt.a, dest = this.byId(home ? rt.b : rt.a);
+        if (!dest || !this.sites().includes(dest)) { this.stopRoute(c); return; }
+        if (home) r.load = { ...rt.load };
+        if (this.fly(c, dest)) { rt.wait = 10; return; }
+        if (home) rt.runs++;
+      }
       return;
     }
     const tr = r.trip, from = this.byId(tr.from.site), to = this.byId(tr.to.site);
@@ -670,13 +718,47 @@ export class Fleet {
     if (to.kind === 'station') { r.docked = true; c.state = 'orbit'; c.status = `docked at ${to.name}`; }
     else { r.docked = false; c.state = 'surface'; c.b = to.b; c.n = this.spot(to); c.head = to.head; c.status = `on ${to.name}`; }
     const L = r.load, got: string[] = [];
-    if (L.crew) { to.crew = (to.crew ?? 6) + L.crew; got.push(`${L.crew} crew aboard ${to.name} (now ${to.crew})`); }
-    if (L.supplies) { to.stores = (to.stores ?? 90) + L.supplies * HOLD_DAYS; got.push(`${L.supplies * HOLD_DAYS} days of supplies unloaded (${to.stores} in store)`); }
+    if (L.crew) { to.crew = (to.crew ?? CREW0) + L.crew; got.push(`${L.crew} crew aboard ${to.name} (now ${to.crew})`); }
+    if (L.supplies) { to.stores = Math.round(((to.stores ?? STORES0) + L.supplies * HOLD_DAYS) * 10) / 10; got.push(`${L.supplies * HOLD_DAYS} days of supplies unloaded (${to.stores} in store)`); }
     if (L.rover && c.state === 'surface') { const rv = this.launch('rover', to.b, new THREE.Vector3(), null, c); rv.name = `${to.name} rover`; got.push(`${rv.name} rolled out`); }
     r.load = { crew: 0, supplies: 0, rover: false };
+    if (r.route) r.route.wait = TURNAROUND;
+    if (L.crew || L.supplies) { to.short = 0; to.warned = 0; }
+    if (L.crew && /empty/.test(to.status)) to.status = to.kind === 'station' ? 'in orbit, crewed' : 'crewed';
     this.note(c, `${to.kind === 'station' ? 'Docked at' : 'Landed on'} ${to.name}${to.b !== from.b ? `, on ${to.b.name}` : ''}${got.length ? `: ${got.join('; ')}` : ''}`, true);
     this.onRocket(c, to);
   }
+  /**
+   * `days` go by for the crews of the bases and stations (on their own clock, a day a minute, as the growth
+   * lab's): each eats into its stores, a crew of six a day a day. Short of stores, a warning; out of them, the
+   * crew goes on emergency rations, and after ten days of those it leaves.
+   */
+  live(days: number) {
+    if (!(days > 0)) return;
+    for (const c of this.crafts) {
+      if (!((c.kind === 'base' && c.state === 'surface' && c.build >= 1) || (c.kind === 'station' && c.state === 'orbit'))) continue;
+      const crew = c.crew ?? CREW0;
+      if (crew <= 0) continue;
+      const left = Math.max(0, (c.stores ?? STORES0) - days * crew / CREW0);
+      c.stores = Math.round(left * 1000) / 1000;
+      c.crew = crew;
+      if (left > 0) {
+        if (left < LOW && !(c.warned ?? 0)) { c.warned = 1; this.note(c, `Stores low: ${Math.ceil(left)} days left for a crew of ${crew}. A supply flight is due`, true); }
+        if (left >= LOW) c.warned = 0;
+        c.status = `${c.kind === 'station' ? 'in orbit, crewed' : 'crewed'}${left < LOW ? ', stores low' : ''}`;
+        continue;
+      }
+      c.short = (c.short ?? 0) + days;
+      if ((c.warned ?? 0) < 2) { c.warned = 2; this.note(c, 'Out of supplies: the crew is on emergency rations', true); }
+      c.status = `${c.kind === 'station' ? 'in orbit, crewed' : 'crewed'}, on emergency rations`;
+      if (c.short >= RATIONS) {
+        c.crew = 0; c.short = 0; c.warned = 0;
+        c.status = c.kind === 'station' ? 'in orbit, empty' : 'empty';
+        this.note(c, `The crew has left ${c.name}: ${RATIONS} days without supplies`, true);
+      }
+    }
+  }
+
   /** a rocket has arrived (for the view: you step out of it, if you were aboard) */
   onRocket: (c: Craft, at: Craft) => void = () => {};
 

@@ -12,6 +12,7 @@ import { speciesIn } from './sites';
 import { MAX_SKY_LAMPS } from './lights';
 import { PLANTS, AMENDS, amended, type Amend, type Soil } from './growlab';
 import { ROCKETS, HOLD_DAYS, phase, type RocketModel } from './rocketry';
+import { CREW0, STORES0 } from './fleet';
 
 /**
  * The ship's consoles, as panels over the view: the comms log and the sensor
@@ -189,13 +190,16 @@ export class Panels {
 
   private rocketAct(a: string, id: string) {
     const v = this.v, c = v.fleet.byId(this.craftId), r = c?.rocket;
-    if (!c || !r || r.trip) return;
+    if (!c || !r) return;
+    if (a === 'rstop') { v.fleet.stopRoute(c); v.app.onToast(`${c.name} will stop at the end of this leg`); return; }
+    if (r.trip) return;
     const spec = ROCKETS[r.kind], L = r.load, room = spec.holds - (L.rover ? 2 : 0);
     if (a === 'rcrew') L.crew = Math.max(0, Math.min(spec.seats, L.crew + Number(id)));
     else if (a === 'rsup') L.supplies = Math.max(0, Math.min(room, L.supplies + Number(id)));
     else if (a === 'rrover' && r.kind === 'mammoth') { L.rover = !L.rover; L.supplies = Math.min(L.supplies, spec.holds - (L.rover ? 2 : 0)); }
     else if (a === 'rride') this.ride = !this.ride && v.rocketNear() === c;
-    else if (a === 'rfly') { const d = v.fleet.byId(Number(id)); if (d) v.flyRocket(c, d, this.ride && v.rocketNear() === c); }
+    else if (a === 'rfly' || a === 'rback') { const d = v.fleet.byId(Number(id)); if (d) v.flyRocket(c, d, this.ride && v.rocketNear() === c); }
+    else if (a === 'rrun') { const d = v.fleet.byId(Number(id)); if (d) v.routeRocket(c, d); }
   }
 
   private rocket() {
@@ -204,6 +208,12 @@ export class Panels {
     const spec = ROCKETS[r.kind], L = r.load;
     let h = `<div class="phero"><div><div class="pbig">${esc(c.name)}</div><div class="pdim">${esc(spec.name)} · ${esc(c.b.name)} · ${esc(c.status)} · ${r.flights} flight${r.flights === 1 ? '' : 's'}</div></div><span class="pbtns"><button data-act="cview" data-id="${c.id}">View</button><button data-act="mission">Back</button></span></div>`;
     h += `<p class="pdim">${esc(spec.about)}.</p>`;
+    // on a supply route
+    const rt = r.route, ra = rt ? f.byId(rt.a) : null, rb = rt ? f.byId(rt.b) : null;
+    if (rt && ra && rb) {
+      const L = rt.load, what = [L.crew ? `${L.crew} crew` : '', L.supplies ? `${L.supplies * HOLD_DAYS} days of supplies` : '', L.rover ? 'a rover' : ''].filter(Boolean).join(', ') || 'nothing';
+      h += `<div class="prow"><div><div class="pnm">Supply route: ${esc(ra.name)} ⇄ ${esc(rb.name)}</div><div class="pdim">run ${rt.runs} · out with ${esc(what)}, back empty${!r.trip && rt.wait > 0 ? ` · next leg in ${Math.ceil(rt.wait)} s` : ''}</div></div><span class="pbtns"><button data-act="rstop">Stop</button></span></div>`;
+    }
     if (r.trip) {
       const to = f.byId(r.trip.to.site), ph = phase(r.trip), T = r.trip.Ta + r.trip.Tc + r.trip.Td;
       return h + `<div class="pland ok">${ph.part === 'climb' ? 'Climbing off the pad' : ph.part === 'cruise' ? (r.trip.hop ? 'Coasting over the top of its arc' : 'Cruising between the worlds') : 'Burning down onto the pad'} · for ${esc(to?.name ?? '?')} · ${Math.round((r.trip.t / T) * 100)}%</div>`;
@@ -216,13 +226,19 @@ export class Panels {
     if (r.kind === 'mammoth') h += `<div class="prow"><div><div class="pnm">A rover: ${L.rover ? 'loaded' : 'no'}</div><div class="pdim">takes a deck; it drives off where it lands</div></div><span class="pbtns"><button data-act="rrover"${L.rover ? ' class="on"' : ''}>${L.rover ? '✓ Rover' : 'Rover'}</button></span></div>`;
     const near = v.rocketNear() === c;
     h += `<div class="prow"><div><div class="pnm">Ride along: ${near && this.ride ? 'yes' : 'no'}</div><div class="pdim">${near ? 'you are beside it: climb in and go too' : 'stand beside it to go too'}</div></div><span class="pbtns"><button data-act="rride"${near ? '' : ' disabled'}${near && this.ride ? ' class="on"' : ''}>${near && this.ride ? '✓ Aboard' : 'Go too'}</button></span></div>`;
+    // back where it came from
+    const home = r.home !== null && r.home !== r.at ? f.byId(r.home) : null;
+    if (home && f.sites().includes(home)) {
+      const busy = home.kind !== 'station' && f.rocketAt(home);
+      h += `<div class="prow"><div><div class="pnm">Back to ${esc(home.name)}</div><div class="pdim">where it came from${busy ? ` · ${esc(busy.name)} is on its pad` : ''}</div></div><span class="pbtns"><button data-act="rback" data-id="${home.id}"${busy ? ' disabled' : ''}>Fly back</button></span></div>`;
+    }
     // where it can go: the nearest first
     const P = f.pos(c);
     const dests = f.sites().filter(d => d.id !== r.at).map(d => { const q = f.pos(d); return { d, km: Math.hypot(q[0] - P[0], q[1] - P[1], q[2] - P[2]) * AU_M / 1000 }; }).sort((x, y) => x.km - y.km).slice(0, 24);
-    h += '<div class="psub">Fly to</div>';
+    h += '<div class="psub">Fly to <span class="pdim">· or run there and back with this load, again and again</span></div>';
     h += dests.map(({ d, km }) => {
       const busy = d.kind !== 'station' && f.rocketAt(d);
-      return `<div class="prow tight"><div><div class="pnm">${esc(d.name)} <span class="pdim">· ${esc(d.b.name)}${d.kind === 'station' ? ' · in orbit' : ''}</span></div><div class="pdim">${km < 1000 ? `${km.toFixed(km < 10 ? 1 : 0)} km` : fmtLength(km * 1000 / AU_M)}${busy ? ` · ${esc(busy.name)} is on its pad` : ''}</div></div><span class="pbtns"><button data-act="rfly" data-id="${d.id}"${busy ? ' disabled' : ''}>Fly</button></span></div>`;
+      return `<div class="prow tight"><div><div class="pnm">${esc(d.name)} <span class="pdim">· ${esc(d.b.name)}${d.kind === 'station' ? ' · in orbit' : ''}</span></div><div class="pdim">${km < 1000 ? `${km.toFixed(km < 10 ? 1 : 0)} km` : fmtLength(km * 1000 / AU_M)}${busy ? ` · ${esc(busy.name)} is on its pad` : ''}</div></div><span class="pbtns"><button data-act="rfly" data-id="${d.id}"${busy ? ' disabled' : ''}>Fly</button><button data-act="rrun" data-id="${d.id}"${busy ? ' disabled' : ''}>Run</button></span></div>`;
     }).join('') || '<p class="pdim">Nowhere to go: build another pad or base.</p>';
     return h;
   }
@@ -427,6 +443,8 @@ export class Panels {
       + (c.kind === 'orbiter' ? stat('Mapped', `${(c.cover * 100).toFixed(0)}%`) : '')
       + (c.orbit ? stat('Orbit', `${((c.orbit.r - c.b.r * AU_M) / 1000).toFixed(0)} km up`) : '')
       + (c.kind === 'base' ? stat('Built', `${(c.build * 100).toFixed(0)}%`) : '')
+      // its crew, and how long its stores last them (a crew of six eats a day's worth a day; a day is a minute here)
+      + ((c.kind === 'base' && c.build >= 1) || c.kind === 'station' ? stat('Crew', `${c.crew ?? CREW0}`) + stat('Stores', (() => { const cr = c.crew ?? CREW0, d = c.stores ?? STORES0; return cr > 0 ? `${Math.floor(d)} days · ${Math.floor(d * CREW0 / cr)} min left` : `${Math.floor(d)} days`; })()) : '')
       + (c.state === 'descent' ? stat('Altitude', `${(c.alt / 1000).toFixed(1)} km`) : '') + '</div>';
     if (c.profile.length > 1) h += `<div class="psub">Descent profile</div>${profileSvg(c.profile)}<table class="ptab small"><tr><td>Height</td><td>Pressure · temperature</td></tr>${c.profile.filter((_, k) => k % Math.max(1, Math.floor(c.profile.length / 14)) === 0 || k === c.profile.length - 1).map(p => `<tr><td>${p.z.toFixed(1)} km</td><td>${p.bar > 1e-4 ? `${p.bar.toPrecision(3)} bar` : p.bar > 0 ? `${p.bar.toExponential(1)} bar` : 'vacuum'} · ${Math.round(p.T)} K${p.note ? ` · ${esc(p.note)}` : ''}</td></tr>`).join('')}</table>`;
     if (c.kind === 'orbiter' && c.cover >= 0.6) h += this.science(c.b, v.stars());

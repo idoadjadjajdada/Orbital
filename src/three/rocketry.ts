@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { model, type ModelName } from './models';
+import { model, clips, type ModelName } from './models';
 
 /**
  * The rockets: three of them, built from modules, that carry people and
@@ -56,7 +56,15 @@ export interface RocketState {
   aboard: boolean;
   /** flights flown */
   flights: number;
+  /** its doors and hatches: 0 shut – 1 open */
+  doors: number;
+  /** where it last flew from, to fly back to */
+  home: number | null;
+  /** a supply route: from `a` to `b` with `load`, back empty, again and again; `wait` s until the next leg */
+  route: { a: number; b: number; load: Manifest; runs: number; wait: number } | null;
 }
+/** seconds a rocket on a supply route stands at each end, unloading and loading */
+export const TURNAROUND = 20;
 
 /** how long each part of a flight takes (s), from what kind of flight and how far */
 export function plan(hop: boolean, dist: number, fromGround: boolean, toGround: boolean): Omit<Trip, 'from' | 'to' | 't'> {
@@ -78,16 +86,39 @@ export function phase(tr: Trip): { part: 'climb' | 'cruise' | 'descent'; u: numb
   return { part: 'descent', u, alt: tr.A2 * (1 - u) * (1 - u) };
 }
 
+/** open a rocket's doors and hatches (its model's group): 0 shut – 1 open */
+export function setDoors(g: THREE.Object3D, open: number) {
+  const d = g.userData.doors as { mixer: THREE.AnimationMixer; acts: THREE.AnimationAction[]; open: number } | undefined;
+  if (!d || Math.abs(d.open - open) < 1e-4) return;
+  d.open = open;
+  for (const a of d.acts) a.time = open * a.getClip().duration;
+  d.mixer.update(0);
+}
+
 /** the rocket's model (its stand-in until it loads), with an exhaust plume under its engines */
 export function rocketMesh(kind: RocketModel): THREE.Group {
   const g = new THREE.Group(), spec = ROCKETS[kind];
+  g.name = 'rocket-model';
   const body = new THREE.Group();
   body.name = 'rocket-body';
   g.add(body);
   const stand = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 1.8, spec.height, 12).translate(0, spec.height / 2, 0), new THREE.MeshLambertMaterial({ color: 0xd8dade }));
   stand.name = 'stand-in';
   body.add(stand);
-  const put = (root: THREE.Group) => { body.remove(stand); const o = root.clone(); o.traverse(x => { x.frustumCulled = false; }); body.add(o); };
+  const put = (root: THREE.Group) => {
+    body.remove(stand);
+    const o = root.clone();
+    o.traverse(x => { x.frustumCulled = false; });
+    body.add(o);
+    // its doors and hatches, from the model's own animations: each held at a point along its opening
+    const cl = clips.get(spec.model) ?? [];
+    if (cl.length) {
+      const mixer = new THREE.AnimationMixer(o);
+      const acts = cl.map(c => { const a = mixer.clipAction(c); a.play(); a.paused = true; return a; });
+      g.userData.doors = { mixer, acts, open: -1 };
+      setDoors(g, 0);
+    }
+  };
   const m = model(spec.model);
   if (m) put(m);
   else import('./models').then(x => x.load(spec.model)).then(r => { if (r) put(r); });

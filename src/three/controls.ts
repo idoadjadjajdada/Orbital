@@ -100,6 +100,7 @@ const BINDS: Record<Mode, Bind[]> = {
     { k: ['Mouse'], p: ['RS'], t: 'Look round it' },
     { k: ['Wheel', '+', '−'], p: ['▲', '▼'], t: 'Closer · further', bar: true },
     { k: ['[', ']'], p: ['◀', '▶'], t: 'Other craft', bar: true },
+    { k: ['Z'], p: ['R3'], t: 'Riding a rocket: the cockpit, the cabin, outside', bar: true },
     { k: ['K'], p: ['Y'], t: 'Mission control', bar: true },
     { k: ['F', 'Esc'], p: ['B'], t: 'Back', bar: true },
   ],
@@ -132,7 +133,7 @@ const RAIL: Record<Mode, [string, string, string][]> = {
   inside: [['use', '👆', 'Use'], ['mission', '🛰', 'Craft'], ['map', '🗺', 'Nav map'], ['help', '?', 'Help']],
   surface: [['scan', '🔬', 'Scan'], ['ride', '🛞', 'Ride'], ['jet', '🚀', 'Jetpack'], ['sample', '🧪', 'Sample'], ['mission', '🛰', 'Craft'], ['light', '🔦', 'Lamp'], ['call', '📡', 'Call ship'], ['map', '🗺', 'Nav map'], ['help', '?', 'Help']],
   shuttle: [['sland', '🛬', 'Land'], ['use', '👆', 'Use'], ['map', '🗺', 'Nav map'], ['help', '?', 'Help']],
-  craft: [['prev', '◀', 'Prev'], ['next', '▶', 'Next'], ['mission', '🛰', 'Mission'], ['leave', '↩', 'Back'], ['help', '?', 'Help']],
+  craft: [['prev', '◀', 'Prev'], ['next', '▶', 'Next'], ['seat', '🎥', 'Seat'], ['mission', '🛰', 'Mission'], ['leave', '↩', 'Back'], ['help', '?', 'Help']],
   eva: [['call', '📡', 'Call ship'], ['light', '🔦', 'Lamp'], ['map', '🗺', 'Nav map'], ['help', '?', 'Help']],
   scope: [['track', '◎', 'Track'], ['leave', '↩', 'Step back'], ['help', '?', 'Help']],
 };
@@ -382,6 +383,7 @@ export class Controls3D {
     if (k === 'help') this.sheet();
     if (k === 'map') v.openMap();
     if (k === 'view') v.ship.view = v.ship.view === 'chase' ? 'cockpit' : 'chase';
+    if (k === 'seat') v.craftSeat();
     if (k === 'leave') { if (v.mode === 'scope') v.leaveScope(); else if (v.mode === 'craft') v.leaveCraft(); else v.leaveHelm(); }
     if (k === 'mission') v.panels.show('mission');
     if (k === 'light') v.toggleLights();
@@ -452,6 +454,7 @@ export class Controls3D {
         break;
       case 'craft':
         if (e.code === 'KeyF') v.leaveCraft();
+        if (e.code === 'KeyZ') v.craftSeat();
         if (e.code === 'BracketRight') v.cycleCraft(1);
         if (e.code === 'BracketLeft') v.cycleCraft(-1);
         break;
@@ -537,6 +540,7 @@ export class Controls3D {
         if (p.hit(BTN.LEFT)) v.cycleCraft(-1);
         if (p.hit(BTN.UP)) this.zoom(2);
         if (p.hit(BTN.DOWN)) this.zoom(0.5);
+        if (p.hit(BTN.RS)) v.craftSeat();
         break;
       case 'eva':
         if (p.hit(BTN.A)) { if (v.prompt) v.prompt.act(); else this.primary(); }

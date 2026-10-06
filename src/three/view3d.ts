@@ -441,6 +441,10 @@ void main() {
 }`;
 
 export type Mode = 'pilot' | 'walk' | 'eva' | 'scope' | 'surface' | 'craft' | 'shuttle' | 'inside';
+/** where you watch a craft from: round it, or (riding a rocket) its cockpit or its cabin */
+export type Seat = 'out' | 'cockpit' | 'cabin';
+/** the seats of a rocket to look from, in turn: the Wayfarer carries passengers in a cabin */
+const seatsOf = (k: RocketModel): Seat[] => (k === 'wayfarer' ? ['cockpit', 'cabin', 'out'] : ['cockpit', 'out']);
 
 const UP = new THREE.Vector3(0, 1, 0);
 const YR = 365.25 * 86400;
@@ -485,7 +489,8 @@ export class View3D {
   giant: Giant;
   private crushToast = 0;
   /** watching (or driving) one of them: which, the mode to go back to, and the camera round it */
-  craftView: { id: number; back: Mode; yaw: number; pitch: number; dist: number } | null = null;
+  /** watching a craft: from round it at a distance, or (riding a rocket) from a seat in it */
+  craftView: { id: number; back: Mode; yaw: number; pitch: number; dist: number; seat: Seat } | null = null;
   /** the bay doors, open for a launch: seconds left */
   private bayT = 0;
   active = false;
@@ -1253,8 +1258,21 @@ export class View3D {
     const why = this.fleet.fly(c, dest);
     if (why) { this.app.onToast(why); return; }
     this.panels.close();
-    if (ride) { c.rocket!.aboard = true; this.viewCraft(c.id); this.app.onToast(`Strapped in. ${c.name} for ${dest.name}: lift-off`); }
+    if (ride) {
+      c.rocket!.aboard = true;
+      this.viewCraft(c.id);
+      this.craftView!.seat = 'cockpit'; this.craftView!.yaw = 0; this.craftView!.pitch = 0;
+      this.app.onToast(`Strapped in. ${c.name} for ${dest.name}: lift-off · Z for the ${seatsOf(c.rocket!.kind).includes('cabin') ? 'cabin, ' : ''}view outside`);
+    }
     else this.app.onToast(`${c.name} is on its way to ${dest.name}`);
+  }
+
+  /** put a rocket on a supply route: its load to `dest`, back empty, and again */
+  routeRocket(c: Craft, dest: Craft) {
+    const why = this.fleet.runRoute(c, dest);
+    if (why) { this.app.onToast(why); return; }
+    this.panels.close();
+    this.app.onToast(`${c.name} is on a supply route to ${dest.name} and back: Mission control to stop it`);
   }
 
   /** a rocket has come in: if you were aboard, you climb out (onto the pad, or into the station) */
@@ -1286,7 +1304,7 @@ export class View3D {
     const back = this.mode === 'craft' ? this.craftView?.back ?? 'pilot' : this.mode;
     const dist = c.kind === 'station' ? 160 : c.kind === 'base' ? 110 : c.kind === 'rocket' ? 42 : c.kind === 'orbiter' ? 30 : c.kind === 'lander' ? 16 : c.kind === 'rover' ? 10 : 14;
     // from orbit, looking down past it to the world
-    this.craftView = { id, back, yaw: 0, pitch: c.state === 'orbit' || c.state === 'cruise' ? 0.75 : 0.35, dist };
+    this.craftView = { id, back, yaw: 0, pitch: c.state === 'orbit' || c.state === 'cruise' ? 0.75 : 0.35, dist, seat: 'out' };
     this.mode = 'craft';
     this.panels.close();
     this.app.onToast(`${c.name}${c.kind === 'rover' && c.state === 'surface' ? ': WASD (or the stick) drives it' : ''} · F or Esc to come back`);
@@ -1302,6 +1320,16 @@ export class View3D {
     this.craftView = null;
   }
 
+  /** riding a rocket: the next seat to look from (the cockpit, the cabin if it has one, outside) */
+  craftSeat() {
+    const v = this.craftView, c = v ? this.fleet.byId(v.id) : null;
+    if (!v || !c?.rocket?.aboard) return;
+    const seats = seatsOf(c.rocket.kind);
+    v.seat = seats[(seats.indexOf(v.seat) + 1) % seats.length];
+    v.yaw = 0; v.pitch = v.seat === 'out' ? 0.35 : 0;
+    this.app.onToast(v.seat === 'cockpit' ? 'The cockpit' : v.seat === 'cabin' ? 'The cabin, with the passengers' : 'Outside');
+  }
+
   /** the next (or previous) craft to watch */
   cycleCraft(dir: number) {
     const list = this.fleet.crafts.filter(c => c.state !== 'lost');
@@ -1314,6 +1342,7 @@ export class View3D {
   private placeCraft() {
     const v = this.craftView!, c = this.fleet.byId(v.id);
     if (!c) { this.leaveCraft(); return false; }
+    if (v.seat !== 'out' && c.rocket && this.placeSeat(c, v)) return true;
     if (c.kind === 'rover') { const inp = this.controls.walkInput(); c.drive = { f: inp.f, s: -inp.s }; }
     const loc = this.fleet.local(c), U = loc.clone().normalize();
     // (a rocket is watched round its middle, not its feet)
@@ -1337,6 +1366,22 @@ export class View3D {
     this.base = m;
     this.eye.set(0, 0, 0);
     this.camera.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(at, loc, U));
+    return true;
+  }
+
+  /** the camera in a rocket's seat: at its model's socket, facing its way, turned by your head */
+  private placeSeat(c: Craft, v: NonNullable<View3D['craftView']>) {
+    const sock = c.mesh.getObjectByName(v.seat === 'cockpit' ? 'SOCKET_CockpitCamera' : 'SOCKET_Occupant_Passenger_01');
+    if (!sock) return false;
+    c.mesh.updateMatrixWorld(true);
+    const rel = c.mesh.matrixWorld.clone().invert().multiply(sock.matrixWorld), p = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+    rel.decompose(p, q, sc);
+    // (in the cabin, a seated head over the seat)
+    if (v.seat === 'cabin') p.y += 0.8;
+    const at = this.fleet.local(c).add(p.applyQuaternion(c.mesh.quaternion));
+    this.base = { anchor: c.b, off: [at.x / AU_M, at.y / AU_M, at.z / AU_M], vel: [0, 0, 0] };
+    this.eye.set(0, 0, 0);
+    this.camera.quaternion.copy(c.mesh.quaternion).multiply(q).multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(v.pitch, v.yaw, 0, 'YXZ')));
     return true;
   }
 
@@ -1585,6 +1630,9 @@ export class View3D {
     this.shuttle.step(dtReal, this.mode === 'shuttle');
     // the craft move on before the viewer is placed: inside one, you go where it goes
     this.fleet.step(dtReal);
+    // the bases' and stations' crews live a day a minute of your time, whatever the clock's rate (so winding it on,
+    // or a night in the bunk, does not starve them), and not while it is stopped
+    if (!this.app.paused) this.fleet.live(dtReal / 60);
     this.visit.holdDocked();
     if (this.mode === 'inside') this.visit.step(dtReal);
     if (this.frameNo % 60 === 1) this.fleet.fixtures(app.world.sources);

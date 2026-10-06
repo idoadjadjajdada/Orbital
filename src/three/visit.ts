@@ -237,7 +237,7 @@ export class Visit {
       case 'vehicle': this.roverOut(c); break;
       case 'callship': this.callToPad(c); break;
       case 'holo': v.openMap(); break;
-      case 'command': this.toast(`${c.name}: crew of ${c.crew ?? 6}, stores for ${c.stores ?? 90} days, power ${air.bar > 0.5 ? 'solar and fuel cells' : 'solar, 140 kW'}, water recycling at 94%`); break;
+      case 'command': this.toast(`${c.name}: crew of ${c.crew ?? 6}, stores for ${Math.floor(c.stores ?? 90)} days, power ${air.bar > 0.5 ? 'solar and fuel cells' : 'solar, 140 kW'}, water recycling at 94%`); break;
       case 'weather': {
         const [la, lo] = latLonOf(c.n);
         this.toast(air.bar > 1e-4 ? `Outside: ${air.bar.toPrecision(3)} bar of ${air.gases[0]?.name ?? 'air'}, ${Math.round(air.T - 273.15)} °C, ${gravity(b).toFixed(2)} m/s² · ${la.toFixed(2)}°, ${lo.toFixed(2)}°` : `Outside: vacuum, ${Math.round(air.T - 273.15)} °C in the sun, ${gravity(b).toFixed(2)} m/s²`);
@@ -400,7 +400,7 @@ export class Visit {
       const ship = v.landing?.phase === 'landed' && v.landing.b === b ? (this.distToPad(c) < 30 ? 'on the pad' : 'landed nearby') : v.travel?.name.endsWith('pad') ? 'on its way to the pad' : 'away';
       const rovers = v.fleet.crafts.filter(r => r.kind === 'rover' && r.b === b && r.state !== 'lost');
       const cam = ['CAMERA', 'no craft on this screen', 'F: Mission Control,', 'then a craft\'s 📺'];
-      I.drawScreen('base', [c.name.toUpperCase(), `crew ${c.crew ?? 6} · power 140 kW`, `stores ${c.stores ?? 90} days`, `water 94 % recycled · ${hhmm}`]);
+      I.drawScreen('base', [c.name.toUpperCase(), `crew ${c.crew ?? 6} · power 140 kW`, `stores ${Math.floor(c.stores ?? 90)} days`, `water 94 % recycled · ${hhmm}`]);
       I.drawScreen('ship', ['THE SHIP', ship, 'the flight desk calls', 'it to the pad']);
       I.drawScreen('weather', ['OUTSIDE', air.bar > 1e-4 ? `${air.bar.toPrecision(3)} bar · ${Math.round(air.T - 273.15)} °C` : `vacuum · ${Math.round(air.T - 273.15)} °C`, `${(gravity(b) / 9.81).toFixed(2)} g`, hhmm]);
       I.drawScreen('rover', ['ROVERS', rovers.length ? `${rovers.length} out on ${b.name}` : 'all in the hangar', rovers[0] ? `${rovers[0].name}: ${rovers[0].status}` : 'bay 1: charged', 'F at the rover: drive']);
