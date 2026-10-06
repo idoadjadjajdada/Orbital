@@ -5,6 +5,8 @@ What looks wrong, and where: the world and the latitude and longitude from the r
 ## Open
 - [ ] "caves" arent really caves, they're above ground structures with a tunnel. There ([message](Feedback/2026-10-04.md#bug-caves-arent-really-caves-theyre-above-ground-structures-with-a-tunnel-there))
 ## Known limits
+- The ship's furniture (from the v2 model) is solid from 45 cm to 1.7 m above the deck: lower things, like the pipe across engineering, are stepped over.
+- The v2 model's cuts to the old hull are matched to the game's pieces by size. If the ship's code changes a piece, that piece is drawn whole again, and can poke through the new hull, until the model is redone from the new ship.
 - From inside the ship, its outside (seen through the windows) is drawn in plain paint, not shining metal: a software renderer would light it behind every wall.
 - Rocket flights, landings and descents run on frame time, so they are slower when frames are slow.
 - The jetpack can fly up through a base building's roof.

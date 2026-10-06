@@ -2,6 +2,7 @@
 
 What's in the game, newest first. The README has the full description.
 
+- **The ship is the v2 model**: the new swept hull, furniture in every room that you walk round, new textures on the plating; flames at the new nozzles; the download page has it too (d4a9b6a); [pictures](Feedback/2026-10-06.md#the-new-ship-v2)
 - **Worlds from orbit and from the air**: sharp coasts from 10 km coastline data; detail below the map's grain close to a world, craters on airless ground all the way down; the ground from the air in relief (32e87c0, 63f1c84); [pictures](Feedback/2026-10-05.md#textures-from-orbit-and-the-ships-model-to-download)
 - **The ship's 3D model** to download, GLB and USDZ, at https://idoadjadjajdada.github.io/Orbital/ship/ (c310445)
 - **Docking that catches the station**: Dock chases a station round its orbit and docks; within 10 km the ship goes round with the station, so you can fly to its port by hand (21c210e)

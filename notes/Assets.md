@@ -8,6 +8,7 @@ Model packs, where they are used, and how they're packed. Originals are in `tool
 | Low-poly trees | oak, birch, maple, palm, pine | Trees within 110 m (`src/three/flora.ts`), each species drawn by the nearest model, sized and varied per tree |
 | Low-poly ruins | ruin-arch, -columns, -obelisk, -shrine, -tower, -wall | Rare ruins on solid worlds (`src/three/ruins.ts`), tinted to the ground |
 | Modular Rocket Fleet | rocket-courier, -wayfarer, -mammoth | Rockets flying crew and cargo between pads, bases and stations (`src/three/rocketry.ts`, `fleet.ts`) |
+| The ship, v2 (from the owner, 6 October) | orbital-ship | The ship's hull, its rooms' furniture and its plating's textures, over the ship the game builds (`Hull.useModel` in `src/three/hull.ts`). The packer keeps the new hull (`hull_v2`), the furniture (`interior_v2`), the plating textures and where the old hull is cut away, and drops the model's copy of the rest |
 
 Unused so far from the rocket pack: the door and hatch animations, the seat and cockpit camera sockets, the exhaust sockets.
 
@@ -15,5 +16,5 @@ Unused so far from the rocket pack: the door and hatch animations, the seat and 
 
 | What | Where | How |
 |---|---|---|
-| The ship's 3D model, outside and in | `public/ship/orbital-ship.glb` and `.usdz`, on the site at https://idoadjadjajdada.github.io/Orbital/ship/ | `node tools/export-ship.mjs` writes both from the game's own ship; run it again after changing the ship |
+| The ship's 3D model, outside and in | `public/ship/orbital-ship.glb` and `.usdz`, on the site at https://idoadjadjajdada.github.io/Orbital/ship/ | `node tools/export-ship.mjs` writes both from the game's own ship, with the v2 model on it; run it again after changing the ship |
 | The Earth's surface classes (ocean, land, ice, desert, lake, mountains, tundra) | `src/pixel/data/earth.ts`, 4096 × 2048 | `python3 tools/fetch-earth.py` bakes them from Natural Earth's 1:50 million land, lakes, glaciers and regions (public domain) |
