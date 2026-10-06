@@ -270,6 +270,7 @@ try {
   await page.waitForTimeout(200);
   ok('F climbs down to the hangar', await page.evaluate(() => window.orbital.v3.foot.deck === 1 && /hangar/.test(window.orbital.v3.readout().where)));
   ok('the lander is in the way, the deck round it is not', await page.evaluate(() => { const h = window.orbital.v3.ship.hull; return !h.canStand(0.6, 12.5, 0.3, 1) && h.canStand(-3.6, 10.3, 0.3, 1) && !h.canStand(-3.6, 10.3, 0.3, 2); }));
+  ok('the ship wears its model: the new hull, and its furniture in the way (an armchair in the commons)', await until(page, () => { const h = window.orbital.v3.ship.hull; return h.modelled && !h.canStand(-2.55, -6.75, 0.3, 0) && h.canStand(0, -2, 0.3, 0); }));
   ok('labels are seen through windows, not walls', await page.evaluate(() => { const h = window.orbital.v3.ship.hull, V = window.orbital.v3.camera.position.constructor; const e = new V(0, 1.65, -2); return h.seesOut(e, new V(0, 1, 0)) && !h.seesOut(e, new V(0, 0, 1)) && h.seesOut(new V(0, 1.7, -20), new V(0, 0, -1)); }));
   const t0 = await page.evaluate(() => { const v = window.orbital.v3; v.climb(0); v.foot.p.set(-3.2, 0, -12.6); return window.orbital.world.time; });
   await page.evaluate(() => window.orbital.v3.use('bunk'));

@@ -637,6 +637,15 @@ carry vents, boxes and conduits. Inside, every wall has a kick plate with a
 line of guide light along the floor, a rail at waist height, ribs at its ends
 and a cove of light under the ceiling.
 
+Over that, the ship wears a model reworked outside the game
+(`tools/data/models/orbital-ship.glb`, packed by `tools/pack-models.py`): a
+new swept hull, white with orange stripes, a longer nose, three nozzles at the
+back and slimmer pods at the wingtips; furniture in every room (chairs on the
+bridge, armchairs, shelves and a kitchen island in the commons, new suits),
+solid to walk round; and new textures on the plating. The old hull is cut away
+where the new one covers it. The rooms, stations, screens and moving parts are
+still the game's own.
+
 The ship's 3D model, outside and in, is on the site at
 [/ship/](https://idoadjadjajdada.github.io/Orbital/ship/) to download: GLB for
 Blender and most 3D apps, and USDZ, which an iPhone or iPad opens in Quick

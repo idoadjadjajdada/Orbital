@@ -5,7 +5,8 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
  * The modelled things: the bases' buildings (a dome habitat, a modular
  * outpost, a vault hangar, each a body and a roof), the trees (oak, birch,
  * maple, palm, pine), the ruins (an arch, a colonnade, an obelisk, a shrine,
- * a tower, a wall) and the rockets (a courier, a crew carrier, a freighter).
+ * a tower, a wall), the rockets (a courier, a crew carrier, a freighter)
+ * and the ship's own hull and furniture (see Hull.useModel).
  * Baked by tools/pack-models.py, fetched the first time something asks for
  * one and never again; until then whoever asked draws its own stand-in.
  */
@@ -27,6 +28,7 @@ const URLS = {
   'rocket-courier': new URL('./models/rocket-courier.glb', import.meta.url).href,
   'rocket-wayfarer': new URL('./models/rocket-wayfarer.glb', import.meta.url).href,
   'rocket-mammoth': new URL('./models/rocket-mammoth.glb', import.meta.url).href,
+  'orbital-ship': new URL('./models/orbital-ship.glb', import.meta.url).href,
 };
 export type ModelName = keyof typeof URLS;
 export const TREES: ModelName[] = ['oak', 'birch', 'maple', 'palm', 'pine'];
@@ -54,7 +56,8 @@ export function load(name: ModelName): Promise<THREE.Group | null> {
   loader ??= new GLTFLoader();
   p = loader.loadAsync(URLS[name]).then(g => {
     const root = g.scene;
-    root.traverse(o => {
+    // (the ship's materials are taken as they are: see Hull.useModel)
+    if (name !== 'orbital-ship') root.traverse(o => {
       const m = o as THREE.Mesh;
       if (!m.isMesh) return;
       // flat-lit, low-poly look; the glow strips glow; glass is glass

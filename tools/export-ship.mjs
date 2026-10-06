@@ -19,7 +19,8 @@ try {
   await page.goto(`http://localhost:${process.env.PORT || 4177}/`);
   await page.waitForFunction(() => window.orbital && window.orbital.world.time > 0, null, { timeout: 30000 });
   await page.keyboard.press('KeyV');
-  await page.waitForFunction(() => window.orbital.v3?.active && window.orbital.v3.frameNo > 10, null, { timeout: 60000 });
+  // (with its model in: the new hull and the rooms' furniture)
+  await page.waitForFunction(() => window.orbital.v3?.active && window.orbital.v3.ship.hull.modelled && window.orbital.v3.frameNo > 10, null, { timeout: 60000 });
   const [glb, usdz] = await page.evaluate(async () => {
     const { GLTFExporter } = await import('/node_modules/three/examples/jsm/exporters/GLTFExporter.js');
     const { USDZExporter } = await import('/node_modules/three/examples/jsm/exporters/USDZExporter.js');

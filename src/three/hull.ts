@@ -42,6 +42,8 @@ interface Room { name: string; r: Rect; deck: number; y: number; H: number; wall
 export interface HullState { od: number; charge: number; worm: number; tunnel: boolean; thrust: number; boardable: boolean }
 
 const T = 0.25;
+/** the size of a cell of the furniture's map, m */
+const CELL = 0.1;
 /** the floor of each deck: the main deck, and the hangar below it */
 export const DECK_Y = [0, -4.9];
 const HANGAR_H = 4.4;
@@ -103,6 +105,9 @@ export class Hull {
     xaccent: new THREE.MeshStandardMaterial({ color: 0xd8643a, flatShading: true, metalness: 0.2, roughness: 0.4 }),
     xsteel: new THREE.MeshStandardMaterial({ color: 0xb4bcc8, flatShading: true, metalness: 0.9, roughness: 0.3 }),
     xburnt: new THREE.MeshStandardMaterial({ color: 0x3a3f4a, flatShading: true, metalness: 0.85, roughness: 0.35, side: THREE.DoubleSide }),
+    xdish: new THREE.MeshStandardMaterial({ color: 0xc9ccd4, flatShading: true, metalness: 0.7, roughness: 0.3, side: THREE.DoubleSide }),
+    xshroud: new THREE.MeshStandardMaterial({ color: 0x5a6274, flatShading: true, metalness: 0.55, roughness: 0.42, side: THREE.DoubleSide }),
+    bubble: new THREE.MeshLambertMaterial({ color: 0x9cc4e6, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide }),
   };
   /** the materials tiled in metres, whatever the size of the piece */
   private tiled = new Set<THREE.Material>([this.mat.hull, this.mat.dark, this.mat.wall, this.mat.floor, this.mat.ceil, this.mat.hazard, this.mat.xhull, this.mat.xdark]);
@@ -134,6 +139,12 @@ export class Hull {
   readonly ladder = new THREE.Group();
   private rungs: THREE.Mesh[] = [];
   private t = 0;
+  /** the ship's model is in (see useModel) */
+  modelled = false;
+  /** what the outside's metal reflects, once made (see setEnv) */
+  private env: THREE.Texture | null = null;
+  /** where the model's furniture stands, per deck: a cell every 10 cm (see useModel) */
+  private furniture: { x0: number; z0: number; nx: number; nz: number; cells: Uint8Array }[] = [];
 
   constructor(glow: THREE.Texture) {
     const g = this.group, M = this.mat;
@@ -230,7 +241,7 @@ export class Hull {
     this.box(-0.15, 0.15, 4.2 + T, 8, 11.5, 18.5, M.xaccent, true);
     const dishPost = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1.2, 6), M.xdark);
     dishPost.position.set(4.2, 3.85, 2.2);
-    const dish = new THREE.Mesh(new THREE.ConeGeometry(1.1, 0.5, 12, 1, true), new THREE.MeshStandardMaterial({ color: 0xc9ccd4, flatShading: true, metalness: 0.7, roughness: 0.3, side: THREE.DoubleSide }));
+    const dish = new THREE.Mesh(new THREE.ConeGeometry(1.1, 0.5, 12, 1, true), M.xdish);
     dish.position.set(4.2, 4.6, 2.2);
     dish.rotation.set(Math.PI * 0.8, 0, 0.4);
     g.add(dishPost, dish);
@@ -440,8 +451,9 @@ export class Hull {
     this.box(-5.95, -5.25, 0.97, 1.6, 3.45, 3.95, M.trim, false);
     this.box(-5.3, -5.24, 1.3, 1.36, 3.55, 3.85, M.lamp, false);
     this.block(-6, -2.1, 3.2, 4);
-    this.station('coffee', new THREE.Vector3(-5.5, 1.2, 3.6), 'Make a coffee', 1.8);
-    this.station('galley', new THREE.Vector3(-3.5, 1.1, 3.6), 'Cook something', 1.8);
+    // (in reach from across the model's kitchen island too)
+    this.station('coffee', new THREE.Vector3(-5.5, 1.2, 3.6), 'Make a coffee', 2.7);
+    this.station('galley', new THREE.Vector3(-3.5, 1.1, 3.6), 'Cook something', 2.7);
     // a wall screen by the aft door: where the ship is
     const wallScr = this.screen('wall', 512, 240, 3.0, 1.4, '#ffe2a8');
     wallScr.position.set(3.4, 1.85, 3.99);
@@ -820,7 +832,7 @@ export class Hull {
     spine(-13.6, -6.2);
     spine(2.2, 7.75);
     spine(7.75, 18, 4.2);
-    const bubble = mesh(new THREE.SphereGeometry(3.4, 24, 10, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x9cc4e6, transparent: true, opacity: 0.16, depthWrite: false, side: THREE.DoubleSide }), 0, 3.0 + 0.25, -2);
+    const bubble = mesh(new THREE.SphereGeometry(3.4, 24, 10, 0, Math.PI * 2, 0, Math.PI / 2), M.bubble, 0, 3.0 + 0.25, -2);
     bubble.scale.set(1, 0.42, 1.05);
     mesh(new THREE.TorusGeometry(3.4, 0.12, 6, 32), M.xdark, 0, 3.3, -2, Math.PI / 2, 0, 0).scale.set(1, 1.05, 1);
     // the wings' leading edges, a darker strip, and a fence
@@ -872,7 +884,7 @@ export class Hull {
     }
     // the shroud round the main engines: an octagonal cowling with a lip, open at the back
     const shroud = new THREE.CylinderGeometry(4.3, 4.0, 6.2, 8, 1, true);
-    mesh(shroud, M.xdark, 0, 1.2, 21.3, Math.PI / 2, 0, Math.PI / 8).material = new THREE.MeshStandardMaterial({ color: 0x5a6274, flatShading: true, metalness: 0.55, roughness: 0.42, side: THREE.DoubleSide });
+    mesh(shroud, M.xshroud, 0, 1.2, 21.3, Math.PI / 2, 0, Math.PI / 8);
     mesh(new THREE.TorusGeometry(4.35, 0.2, 6, 8), M.xaccent, 0, 1.2, 24.4, 0, 0, Math.PI / 8);
     // exhaust cones in the nozzles
     for (const [x, y] of [[-2.6, 0.6], [2.6, 0.6], [0, 2.6]] as const) mesh(new THREE.ConeGeometry(0.45, 1.2, 10), M.xsteel, x, y, 24.9, -Math.PI / 2, 0, 0);
@@ -1000,6 +1012,15 @@ export class Hull {
   canStand(x: number, z: number, r = 0.3, deck = 0) {
     if (!this.walk.some(w => w.deck === deck && x > w.x0 + r && x < w.x1 - r && z > w.z0 + r && z < w.z1 - r)) return false;
     if (this.blocks.some(b => b.deck === deck && x > b.x0 - r && x < b.x1 + r && z > b.z0 - r && z < b.z1 + r)) return false;
+    const f = this.furniture[deck];
+    if (f) {
+      // any of the model's furniture within r
+      const i0 = Math.max(0, Math.floor((x - r - f.x0) / CELL)), i1 = Math.min(f.nx - 1, Math.floor((x + r - f.x0) / CELL));
+      const k0 = Math.max(0, Math.floor((z - r - f.z0) / CELL)), k1 = Math.min(f.nz - 1, Math.floor((z + r - f.z0) / CELL));
+      for (let i = i0; i <= i1; i++) for (let k = k0; k <= k1; k++) {
+        if (f.cells[i * f.nz + k] && (f.x0 + (i + 0.5) * CELL - x) ** 2 + (f.z0 + (k + 0.5) * CELL - z) ** 2 < r * r) return false;
+      }
+    }
     return !this.rounds.some(c => c.deck === deck && (x - c.x) ** 2 + (z - c.z) ** 2 < (c.r + r) ** 2);
   }
 
@@ -1212,6 +1233,7 @@ export class Hull {
     panel(30, 30, 0x9aa6b8, 0, 90, 0);
     for (const [x, y, z] of [[-40, 30, -70], [50, -40, 60], [-60, 10, -20], [20, -70, -30]]) panel(6, 6, 0xffffff, x, y, z);
     const env = pm.fromScene(sc, 0.03).texture;
+    this.env = env;
     const M = this.mat;
     this.group.traverse(o => {
       const ms = (o as THREE.Mesh).material;
@@ -1227,6 +1249,120 @@ export class Hull {
    */
   viewFrom(inside: boolean) {
     for (const o of this.outer) o.m.material = inside ? o.plain : o.shine;
+  }
+
+  /**
+   * Dress the ship in its model (tools/data/models/orbital-ship.glb, packed by tools/pack-models.py): the
+   * ship as the game builds it, reworked outside the game. The rooms, the stations, the screens and the
+   * moving parts stay the game's; from the model come
+   * - the new hull, over the old one (its orange trim, nozzles, skylight dome, dish and engine cowling go:
+   *   the model has its own), with the engines' flames moved to its nozzles;
+   * - the rooms' new furniture, which you walk round like the rest;
+   * - new pictures for the plating, inside and out.
+   */
+  useModel(root: THREE.Object3D) {
+    if (this.modelled) return;
+    this.modelled = true;
+    const M = this.mat, top = root.children[0] ?? root;
+    // (by the names in the file: the loader makes them unique and drops their colons)
+    const named = (o: THREE.Object3D) => String(o.userData.name ?? o.name);
+    // the plating's new pictures, from the model's stand-ins named after the game's materials
+    for (const o of [...top.children]) {
+      if (!named(o).startsWith('skin:')) continue;
+      const from = (o as THREE.Mesh).material as THREE.MeshStandardMaterial, to = M[named(o).slice(5) as keyof Hull['mat']] as THREE.MeshLambertMaterial | THREE.MeshStandardMaterial | undefined;
+      top.remove(o);
+      if (!to || !from.map) continue;
+      to.map = from.map;
+      to.normalMap = from.normalMap;
+      if (from.normalMap) to.normalScale.copy(from.normalScale);
+      to.needsUpdate = true;
+      for (const x of this.outer) if (x.shine === to) { (x.plain as THREE.MeshLambertMaterial).map = from.map; x.plain.needsUpdate = true; }
+    }
+    // the old outside's pieces that the model's hull replaces
+    const gone = new Set<THREE.Material>([M.xaccent, M.xburnt, M.xdish, M.xshroud, M.bubble]);
+    for (const o of this.group.children) if ((o as THREE.Mesh).isMesh && gone.has((o as THREE.Mesh).material as THREE.Material)) o.visible = false;
+    // and the ones it cuts away where it covers them: only the triangles it keeps are drawn (the piece is
+    // known by its number of points and its bounds, so a piece the game has changed since is left whole)
+    const box = new THREE.Box3();
+    for (const o of [...top.children]) {
+      if (named(o) !== 'trim') continue;
+      top.remove(o);
+      const { count, min, max } = o.userData as { count: number; min: number[]; max: number[] };
+      const idx = (o as THREE.Mesh).geometry.index;
+      const piece = this.group.children.find(c => {
+        const m = c as THREE.Mesh;
+        if (!m.isMesh || m.geometry.index || m.geometry.attributes.position.count !== count) return false;
+        box.setFromBufferAttribute(m.geometry.attributes.position as THREE.BufferAttribute);
+        return [0, 1, 2].every(k => Math.abs(box.min.getComponent(k) - min[k]) < 0.05 && Math.abs(box.max.getComponent(k) - max[k]) < 0.05);
+      }) as THREE.Mesh | undefined;
+      if (piece && idx) piece.geometry.setIndex(idx.clone());
+    }
+    // the hull shines from outside and is plain from inside, as the old one did; the rooms' furniture is plain
+    const plain = new Map<THREE.Material, THREE.Material>();
+    const lambert = (m: THREE.Material) => {
+      if (!(m instanceof THREE.MeshStandardMaterial)) return m;
+      let p = plain.get(m);
+      if (!p) {
+        p = new THREE.MeshLambertMaterial({ name: m.name, color: m.color, map: m.map, normalMap: m.normalMap, normalScale: m.normalScale, vertexColors: m.vertexColors, transparent: m.transparent, opacity: m.opacity, depthWrite: m.depthWrite, side: m.side });
+        plain.set(m, p);
+      }
+      return p;
+    };
+    const hull = top.getObjectByName('hull_v2'), rooms = top.getObjectByName('interior_v2');
+    hull?.traverse(o => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || !(m.material instanceof THREE.MeshStandardMaterial)) return;
+      if (this.env) { m.material.envMap = this.env; m.material.needsUpdate = true; }
+      this.outer.push({ m, shine: m.material, plain: lambert(m.material) });
+    });
+    rooms?.traverse(o => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh) m.material = Array.isArray(m.material) ? m.material.map(lambert) : lambert(m.material);
+    });
+    for (const o of [hull, rooms]) if (o) { this.group.add(o); o.traverse(c => { c.frustumCulled = false; }); }
+    if (rooms) this.furnish(rooms);
+    // the flames at the model's nozzles: the three main engines, then the pods at the wingtips
+    const at = [[-2.18, -0.7, 25.9], [2.18, -0.7, 25.9], [0, 1.95, 25.9], [16.4, 0.78, 20.4], [-16.4, 0.78, 20.4]];
+    this.flames.forEach((f, k) => { if (at[k]) f.position.set(at[k][0], at[k][1], at[k][2]); });
+    // and the new hull's longer nose and bigger engine block kept clear of a spacewalker
+    this.solids.push(
+      new THREE.Box3(new THREE.Vector3(-2.5, -2.5, -36.2), new THREE.Vector3(2.5, 1, -30)),
+      new THREE.Box3(new THREE.Vector3(-3.4, -2.2, 18), new THREE.Vector3(3.4, 3.4, 25.8)),
+    );
+  }
+
+  /** mark where the model's furniture stands on each deck: whatever is between 45 cm (a pipe on the floor is stepped over) and head height */
+  private furnish(rooms: THREE.Object3D) {
+    this.group.updateMatrixWorld(true);
+    const inv = this.group.matrixWorld.clone().invert(), mw = new THREE.Matrix4();
+    const grids = DECK_Y.map(() => ({ x0: -10, z0: -26, nx: 200, nz: 460, cells: new Uint8Array(200 * 460) }));
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), p = new THREE.Vector3();
+    rooms.traverse(o => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      mw.multiplyMatrices(inv, m.matrixWorld);
+      const pos = m.geometry.attributes.position, idx = m.geometry.index;
+      const n = idx ? idx.count : pos.count;
+      for (let t = 0; t < n; t += 3) {
+        a.fromBufferAttribute(pos, idx ? idx.getX(t) : t).applyMatrix4(mw);
+        b.fromBufferAttribute(pos, idx ? idx.getX(t + 1) : t + 1).applyMatrix4(mw);
+        c.fromBufferAttribute(pos, idx ? idx.getX(t + 2) : t + 2).applyMatrix4(mw);
+        const lo = Math.min(a.y, b.y, c.y), hi = Math.max(a.y, b.y, c.y);
+        DECK_Y.forEach((Y, d) => {
+          if (hi < Y + 0.45 || lo > Y + 1.7) return;
+          const g = grids[d];
+          // points across the triangle, closer together than the cells
+          const s = Math.max(1, Math.ceil(Math.max(a.distanceTo(b), b.distanceTo(c), c.distanceTo(a)) / (CELL * 0.7)));
+          for (let i = 0; i <= s; i++) for (let k = 0; k <= s - i; k++) {
+            p.copy(a).multiplyScalar((s - i - k) / s).addScaledVector(b, i / s).addScaledVector(c, k / s);
+            if (p.y < Y + 0.45 || p.y > Y + 1.7) continue;
+            const ci = Math.floor((p.x - g.x0) / CELL), ck = Math.floor((p.z - g.z0) / CELL);
+            if (ci >= 0 && ci < g.nx && ck >= 0 && ck < g.nz) g.cells[ci * g.nz + ck] = 1;
+          }
+        });
+      }
+    });
+    this.furniture = grids;
   }
 
   /** for the landing to come: open the bay doors (0 shut – 1 open) */

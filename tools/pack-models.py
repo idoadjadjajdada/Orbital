@@ -3,7 +3,8 @@
 
 The bases (dome-habitat, modular-outpost, vault-hangar), the trees (oak,
 birch, maple, palm, pine), the ruins (ruin-*) and the rockets (rocket-*)
-come as GLB files with 1024-pixel textures. Seen at
+come as GLB files with 1024-pixel textures. The ship (orbital-ship) is
+trimmed first: see ship(). Seen at
 the sizes they are in the game, 512 is plenty: each texture over that is
 scaled down and re-encoded (JPEG, quality 85; the rockets' atlases, with
 their markings, stay at 1024 and only become JPEGs), and anything nothing
@@ -15,8 +16,14 @@ import glob, io, json, os, struct
 from PIL import Image
 
 MAX = 512
-# the rockets' atlases carry their labels and markings: kept sharper
-MAX_FOR = {'rocket-': 1024}
+# the rockets' atlases carry their labels and markings, and the ship is seen from close up: kept sharper
+MAX_FOR = {'rocket-': 1024, 'orbital-ship': 1024}
+
+# the ship's plating, as the game names its materials: colour (sRGB) and metalness
+PLATING = {
+    'hull': (0xd2d5dc, 0), 'dark': (0x5a6274, 0), 'wall': (0xa8b0c0, 0), 'floor': (0x59606e, 0),
+    'ceil': (0x7c8494, 0), 'xhull': (0xdfe2e8, 0.35), 'xdark': (0x4e5668, 0.55),
+}
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, 'data', 'models')
@@ -49,8 +56,89 @@ def refs(j, key):
     return used
 
 
+def linear(c):
+    c /= 255
+    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def ship(j):
+    """
+    The ship's model is the game's own ship (tools/export-ship.mjs) reworked
+    outside it: a new hull (the group 'hull_v2'), the rooms dressed
+    ('interior_v2'), new pictures on the plating, and the old hull cut away
+    where the new one covers it (its pieces kept, but only some of their
+    triangles drawn). The game still builds its ship, for the rooms, the
+    stations, the screens and the moving parts, so the rest of the model
+    (its copy of those) is dropped. What is kept: the two groups; for each
+    plating material given a picture of its own, a stand-in node
+    'skin:<the game's name for it>' carrying it; and for each piece cut
+    away, a node 'trim' with the triangles left, and the piece's size (its
+    number of points and its bounds) to know it by.
+    """
+    root = j['nodes'][j['scenes'][j.get('scene', 0)]['nodes'][0]]
+    keep = [c for c in root['children'] if j['nodes'][c].get('name') in ('hull_v2', 'interior_v2')]
+    # the plating materials with a named picture, matched to the game's by colour and metalness
+    skins = {}
+    for i, m in enumerate(j['materials']):
+        pb = m.get('pbrMetallicRoughness', {})
+        t = pb.get('baseColorTexture')
+        if m.get('name') or not t or not j['images'][j['textures'][t['index']]['source']].get('name'):
+            continue
+        col = pb.get('baseColorFactor', [1, 1, 1, 1])
+        def far(k):
+            hexc, metal = PLATING[k]
+            rgb = [linear((hexc >> s_) & 255) for s_ in (16, 8, 0)]
+            return sum((a - b) ** 2 for a, b in zip(rgb, col)) + (metal - pb.get('metallicFactor', 1)) ** 2
+        skins[min(PLATING, key=far)] = i
+    # a stand-in's shape: the smallest mesh there is, its positions only
+    small = min((p['attributes']['POSITION'] for m in j['meshes'] for p in m['primitives']), key=lambda a: j['accessors'][a]['count'])
+    nodes, meshes = [], []
+    def copy(i):
+        n = dict(j['nodes'][i])
+        if 'mesh' in n:
+            meshes.append(j['meshes'][n['mesh']])
+            n['mesh'] = len(meshes) - 1
+        n['children'] = [copy(c) for c in n.get('children', [])]
+        if not n['children']: del n['children']
+        nodes.append(n)
+        return len(nodes) - 1
+    kids = [copy(c) for c in keep]
+    for c in root['children']:
+        n = j['nodes'][c]
+        if 'mesh' not in n or c in keep: continue
+        for p in j['meshes'][n['mesh']]['primitives']:
+            a = j['accessors'][p['attributes']['POSITION']]
+            if 'indices' not in p or j['accessors'][p['indices']]['count'] >= a['count']: continue
+            meshes.append({'primitives': [{'attributes': {'POSITION': p['attributes']['POSITION']}, 'indices': p['indices']}]})
+            nodes.append({'name': 'trim', 'mesh': len(meshes) - 1, 'extras': {'count': a['count'], 'min': a['min'], 'max': a['max']}})
+            kids.append(len(nodes) - 1)
+    for name, mi in sorted(skins.items()):
+        meshes.append({'primitives': [{'attributes': {'POSITION': small}, 'material': mi}]})
+        nodes.append({'name': f'skin:{name}', 'mesh': len(meshes) - 1})
+        kids.append(len(nodes) - 1)
+    nodes.append({'name': root.get('name', 'Orbital ship'), 'children': kids})
+    j['scenes'] = [{'nodes': [len(nodes) - 1]}]
+    j['scene'] = 0
+    j['nodes'] = nodes
+    # only the accessors and materials still used, renumbered
+    acc, mat = {}, {}
+    for m in meshes:
+        for p in m['primitives']:
+            for k, a in p['attributes'].items():
+                p['attributes'][k] = acc.setdefault(a, len(acc))
+            if 'indices' in p: p['indices'] = acc.setdefault(p['indices'], len(acc))
+            if 'material' in p: p['material'] = mat.setdefault(p['material'], len(mat))
+    j['accessors'] = [j['accessors'][o] for o in sorted(acc, key=acc.get)]
+    j['materials'] = [j['materials'][o] for o in sorted(mat, key=mat.get)]
+    j['meshes'] = meshes
+    print('  ship: plating skins', ', '.join(f'{k} (material {v})' for k, v in sorted(skins.items())))
+    print('  ship: pieces trimmed', ', '.join(str(n['extras']['count']) for n in nodes if n.get('name') == 'trim'))
+
+
 def pack(path):
     j, bin_ = read(path)
+    if os.path.basename(path).startswith('orbital-ship'):
+        ship(j)
     top = next((m for k, m in MAX_FOR.items() if os.path.basename(path).startswith(k)), MAX)
     recoded = set()
     tex_used = sorted(refs(j, 'textures'))

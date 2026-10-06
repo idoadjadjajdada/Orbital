@@ -3,6 +3,7 @@ import type { Body } from '../physics/body';
 import { AU_M, C } from '../physics/units';
 import type { V3 } from '../pixel/sprites';
 import { Hull } from './hull';
+import { load } from './models';
 import { mouthMesh, tickMouth, tunnelMesh, tickTunnel } from './wormhole';
 
 /** the speed of light, m/s */
@@ -94,6 +95,7 @@ export class Ship {
   constructor(scene: THREE.Scene, glow: THREE.Texture) {
     this.hull = new Hull(glow);
     scene.add(this.hull.group);
+    load('orbital-ship').then(m => { if (m) this.hull.useModel(m); });
     this.tunnel = tunnelMesh();
     this.hull.group.add(this.tunnel);
     this.mouthIn = mouthMesh(glow);
