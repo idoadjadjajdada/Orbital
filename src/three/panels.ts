@@ -193,7 +193,7 @@ export class Panels {
 
   // ---------------------------------------------------------------- a rocket
   /** going along on the next flight (you are beside it) */
-  private ride = false;
+  ride = false;
 
   private rocketAct(a: string, id: string) {
     const v = this.v, c = v.fleet.byId(this.craftId), r = c?.rocket;
@@ -204,6 +204,7 @@ export class Panels {
     if (a === 'rcrew') L.crew = Math.max(0, Math.min(spec.seats, L.crew + Number(id)));
     else if (a === 'rsup') L.supplies = Math.max(0, Math.min(room, L.supplies + Number(id)));
     else if (a === 'rrover' && r.kind === 'mammoth') { L.rover = !L.rover; L.supplies = Math.min(L.supplies, spec.holds - (L.rover ? 2 : 0)); }
+    else if (a === 'rinside') { v.visit.enterRocket(c); return; }
     else if (a === 'rride') this.ride = !this.ride && v.rocketNear() === c;
     else if (a === 'rfly' || a === 'rback') { const d = v.fleet.byId(Number(id)); if (d) v.flyRocket(c, d, this.ride && v.rocketNear() === c); }
     else if (a === 'rrun') { const d = v.fleet.byId(Number(id)); if (d) v.routeRocket(c, d); }
@@ -232,6 +233,7 @@ export class Panels {
     h += `<div class="prow"><div><div class="pnm">Supplies: ${L.supplies} hold${L.supplies === 1 ? '' : 's'} (${L.supplies * HOLD_DAYS} days)</div><div class="pdim">food, water, oxygen and parts, for the base or station it flies to</div></div><span class="pbtns"><button data-act="rsup" data-id="-1">−</button><button data-act="rsup" data-id="1">+</button></span></div>`;
     if (r.kind === 'mammoth') h += `<div class="prow"><div><div class="pnm">A rover: ${L.rover ? 'loaded' : 'no'}</div><div class="pdim">takes a deck; it drives off where it lands</div></div><span class="pbtns"><button data-act="rrover"${L.rover ? ' class="on"' : ''}>${L.rover ? '✓ Rover' : 'Rover'}</button></span></div>`;
     const near = v.rocketNear() === c;
+    if (near && v.mode === 'surface') h += `<div class="prow"><div><div class="pnm">Go inside</div><div class="pdim">through its airlock: its decks, its ladders, its seats</div></div><span class="pbtns"><button data-act="rinside">Go inside</button></span></div>`;
     h += `<div class="prow"><div><div class="pnm">Ride along: ${near && this.ride ? 'yes' : 'no'}</div><div class="pdim">${near ? 'you are beside it: climb in and go too' : 'stand beside it to go too'}</div></div><span class="pbtns"><button data-act="rride"${near ? '' : ' disabled'}${near && this.ride ? ' class="on"' : ''}>${near && this.ride ? '✓ Aboard' : 'Go too'}</button></span></div>`;
     // back where it came from
     const home = r.home !== null && r.home !== r.at ? f.byId(r.home) : null;

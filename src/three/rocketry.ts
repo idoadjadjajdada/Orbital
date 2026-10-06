@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { model, clips, type ModelName } from './models';
+import { Interior } from './interior';
 
 /**
  * The rockets: three of them, built from modules, that carry people and
@@ -132,4 +133,66 @@ export function rocketMesh(kind: RocketModel): THREE.Group {
   plume.position.y = 0.2;
   g.add(plume);
   return g;
+}
+
+/** a deck's name, from its module's: "03_PassengerCabin" → "Passenger cabin"; the capsule is the flight deck */
+function deckName(mod: string) {
+  const w = mod.replace(/^\d+_/, '').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
+  return w === 'command capsule' ? 'Flight deck' : w[0].toUpperCase() + w.slice(1);
+}
+
+/**
+ * the inside of a standing rocket, from its model (its group, once loaded):
+ * a round deck over each module's floor, as wide as the floor, up to the next
+ * floor or the top of its hull; the ladders between them, climbed at their
+ * hatches; its airlock doors out; the crates and ladders in the way; a light
+ * on each deck's ceiling. Null until the model is in.
+ */
+export function rocketInterior(rm: THREE.Object3D, name: string): Interior | null {
+  rm.updateMatrixWorld(true);
+  const inv = rm.matrixWorld.clone().invert();
+  // (boxes in the rocket's own frame: each mesh's own box carried into it, not the scene's box of a tilted rocket)
+  const box = (o: THREE.Object3D) => {
+    const b = new THREE.Box3();
+    o.traverse(x => { const m = x as THREE.Mesh; if (!m.isMesh) return; m.geometry.computeBoundingBox(); b.union(m.geometry.boundingBox!.clone().applyMatrix4(inv.clone().multiply(m.matrixWorld))); });
+    return b;
+  };
+  const at = (o: THREE.Object3D) => new THREE.Vector3().setFromMatrixPosition(o.matrixWorld).applyMatrix4(inv);
+  const floors: { mod: string; y: number; r: number; o: THREE.Object3D }[] = [], hulls = new Map<string, THREE.Box3>();
+  rm.traverse(o => {
+    const f = /^(\d+_\w+?)_floor$/.exec(o.name), h = /^(\d+_\w+?)_hull$/.exec(o.name);
+    if (f) { const b = box(o); floors.push({ mod: f[1], y: b.max.y, r: (b.max.x - b.min.x) / 2, o }); }
+    if (h) hulls.set(h[1], box(o));
+  });
+  if (!floors.length) return null;
+  floors.sort((a, b) => a.y - b.y);
+  const I = new Interior(name, false);
+  const decks = floors.map((f, k) => ({ ...f, name: deckName(f.mod), top: k + 1 < floors.length ? floors[k + 1].y - 0.12 : Math.min(f.y + 2.6, hulls.get(f.mod)?.max.y ?? f.y + 2.6) }));
+  const deckOf = (y: number) => decks.findIndex((d, k) => y >= d.y - 0.3 && (k + 1 === decks.length || y < decks[k + 1].y - 0.3));
+  decks.forEach((d, k) => {
+    const disc = { x: 0, z: 0, r: d.r, y0: d.y, y1: d.top };
+    I.discs.push(disc);
+    I.regions.push({ name: d.name, disc });
+    I.lamps.push(new THREE.Vector3(0, d.top - 0.3, 0));
+    if (k + 1 < decks.length) I.addSpot(`r-up:${k}`, new THREE.Vector3(0, d.y + 1.3, -0.45), `Climb up to the ${decks[k + 1].name.toLowerCase()}`);
+    if (k > 0) I.addSpot(`r-down:${k}`, new THREE.Vector3(0, d.y + 0.05, 0), `Climb down to the ${decks[k - 1].name.toLowerCase()}`);
+  });
+  const parts: THREE.Object3D[] = [];
+  rm.traverse(o => parts.push(o));
+  for (const o of parts) {
+    const n = o.name;
+    if (/^DOOR_Airlock/.test(n)) { const p = at(o), k = deckOf(p.y); if (k >= 0) I.addSpot(`r-out:${k}`, new THREE.Vector3(0, decks[k].y + 1.2, p.z - 0.2), 'Step outside'); }
+    else if (/^CARGO_Crate_\d+_\d+(_\d+)?$/.test(n)) { I.solids.push(box(o)); const p = at(o); I.addSpot('r-crate', p.setY(p.y + 0.8), 'A crate of supplies', 1.8); }
+    else if (/_ladder$/.test(n)) I.solids.push(box(o));
+    else if (/^Cargo[ _]management[ _]terminal/.test(n)) I.addSpot('r-cargo', at(o), 'The cargo terminal');
+    else if (/^SEAT_Pilot_01$/.test(n)) { const p = at(o); I.addSpot('r-pilot', p.setY(p.y + 0.9), 'Take the pilot’s seat: where to fly'); }
+    else if (/^SEAT_Passenger_\d+$/.test(n)) { const p = at(o); I.addSpot('r-seat', p.setY(p.y + 0.8), 'A passenger seat', 1.8); }
+    else if (/^Life[ _]support[ _]display/.test(n)) I.addSpot('r-life', at(o), 'Life support');
+  }
+  // in through the lowest airlock, facing in
+  const door = I.spots.find(s => s.id.startsWith('r-out:'));
+  I.floor = decks[0].y;
+  const k0 = door ? Number(door.id.slice(6)) : 0;
+  I.spawn = { p: new THREE.Vector3(0, decks[k0].y, door ? decks[k0].r - 0.65 : 0.6), yaw: 0 };
+  return I;
 }

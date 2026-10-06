@@ -8,6 +8,7 @@ import { BASE, BUILDINGS, at, baseGround, BENCH } from './basecamp';
 import { showSlot } from './growlab';
 import { HATCH_OUT } from './hull';
 import { gravity, atmosphere } from './science';
+import { rocketInterior, HOLD_DAYS } from './rocketry';
 import { bodyQuat, latLonOf } from './ground';
 import { tangent } from './terrain';
 
@@ -61,9 +62,41 @@ export class Visit {
   leave() {
     const a = this.at;
     if (!a) return;
+    if (a.c.rocket) { this.stepOut(0); return; }
     if (this.docked === a.c) this.backAboard();
     else this.spacewalk();
   }
+
+  /** into a standing rocket, through its airlock; its inside built from its model the first time */
+  enterRocket(c: Craft) {
+    const rm = c.mesh.getObjectByName('rocket-model');
+    let I = this.rockets.get(c.id) ?? null;
+    if (!I && rm) { I = rocketInterior(rm, c.name); if (I) this.rockets.set(c.id, I); }
+    if (!I) { this.toast(`${c.name} is not ready to board yet`); return; }
+    this.at = { c, I, p: I.spawn.p.clone(), yaw: I.spawn.yaw, pitch: 0, vel: new THREE.Vector3(), y: 0, vy: 0, cupola: false };
+    this.v.mode = 'inside';
+    this.v.foot.seat = null;
+    this.v.panels.close();
+    this.toast(`Aboard ${c.name}: the ladders join its decks. F to climb, to sit, to step out`);
+  }
+  private rockets = new Map<number, Interior>();
+
+  /** out of a rocket's airlock on deck k, down onto the ground a few metres out from its door, facing away */
+  private stepOut(k: number) {
+    const a = this.at!, c = a.c, v = this.v, R = c.b.r * AU_M;
+    const door = a.I.spots.find(s => s.id === `r-out:${k}`) ?? a.I.spots.find(s => s.id.startsWith('r-out:'));
+    const p = new THREE.Vector3(0, 0, (door?.at.z ?? 1.8) + 3);
+    const n = new THREE.Vector3(...c.n), qn = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), n).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), -c.head));
+    const out = n.clone().multiplyScalar(R).add(p.applyQuaternion(qn)).normalize(), d = new THREE.Vector3(0, 0, 1).applyQuaternion(qn);
+    const [e, nn] = tangent([out.x, out.y, out.z]);
+    const yaw = Math.atan2(-(d.x * e[0] + d.y * e[1] + d.z * e[2]), d.x * nn[0] + d.y * nn[1] + d.z * nn[2]);
+    this.drop();
+    v.toSurface([out.x, out.y, out.z], yaw);
+    this.toast(`Out of ${c.name}, down its steps`);
+  }
+
+  /** gone from inside (a rocket you were in has lifted off with you, say): the lights off */
+  drop() { this.at = null; this.lamps.forEach(l => { l.intensity = 0; }); }
 
   private backAboard() { this.at = null; this.lamps.forEach(l => { l.intensity = 0; }); this.v.board(); }
 
@@ -85,6 +118,17 @@ export class Visit {
     const a = this.at, v = this.v;
     if (!a) return;
     if (!a.c.b.alive || a.c.state === 'lost') { this.at = null; v.mode = 'eva'; return; }
+    if (a.c.rocket && (a.c.rocket.trip || a.c.rocket.docked)) {
+      // it has lifted off with you inside: strapped in, the way you would have been
+      const c = a.c;
+      this.drop();
+      v.mode = 'surface';
+      c.rocket!.aboard = true;
+      v.viewCraft(c.id);
+      if (v.craftView) v.craftView.seat = 'cockpit';
+      this.toast(`${c.name} is lifting off with you aboard: strapped in`);
+      return;
+    }
     const I = a.I;
     if (a.cupola) return;
     if (I.zeroG) {
@@ -102,7 +146,7 @@ export class Visit {
       const inp = v.controls.walkInput(), sp = inp.run ? 4.5 : 2.2;
       const fx = -Math.sin(a.yaw), fz = -Math.cos(a.yaw), rx = Math.cos(a.yaw), rz = -Math.sin(a.yaw);
       const dx = (fx * inp.f + rx * inp.s) * sp * dt, dz = (fz * inp.f + rz * inp.s) * sp * dt;
-      const mid = (x: number, z: number) => new THREE.Vector3(x, I.floor + 1, z);
+      const mid = (x: number, z: number) => new THREE.Vector3(x, a.p.y + 1, z);
       if (I.canBe(mid(a.p.x + dx, a.p.z), 0.3)) a.p.x += dx;
       if (I.canBe(mid(a.p.x, a.p.z + dz), 0.3)) a.p.z += dz;
       const g = gravity(a.c.b);
@@ -117,7 +161,7 @@ export class Visit {
   eye() {
     const a = this.at!;
     if (a.cupola) return new THREE.Vector3(STATION.cupola.x, STATION.cupola.y - 0.45, STATION.cupola.z);
-    return a.I.zeroG ? a.p.clone() : new THREE.Vector3(a.p.x, a.I.floor + 1.65 + a.y, a.p.z);
+    return a.I.zeroG ? a.p.clone() : new THREE.Vector3(a.p.x, a.p.y + 1.65 + a.y, a.p.z);
   }
 
   /** where the viewer is: called by the view's place() */
@@ -132,7 +176,7 @@ export class Visit {
     this.lamps.forEach((l, k) => {
       const n = near[k];
       if (!n) { l.intensity = 0; return; }
-      l.intensity = a.I.zeroG ? 7 : 12;
+      l.intensity = a.I.zeroG ? 7 : a.c.rocket ? 5 : 12;
       l.distance = a.I.zeroG ? 8 : 14;
       l.position.copy(n.p).sub(e).applyQuaternion(q);
     });
@@ -198,10 +242,11 @@ export class Visit {
   }
 
   /** the part you are in, for the readout */
-  room() { const a = this.at; return a ? (a.cupola ? 'The Cupola' : a.I.where(a.p.clone().setY(a.I.zeroG ? a.p.y : a.I.floor + 1))) : ''; }
+  room() { const a = this.at; return a ? (a.cupola ? 'The Cupola' : a.I.where(a.p.clone().setY(a.I.zeroG ? a.p.y : a.p.y + 1))) : ''; }
 
   private use(id: string, c: Craft) {
     const a = this.at!, v = this.v, b = c.b;
+    if (id.startsWith('r-')) { this.rocketUse(id, c); return; }
     if (id.startsWith('monitor:')) {
       v.feeds.target = `${c.id}:${id.slice(8)}`;
       const on = v.feeds.showing(v.feeds.target), cr = on !== null ? v.fleet.byId(on) : null;
@@ -250,6 +295,30 @@ export class Visit {
       default: this.toast(id);
     }
     void R;
+  }
+
+  /** what there is to use inside a rocket: its ladders, its airlock, its seats and its cargo */
+  private rocketUse(id: string, c: Craft) {
+    const a = this.at!, I = a.I, v = this.v, r = c.rocket!, L = r.load;
+    const [what, n] = id.split(':'), k = Number(n);
+    const deck = (j: number) => I.discs[j];
+    switch (what) {
+      case 'r-up': case 'r-down': {
+        const j = what === 'r-up' ? k + 1 : k - 1, d = deck(j);
+        if (!d) return;
+        // off the ladder at the hatch, a step to the side of it
+        a.p.set(0, d.y0, 0.45); a.y = 0; a.vy = 0;
+        // (facing away from the ladder: the way the pilots and the doors face)
+        a.yaw = Math.PI; a.pitch = 0;
+        this.toast(I.where(new THREE.Vector3(0, d.y0 + 1, 0)));
+        break;
+      }
+      case 'r-out': this.stepOut(k); break;
+      case 'r-pilot': v.panels.ride = true; v.panels.show('rocket', c.id); break;
+      case 'r-seat': this.toast(r.load.crew ? `${L.crew} of the seats are taken for the next flight` : 'Empty for now: load crew from the pilot’s seat, and they will be strapped in here'); break;
+      case 'r-crate': case 'r-cargo': this.toast(`Cargo: ${L.supplies} hold${L.supplies === 1 ? '' : 's'} of supplies (${L.supplies * HOLD_DAYS} days for six)${L.rover ? ', and a rover' : ''}${L.crew ? `, crew of ${L.crew}` : ''}`); break;
+      case 'r-life': this.toast('Life support: cabin at 101 kPa and 21 °C, scrubbers on, suits stowed under the seats'); break;
+    }
   }
 
   /** the growth lab's chambers: their plants as they are now, their labels, and a harvest into the log */
@@ -380,7 +449,7 @@ export class Visit {
   screens(dt: number) {
     const a = this.at, near = a ? null : this.baseNear(60);
     const c = a?.c ?? near, I = a?.I ?? near?.inside;
-    if (!c || !I) return;
+    if (!c || !I || c.rocket) return;
     this.screenT -= dt;
     I.update(performance.now() / 1000);
     if (this.screenT > 0) return;

@@ -1248,7 +1248,8 @@ export class View3D {
   }
 
   rocketNear() {
-    const S = this.surf;
+    const S = this.surf, inside = this.mode === 'inside' ? this.visit.at?.c : null;
+    if (inside?.rocket) return !inside.rocket.trip && !inside.rocket.docked ? inside : null;
     if (this.mode !== 'surface' || !S.b) return null;
     const R = S.b.r * AU_M;
     return this.fleet.crafts.find(c => c.rocket && !c.rocket.trip && !c.rocket.docked && c.b === S.b && c.build >= 1 && arc(c.n, S.n) * R < 9) ?? null;
@@ -1272,6 +1273,7 @@ export class View3D {
     if (why) { this.app.onToast(why); return; }
     this.panels.close();
     if (ride) {
+      if (this.visit.at) { this.visit.drop(); this.mode = 'surface'; }
       c.rocket!.aboard = true;
       this.viewCraft(c.id);
       this.craftView!.seat = 'cockpit'; this.craftView!.yaw = 0; this.craftView!.pitch = 0;

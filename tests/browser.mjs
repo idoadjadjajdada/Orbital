@@ -503,6 +503,34 @@ try {
   await page.evaluate(() => { const v = window.orbital.v3, f = v.fleet, c = f.crafts.find(x => x.rocket?.kind === 'wayfarer'); v.toSurface(f.offset(c.n, 7, c.head + Math.PI / 2, c.b.r * 1.495978707e11), c.head - Math.PI / 2); });
   ok('beside it, it can be flown', await until(page, () => /^The Wayfarer 1: load it, fly it, ride it/.test(window.orbital.v3.prompt?.label ?? '')));
   ok('its doors and hatches open as you come up to it', await page.waitForFunction(() => window.orbital.v3.fleet.crafts.find(x => x.rocket?.kind === 'wayfarer').rocket.doors >= 1, null, { timeout: 30000 }).then(() => true, () => false));
+  // inside it: in through its airlock, up its ladders, out again
+  await page.keyboard.press('KeyF');
+  await page.waitForSelector('.panel3 button[data-act="rinside"]', { timeout: 30000 });
+  await page.click('.panel3 button[data-act="rinside"]');
+  ok('you can go inside it, into its service bay', await until(page, () => window.orbital.v3.mode === 'inside' && window.orbital.v3.visit.room() === 'Service bay'));
+  await page.keyboard.down('KeyW');
+  ok('you walk about its deck', await page.waitForFunction(() => window.orbital.v3.visit.at.p.z < 0.7, null, { timeout: 30000 }).then(() => true, () => false));
+  await page.keyboard.up('KeyW');
+  ok('the crates are in the way', await page.evaluate(() => { const I = window.orbital.v3.visit.at.I, V = window.orbital.v3.camera.position.constructor; return !I.canBe(new V(-1.07, 7.28, -0.55), 0.3) && I.canBe(new V(0, 7.28, 1), 0.3); }));
+  ok('its ladder goes up', await until(page, () => /^Climb up to the passenger cabin/.test(window.orbital.v3.prompt?.label ?? '')));
+  await page.keyboard.press('KeyF');
+  ok('up into the passenger cabin, and on to the flight deck', await until(page, () => window.orbital.v3.visit.room() === 'Passenger cabin') && await page.evaluate(() => { const v = window.orbital.v3; v.visit.use('r-up:1', v.visit.at.c); return v.visit.room() === 'Flight deck'; }));
+  ok('the pilot\'s seat is where it is flown from', await page.evaluate(() => { const v = window.orbital.v3; v.visit.use('r-pilot', v.visit.at.c); const ok = !!document.querySelector('.panel3 button[data-act="rfly"]'); v.panels.close(); return ok; }));
+  ok('down the ladders and out of the airlock, beside it', await page.evaluate(() => {
+    const v = window.orbital.v3, c = v.visit.at.c;
+    v.visit.use('r-down:2', c); v.visit.use('r-down:1', c);
+    if (v.visit.room() !== 'Service bay') return false;
+    v.visit.use('r-out:0', c);
+    const d = Math.acos(Math.min(1, c.n[0] * v.surf.n[0] + c.n[1] * v.surf.n[1] + c.n[2] * v.surf.n[2])) * c.b.r * 1.495978707e11;
+    return v.mode === 'surface' && d > 3 && d < 8;
+  }));
+  ok('each rocket\'s decks, from its model', await page.evaluate(async () => {
+    const { rocketInterior } = await import('/src/three/rocketry.ts'), { load } = await import('/src/three/models.ts');
+    const n = [];
+    for (const k of ['courier', 'wayfarer', 'mammoth']) { const m = await load(`rocket-${k}`), I = rocketInterior(m, k); n.push(I.discs.length, I.spots.filter(s => s.id.startsWith('r-out')).length, I.spots.filter(s => s.id === 'r-crate').length); }
+    return n.join() === '2,1,2,3,2,2,3,2,8';
+  }));
+  await until(page, () => /^The Wayfarer 1/.test(window.orbital.v3.prompt?.label ?? ''));
   await page.keyboard.press('KeyF');
   ok('F opens its panel: load and destinations', await until(page, () => !!document.querySelector('.panel3 button[data-act="rfly"]')));
   for (const sel of ['button[data-act="rcrew"][data-id="1"]', 'button[data-act="rcrew"][data-id="1"]', 'button[data-act="rsup"][data-id="1"]']) await page.click(`.panel3 ${sel}`);

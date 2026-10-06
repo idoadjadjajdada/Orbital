@@ -28,6 +28,8 @@ export class Interior {
   /** the spaces you can be in: a body's middle must be inside one of these */
   readonly boxes: THREE.Box3[] = [];
   readonly discs: Disc[] = [];
+  /** things in the way inside those spaces (a rocket's crates and ladders) */
+  readonly solids: THREE.Box3[] = [];
   /** named parts, for "where am I" */
   readonly regions: Region[] = [];
   /** the monitors that can carry a craft's camera (feeds.ts) */
@@ -45,6 +47,7 @@ export class Interior {
 
   /** can a body of radius r have its middle at p? */
   canBe(p: THREE.Vector3, r = 0.25) {
+    for (const b of this.solids) if (p.x > b.min.x - r && p.x < b.max.x + r && p.z > b.min.z - r && p.z < b.max.z + r && p.y + 0.6 > b.min.y && p.y - 0.9 < b.max.y) return false;
     for (const b of this.boxes) if (p.x > b.min.x + r && p.x < b.max.x - r && p.y > b.min.y + (this.zeroG ? r : -0.01) && p.y < b.max.y - r && p.z > b.min.z + r && p.z < b.max.z - r) return true;
     for (const d of this.discs) if (Math.hypot(p.x - d.x, p.z - d.z) < d.r - r && p.y >= d.y0 - 0.01 && p.y < d.y1 - r) return true;
     return false;
@@ -54,7 +57,7 @@ export class Interior {
   where(p: THREE.Vector3) {
     for (const g of this.regions) {
       if (g.box && g.box.containsPoint(p)) return g.name;
-      if (g.disc && Math.hypot(p.x - g.disc.x, p.z - g.disc.z) < g.disc.r) return g.name;
+      if (g.disc && Math.hypot(p.x - g.disc.x, p.z - g.disc.z) < g.disc.r && p.y >= g.disc.y0 - 0.01 && p.y < g.disc.y1) return g.name;
     }
     return this.name;
   }
