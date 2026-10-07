@@ -76,7 +76,9 @@ export function drawAccretion(ctx: CanvasRenderingContext2D, b: Body, x: number,
       const T = Math.pow(x2, 0.75) * Math.pow(Math.max(0, 1 - Math.sqrt(x2)), 0.25) / 0.488;
       // the gas carried round, two looks faded together so the shear never builds
       const lr = Math.log(r), phi = Math.atan2(v, u), w = 0.9 * Math.pow(r, -1.5);
-      const g1 = gas(phi - w * (p1 - 0.5) * PERIOD, lr), g2 = gas(phi - w * (p2 - 0.5) * PERIOD, lr);
+      // (a texel's width in log radius: streaks finer than that are averaged away, not aliased into ripples)
+      const fw = (2 * rOut) / (N * r);
+      const g1 = gas(phi - w * (p1 - 0.5) * PERIOD, lr, fw), g2 = gas(phi - w * (p2 - 0.5) * PERIOD, lr, fw);
       const g0 = g1 + (g2 - g1) * wmix;
       // Doppler: the gas's speed along the line of sight (toward the eye is +z)
       const vz = (-Math.sin(phi) * e1[2] + Math.cos(phi) * e2[2]);
@@ -108,11 +110,17 @@ export function drawAccretion(ctx: CanvasRenderingContext2D, b: Body, x: number,
   ctx.imageSmoothingEnabled = prevSmooth;
 }
 
-function gas(phi: number, lr: number) {
-  // drawn out round the hole into streaks, wandering a little in radius
-  const cx = Math.cos(phi), sy = Math.sin(phi);
+function gas(phi: number, lr: number, fw: number) {
+  // drawn out round the hole into streaks, wandering a little in radius; each scale of streak only where a
+  // texel is fine enough to show it (otherwise its average)
+  // (wound into spirals by the shear, as in 3D)
+  const cx = Math.cos(phi + 2.2 * lr), sy = Math.sin(phi + 2.2 * lr);
   const w = (vnoise(cx * 2.2 + 11, sy * 2.2, lr * 3) - 0.5) * 0.35;
-  return vnoise(cx * 2.4, sy * 2.4, (lr + w) * 30) * 0.5 + vnoise(cx * 4.5 + 7, sy * 4.5, (lr + w * 0.6) * 85) * 0.35 + vnoise(cx * 9 + 3, sy * 9, lr * 150) * 0.15;
+  const k = (f: number) => Math.max(0, Math.min(1, (0.45 - fw * f) / 0.3));
+  const k1 = k(12), k2 = k(30), k3 = k(60);
+  return (0.5 + k1 * (vnoise(cx * 2.4, sy * 2.4, (lr + w) * 12) - 0.5)) * 0.5
+    + (0.5 + k2 * (vnoise(cx * 4.5 + 7, sy * 4.5, (lr + w * 0.6) * 30) - 0.5)) * 0.35
+    + (0.5 + k3 * (vnoise(cx * 9 + 3, sy * 9, lr * 60) - 0.5)) * 0.15;
 }
 
 // ------------------------------------------------------------------ a nebula's shell, on the map

@@ -622,6 +622,13 @@ try {
   await page.waitForFunction(() => window.orbital.v3?.active, null, { timeout: 30000 });
   await page.evaluate(() => { const a = window.orbital; a.clear(); a.armed = 'ton618'; const b = a.place({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 0 }); a.armed = null; a.select(b); });
   ok('a quasar has its lensed disc out to its gas, and its jets', await until(page, () => { const a = window.orbital, o = a.v3.objs.get(a.selected); return !!o?.hole && o.hole.outer > 100 && o.hole.jets.visible; }));
+  // into it: through the horizon there is no way back, down to the singularity, and out again by the game's grace
+  ok('through a black hole\'s horizon, you fall in', await page.evaluate(() => {
+    const a = window.orbital, v = a.v3, b = a.selected, G = (0.01720209895 * 365.25) ** 2, C = 299792458 * 365.25 * 86400 / 1.495978707e11, rs = 2 * G * b.m / (C * C);
+    v.mode = 'pilot'; v.travel = null; v.ship.nav.anchor = b; v.ship.nav.off = [0.97 * rs, 0, 0]; v.ship.nav.vel = [0, 0, 0];
+    return true;
+  }) && await until(page, () => { const v = window.orbital.v3; return !!v.fall && /inside the horizon/.test(v.readout().drive); }));
+  ok('and at the singularity you are put back outside', await page.evaluate(() => { const v = window.orbital.v3; v.fall.t = v.fall.dur; return true; }) && await until(page, () => { const a = window.orbital, v = a.v3, b = a.selected, p = v.where(); return !v.fall && v.logbook.finds.some(f => /singularity/.test(f.what)) && Math.hypot(p[0] - b.x, p[1] - b.y, p[2] - b.z) > 30 * b.r; }));
   clean('giant');
   }
 

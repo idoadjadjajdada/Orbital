@@ -118,9 +118,11 @@ export function bakeSprite(p: SpriteIn): { size: number; data: Uint8ClampedArray
         const n: V3 = [u, v, zp];
         const nb: V3 = [dot(n, bx), dot(n, by), dot(n, bz)];
         if (p.cls === 'bh') {
-          // the shadow, with the photon ring a pixel wide at its edge
-          const edge = Math.max(0, 1 - Math.abs(Math.sqrt(rr) - (1 - 1.5 / d)) * d * 0.7);
-          r = edge; g = edge * 0.7; b = edge * 0.4; a = cover;
+          // the shadow, with the photon ring at its edge: a thin glow of wound-round starlight, warm white,
+          // fading inward over a few percent of its radius (not a drawn outline)
+          const x = (1 - Math.sqrt(rr)) * d;
+          const edge = 0.5 * Math.exp(-(x * x) / 1.8) + 0.1 * Math.exp(-x / Math.max(1, 0.05 * d));
+          r = edge; g = edge * 0.84; b = edge * 0.66; a = cover;
         } else if (isStar) {
           const mu = zp;
           let I = 1 - 0.55 * (1 - mu) - 0.25 * (1 - mu) ** 2;

@@ -1992,7 +1992,67 @@ export class View3D {
   }
 
   /** the ship under its own power: the autopilot, the pilot, or holding station when nobody is at the helm */
+  /** falling through a black hole's horizon to its singularity: which hole, from where (unit, from it), how far in it started (horizon radii), how long it has taken (s) and will take on screen, and in your own time */
+  fall: { b: Body; dir: V3; r0: number; t: number; dur: number; tau: number } | null = null;
+  private tideWarned = new Set<Body>();
+
+  /** a span of your own time, however short (a stellar hole's fall takes microseconds) */
+  private ownTime(s: number) { return s < 1e-3 ? `${sig(s * 1e6)} µs` : s < 1 ? `${sig(s * 1e3)} ms` : fmtTime(s); }
+
+  /** a hole the ship is near: through its horizon, the fall begins; near enough to feel its tide, a warning */
+  private holeCheck(p: V3) {
+    for (const b of this.app.visual) {
+      if (b.cls !== 'bh' || b.look.wormhole || b.look.white || !b.alive) continue;
+      const rs = schwarzschild(b.m), d = Math.hypot(p[0] - b.x, p[1] - b.y, p[2] - b.z);
+      if (d > 50 * rs) continue;
+      // (the pull on your head and feet, two metres apart, differs by 4GM/r³ per metre: tens of g and you are torn)
+      const GM = 6.674e-11 * b.m * 1.98847e30, tide = (4 * GM) / (d * AU_M) ** 3;
+      if (tide > 50 * 9.81 && !this.tideWarned.has(b)) {
+        this.tideWarned.add(b);
+        this.app.onToast(`${b.name}'s tide here pulls head and feet apart at ${sig(tide / 9.81)} g: a body would be spaghettified. You carry on as if not`);
+      }
+      if (d < rs) { this.startFall(b, p, d / rs); return; }
+    }
+  }
+
+  private startFall(b: Body, p: V3, r0: number) {
+    const rs = schwarzschild(b.m), d = Math.hypot(p[0] - b.x, p[1] - b.y, p[2] - b.z) || 1e-30;
+    // the time aboard from here to the singularity, falling in from far off: (2/3)(r_s/c) r^3/2
+    const tau = (2 / 3) * (rs * AU_M / 299792458) * Math.pow(r0, 1.5), dur = Math.max(25, Math.min(120, tau));
+    this.fall = { b, dir: [(p[0] - b.x) / d, (p[1] - b.y) / d, (p[2] - b.z) / d], r0, t: 0, dur, tau };
+    this.travel = null;
+    this.ship.coast = true;
+    this.ship.nav.vel = [0, 0, 0];
+    this.app.onToast(`Through the horizon of ${b.name}: there is no way back out. ${this.ownTime(tau)} of your own time to the singularity${tau < dur ? ', shown slowed down' : tau > dur ? ', shown faster' : ''}`);
+  }
+
+  /** inside the horizon: on in, whatever the engines do; the view is the hole's tracer's, from an eye falling with you */
+  private falling(dt: number) {
+    const f = this.fall!, b = f.b, n = this.ship.nav, rs = schwarzschild(b.m);
+    if (!b.alive) { this.fall = null; return; }
+    f.t += dt;
+    const s = Math.min(1, f.t / f.dur), r = f.r0 * Math.pow(1 - s, 2 / 3);
+    const a = n.anchor;
+    n.off = [b.x + f.dir[0] * r * rs - (a?.x ?? 0), b.y + f.dir[1] * r * rs - (a?.y ?? 0), b.z + f.dir[2] * r * rs - (a?.z ?? 0)];
+    n.vel = [0, 0, 0];
+    this.ship.thrust = 0;
+    if (s >= 1) this.singularity();
+  }
+
+  /** where the equations stop: what happens there no one knows. The ship is put back outside */
+  private singularity() {
+    const f = this.fall!, b = f.b, n = this.ship.nav, rs = schwarzschild(b.m), a = n.anchor;
+    this.fall = null;
+    n.off = [b.x + f.dir[0] * 40 * rs - (a?.x ?? 0), b.y + f.dir[1] * 40 * rs - (a?.y ?? 0), b.z + f.dir[2] * 40 * rs - (a?.z ?? 0)];
+    n.vel = [0, 0, 0];
+    this.ship.coast = false;
+    this.ship.flash = 1;
+    this.logbook.finds.push({ what: `The singularity of ${b.name}`, note: `Fell through the horizon and down to it: ${this.ownTime(f.tau)} of your own time`, where: b.name });
+    this.app.onToast(`The singularity. Here the equations stop, and no one knows what happens. Put back outside, ${(40 * rs * AU_M / 1000).toPrecision(3)} km out`);
+  }
+
   private fly(dt: number) {
+    if (this.fall) { this.falling(dt); return; }
     const sh = this.ship, n = sh.nav, v = n.vel;
     const t = this.travel;
     const tb = t?.b;
@@ -2057,7 +2117,8 @@ export class View3D {
       const out = this.app.world.bodies.find(q => q.id === near.b!.partnerId && q.alive);
       if (out) { this.throughNatural(near.b, out); return; }
     }
-    this.clear(n, SHIP_CLEAR);
+    this.holeCheck(posOf(n));
+    if (!this.fall) this.clear(n, SHIP_CLEAR);
   }
 
   /** never inside anything: keep a mover `gap` m above the nearest surface */
@@ -2065,6 +2126,8 @@ export class View3D {
     const p = posOf(m);
     const { b, alt } = this.nearest(p);
     if (!b || alt >= gap) return;
+    // (a black hole has no surface to stop at: through its horizon you fall in)
+    if (b.cls === 'bh' && !b.look.wormhole && !b.look.white && m === this.ship.nav) return;
     const d: V3 = [p[0] - b.x, p[1] - b.y, p[2] - b.z];
     const dl = Math.hypot(d[0], d[1], d[2]) || 1;
     let R = this.visR(b) + gap / AU_M + (b === this.ground.body ? this.groundUnder(b, p) / AU_M : 0);
@@ -2274,7 +2337,8 @@ export class View3D {
       if (!sh.worm) tgt += ` · ~${fmtTime(this.eta(d))}`;
     }
     const w = sh.worm;
-    const drive = w ? (w.phase === 'charge' ? `wormhole opening · ${Math.max(0, JUMP_CHARGE - w.t).toFixed(1)} s`
+    const F = this.fall, fr = F ? F.r0 * Math.pow(1 - Math.min(1, F.t / F.dur), 2 / 3) : 0;
+    const drive = F ? `inside the horizon · ${fr.toFixed(fr < 0.1 ? 3 : 2)} r_s · ${this.ownTime(F.tau * (1 - Math.min(1, F.t / F.dur)))} to the singularity` : w ? (w.phase === 'charge' ? `wormhole opening · ${Math.max(0, JUMP_CHARGE - w.t).toFixed(1)} s`
       : w.phase === 'enter' ? `into the wormhole` : w.phase === 'tunnel' ? `in the throat · ${w.to.name} in ${Math.max(0, w.dur - w.t).toFixed(0)} s` : `out of the wormhole`)
       : this.landing ? (this.landing.phase === 'down' ? `landing · ${this.landing.alt < 1000 ? `${Math.max(0, this.landing.alt - LAND_H).toFixed(0)} m` : `${(this.landing.alt / 1000).toFixed(1)} km`} to go` : this.landing.phase === 'up' ? 'lifting off' : `landed on ${this.landing.b.name}`)
       : this.travel ? `autopilot → ${this.travel.name}${sh.odLevel > 0 ? ` · overdrive ${(sh.odLevel * 100).toFixed(0)}%` : ''}`
@@ -2662,7 +2726,10 @@ export class View3D {
     const axis = new THREE.Vector3(...(st?.axis ?? [0, 0, 1]));
     // stellar holes' discs are hotter (X-ray bright); a quasar's runs cooler at the same brightness
     const hue = b.m < 1e3 ? 1 : 0.4;
-    look.update(axis, glow, jet, this.camera, this.renderer.getDrawingBufferSize(new THREE.Vector2()), (now / 1000) % 4200, hue);
+    // the eye's frame: falling in with the ship (inside its horizon, or coasting), or held still against the pull
+    const P = this.where(), rEye = Math.hypot(P[0] - b.x, P[1] - b.y, P[2] - b.z) / rs;
+    const falls = this.fall?.b === b || (this.ship.coast && (this.mode === 'pilot' || this.mode === 'walk'));
+    look.update(axis, glow, jet, this.camera, this.renderer.getDrawingBufferSize(new THREE.Vector2()), (now / 1000) % 4200, hue, falls ? 1 / Math.sqrt(Math.max(1e-4, rEye)) : -1);
   }
 
 

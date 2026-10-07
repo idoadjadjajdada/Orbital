@@ -49,6 +49,9 @@ uniform float glow;
 uniform float time;
 uniform float hue;
 uniform float glare;
+/** the eye's frame close to the hole: <0 holding still against its pull (a static observer); ≥0 falling freely
+ *  from far off, at this speed (in c) relative to the still frame: √(r_s/r) */
+uniform float fallB;
 /** the sky at infinity, and the turn from the disc's frame to the world's, to look it up in */
 uniform samplerCube sky;
 uniform mat3 localToWorld;
@@ -60,16 +63,22 @@ float vnoise3(vec3 x) {
              mix(mix(hash3(i + vec3(0, 0, 1)), hash3(i + vec3(1, 0, 1)), f.x), mix(hash3(i + vec3(0, 1, 1)), hash3(i + vec3(1, 1, 1)), f.x), f.y), f.z);
 }
 vec2 turn(vec2 p, float a) { float c = cos(a), s = sin(a); return vec2(c * p.x - s * p.y, s * p.x + c * p.y); }
+/** the angle a pixel spans, and the distance from the eye to where the ray met the disc: a pixel's width there */
+uniform float pxAng;
+float fw = 0.0;
 /** the gas at radius r, carried round k seconds' worth at its orbital speed */
 float gas(vec2 q, float r, float k) {
   // drawn out round the hole into fine streaks, as shear does: slow to change round it, fast across radius
-  vec2 u = turn(q, -0.9 * pow(r, -1.5) * k) / r;
+  // (and wound into spirals, as the shear winds every clump that forms: not rings, like a tree's)
   float lr = log(r);
+  vec2 u = turn(q, -0.9 * pow(r, -1.5) * k + 2.2 * lr) / r;
   // (the radius wobbled a little round the hole, so the streaks wander rather than ring like a tree's)
   float w = (vnoise3(vec3(u * 2.2 + 11.0, lr * 3.0)) - 0.5) * 0.35;
-  float s1 = vnoise3(vec3(u * 2.4, (lr + w) * 30.0));
-  float s2 = vnoise3(vec3(u * 4.5 + 7.0, (lr + w * 0.6) * 85.0));
-  float s3 = vnoise3(vec3(u * 9.0 + 3.0, lr * 150.0));
+  // (each scale of streak only where a pixel is fine enough to show it, else its average: no moiré from afar)
+  float k1 = clamp((0.45 - fw * 30.0) / 0.3, 0.0, 1.0), k2 = clamp((0.45 - fw * 85.0) / 0.3, 0.0, 1.0), k3 = clamp((0.45 - fw * 150.0) / 0.3, 0.0, 1.0);
+  float s1 = 0.5 + k1 * (vnoise3(vec3(u * 2.4, (lr + w) * 30.0)) - 0.5);
+  float s2 = 0.5 + k2 * (vnoise3(vec3(u * 4.5 + 7.0, (lr + w * 0.6) * 85.0)) - 0.5);
+  float s3 = 0.5 + k3 * (vnoise3(vec3(u * 9.0 + 3.0, lr * 150.0)) - 0.5);
   return s1 * 0.5 + s2 * 0.35 + s3 * 0.15;
 }
 /** the colour of the disc's light, by how bright it is: deep red, orange, gold, to near white at the brightest */
@@ -101,6 +110,12 @@ vec4 discAt(vec3 q, vec3 d) {
   float a = clamp(vb * 1.6, 0.0, 1.0) * edge;
   return vec4(fire(vb), a);
 }
+/** light shifted by g (its frequency seen ÷ sent): brighter and bluer above 1, dimmer and redder below */
+vec3 shifted(vec3 c, float g) {
+  // (the brightness by g² rather than the g⁴ a meter would read, so a dimmed sky still shows; the colour by the shift)
+  g = clamp(g, 0.0, 6.0);
+  return c * vec3(pow(g, 1.4), pow(g, 2.0), pow(g, 2.6));
+}
 void main() {
   #include <logdepthbuf_fragment>
   // the ray through this pixel, exactly, from the screen position (not interpolated across the sphere's triangles)
@@ -111,23 +126,62 @@ void main() {
   float b = dot(p, d), c = dot(p, p) - RB * RB, disc = b * b - c;
   if (disc < 0.0) discard;
   p += d * max(0.0, -b - sqrt(disc));
+  // close in, the eye's own frame matters: a direction it looks along is a different ray of light for an eye held
+  // still than for one falling in (aberration), and the light it sees shifted. From the ray's impact parameter
+  // (L/E) and which way it goes, the direction to set off in the tracer's coordinates (whose flat start would
+  // otherwise be the light's direction far off): 1/b² = 1/h² − 1/r³. Inside the horizon nothing holds still, so
+  // the eye falls; and light that came up to it from below with negative energy came from where the hole formed:
+  // dark.
+  float r0 = length(p), gobs = 1.0;
+  bool inside = r0 < RB * 0.999, dark = false;
+  if (inside) {
+    vec3 rh = p / r0;
+    float k1 = dot(d, rh);
+    vec3 kp = d - k1 * rh;
+    float kpl = length(kp);
+    vec3 th = kpl > 1e-6 ? kp / kpl : normalize(cross(rh, abs(rh.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0)));
+    float bb, sgn;
+    float fb = fallB >= 0.0 ? fallB : (r0 <= 1.0 ? 1.0 / sqrt(r0) : -1.0);
+    if (fb >= 0.0) {
+      float den = 1.0 + fb * k1;
+      dark = den <= 0.0;
+      bb = r0 * kpl / max(den, 1e-6);
+      sgn = k1 + fb >= 0.0 ? 1.0 : -1.0;
+      gobs = 1.0 / max(den, 1e-6);
+    } else {
+      float s = sqrt(max(1e-6, 1.0 - 1.0 / r0));
+      bb = r0 * kpl / s;
+      sgn = k1 >= 0.0 ? 1.0 : -1.0;
+      gobs = 1.0 / s;
+    }
+    float u = 1.0 / r0;
+    float hh = bb > 1e-9 ? 1.0 / sqrt(1.0 / (bb * bb) + u * u * u) : 0.0;
+    float sa = clamp(hh / r0, 0.0, 1.0);
+    d = normalize(sgn * sqrt(1.0 - sa * sa) * rh + sa * th);
+  }
+  if (dark) { gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
   vec3 d0 = d;
   vec3 h = cross(p, d);
   float h2 = dot(h, h);
   vec3 col = vec3(0.0);
   float alpha = 0.0, rMin = 1e9;
+  bool wasIn = dot(p, d) < 0.0;
   bool fell = false;
   // velocity Verlet: the path is a chain of parabolas meeting smoothly, so a ray grazing the disc
   // crosses it where its neighbours do, with no seams where the steps fall differently
   vec3 acc = -1.5 * h2 * p / pow(length(p), 5.0);
-  for (int i = 0; i < 240; i++) {
+  for (int i = 0; i < 320; i++) {
     float r = length(p);
-    rMin = min(rMin, r);
-    if (r < 1.0) { fell = true; break; }
-    float dt = max(0.012, 0.035 * r * r / (r + 2.0));
+    // (closest approach: where the ray turns from coming in to going out; an eye close in is not itself one)
+    float pd = dot(p, d);
+    if (pd >= 0.0 && i > 0 && wasIn) rMin = min(rMin, r);
+    wasIn = pd < 0.0;
+    // (a ray from an eye inside the horizon starts below it, on its way out)
+    if (r < 1.0 && dot(p, d) < 0.0) { fell = true; break; }
+    float dt = r > 1.2 ? max(0.012, 0.035 * r * r / (r + 2.0)) : max(0.0008, 0.05 * r);
     vec3 pn = p + d * dt + 0.5 * acc * dt * dt;
     float rn = length(pn);
-    vec3 an = -1.5 * h2 * pn / pow(max(rn, 0.5), 5.0);
+    vec3 an = -1.5 * h2 * pn / pow(max(rn, 1e-3), 5.0);
     if (glow > 0.0 && p.z * pn.z <= 0.0) {
       // where on this parabola it meets the disc's plane
       float A = 0.5 * acc.z, B = d.z, C = p.z, t;
@@ -141,6 +195,8 @@ void main() {
       vec3 q = p + d * t + 0.5 * acc * t * t;
       float rq = length(q.xy);
       if (rq > rIn * 0.95 && rq < rOut) {
+        // (the footprint in log radius: the pixel's width there, over the radius)
+        fw = pxAng * (length(q - camL) + 1.0) / rq;
         vec4 e = discAt(q, normalize(d + acc * t));
         col += (1.0 - alpha) * e.rgb * e.a;
         alpha += (1.0 - alpha) * e.a;
@@ -157,7 +213,7 @@ void main() {
   // (only where the bending shows: further out the real sky, and what is in front of it, shows through)
   if (!fell && alpha < 0.999) {
     float defl = acos(clamp(dot(normalize(d), d0), -1.0, 1.0));
-    float a = smoothstep(0.01, 0.06, defl);
+    float a = inside ? 1.0 : smoothstep(0.01, 0.06, defl);
     col += (1.0 - alpha) * textureCube(sky, normalize(localToWorld * normalize(d))).rgb * a;
     alpha += (1.0 - alpha) * a;
   }
@@ -167,6 +223,8 @@ void main() {
   col += (1.0 - alpha) * vec3(1.0, 0.62, 0.3) * ring;
   alpha = max(alpha, min(1.0, ring));
   if (fell) alpha = 1.0;
+  // seen from close in, all of it shifted by the eye's own motion and depth in the well
+  if (inside) col = shifted(col, gobs);
   // the glare of the inner disc, round the hole's direction: a few degrees across however far off, so a fed
   // hole is a brilliant point from afar, as quasars are (and kept inside the traced sphere)
   if (glare > 0.0 && !fell) {
@@ -300,7 +358,7 @@ export class HoleLook {
       uniforms: {
         camL: { value: new THREE.Vector3() }, RB: { value: RB },
         invProj: { value: new THREE.Matrix4() }, viewToLocal: { value: new THREE.Matrix3() }, res: { value: new THREE.Vector2(1, 1) }, rIn: { value: 3 }, rOut: { value: rOut },
-        glow: { value: 0 }, time: { value: 0 }, hue: { value: 0.5 }, glare: { value: 0 },
+        glow: { value: 0 }, time: { value: 0 }, hue: { value: 0.5 }, glare: { value: 0 }, fallB: { value: -1 }, pxAng: { value: 0.002 },
         sky: { value: sky }, localToWorld: { value: new THREE.Matrix3() },
       },
     });
@@ -355,7 +413,11 @@ export class HoleLook {
     this.jets.scale.setScalar(Math.max(this.jetLen, rOut * 2.5));
   }
 
-  update(axis: THREE.Vector3, glow: number, jet: number, cam: THREE.Camera, res: THREE.Vector2, time: number, hue = 0.5) {
+  /**
+   * fall: <0 the eye is held still against the hole's pull; ≥0 it is falling in freely from far off (its speed
+   * through the still frame, √(r_s/r), in c)
+   */
+  update(axis: THREE.Vector3, glow: number, jet: number, cam: THREE.Camera, res: THREE.Vector2, time: number, hue = 0.5, fall = -1) {
     const eyeWorld = cam.getWorldPosition(new THREE.Vector3());
     this.q.setFromUnitVectors(new THREE.Vector3(0, 0, 1), axis.clone().normalize());
     this.disc.quaternion.copy(this.q);
@@ -369,6 +431,8 @@ export class HoleLook {
     (u.res.value as THREE.Vector2).copy(res);
     (u.localToWorld.value as THREE.Matrix3).setFromMatrix4(new THREE.Matrix4().makeRotationFromQuaternion(this.disc.getWorldQuaternion(new THREE.Quaternion())));
     u.glow.value = glow;
+    u.fallB.value = fall;
+    u.pxAng.value = 2 * Math.tan(((cam as THREE.PerspectiveCamera).fov ?? 70) * Math.PI / 360) / Math.max(1, res.y);
     u.time.value = time;
     u.hue.value = hue;
     this.jets.visible = jet > 0.02;
