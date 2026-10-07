@@ -3,6 +3,7 @@
 What looks wrong, and where: the world and the latitude and longitude from the readout help, and so does a screenshot.
 
 ## Open
+- [ ] me and my ships gravity are not affected by the time cheat, fix, also doesnt rea ([message](Feedback/2026-10-06.md#bug-me-and-my-ships-gravity-are-not-affected-by-the-time-cheat-fix-also-doesnt-rea))
 - [ ] Sun is projected the same size on every body you land on, and even overlaps some ([message](Feedback/2026-10-06.md#bug-sun-is-projected-the-same-size-on-every-body-you-land-on-and-even-overlaps-some))
 - [ ] Docking and leaving the helm are on the same key, so you can't get into an orbiting station ([message](Feedback/2026-10-07.md#controls-gravity-the-black-hole-and-an-early-solar-system))
 - [ ] Your gravity and the ship's still don't seem right: not everything is counted ([message](Feedback/2026-10-07.md#controls-gravity-the-black-hole-and-an-early-solar-system))
