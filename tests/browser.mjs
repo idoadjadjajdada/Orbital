@@ -518,12 +518,14 @@ try {
     const v = window.orbital.v3, a = window.orbital, n = v.ship.nav, w0 = a.warpLog, off0 = [...n.off];
     // (two frames only: at most twelve seconds of fall, still well clear of the ground, which stays built round you)
     n.vel = [0, 0, 0]; a.warpLog = Math.log10(60 / (365.25 * 86400));
-    const f0 = a.frameNo;
+    const f0 = a.frameNo, t0 = performance.now();
     while (a.frameNo < f0 + 2) await new Promise(r => setTimeout(r, 20));
     const o = n.off, r = Math.hypot(...o), vr = -(n.vel[0] * o[0] + n.vel[1] * o[1] + n.vel[2] * o[2]) / r, frames = a.frameNo - f0;
+    // (what real time would give: the time that passed, a frame counting for a tenth of a second at most)
+    const real = 9.8 * Math.min((performance.now() - t0) / 1000, 0.1 * frames);
     a.warpLog = w0; n.off = off0; n.vel = [0, 0, 0];
-    // (a frame is never more than a tenth of a second of real time: at 60 times that, well over what real time would give)
-    return vr > 9.8 * 0.1 * frames * 10;
+    // (at 60 times that, well over it)
+    return vr > real * 15;
   }));
   await page.evaluate(() => { const v = window.orbital.v3; v.toggleCoast(); v.ship.nav.vel = [0, 0, 0]; });
   ok('the spaceports start with a rocket on each pad', await page.evaluate(() => { const f = window.orbital.v3.fleet; return ['Canaveral Launch Pad', 'Baikonur Launch Pad'].every(n => !!f.rocketAt(f.crafts.find(c => c.name === n))); }));
