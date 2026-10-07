@@ -4,6 +4,9 @@ What looks wrong, and where: the world and the latitude and longitude from the r
 
 ## Open
 ## Known limits
+- The early solar system's eras only move on in the 2D view: in 3D the clock runs at real time, so you can fly round an era but it stays where it is.
+- In the early solar system some things are steered rather than left to chance: the Grand Tack's path, where the giants end up (the planetesimal disc's drag pulls them there), the damping of the inner planets' orbits, and when each giant impact comes. The impacts themselves, the Moon gathering, and the giants scattering each other are simulated, so each run comes out a little differently. Planet Five's last close pass with Jupiter is set up if the scattering hasn't done it, and the kick that throws it out is given with momentum kept (Jupiter jumps inward).
+- Jumping to an era starts it from the textbook state, not from a run you played: jumping to Today scores the textbook system (96%).
 - Falling into a black hole is shown at a watchable pace: a stellar hole's fall from horizon to singularity takes microseconds of your time, so it is slowed; a quasar's takes minutes, so it is sped up. At the singularity the game puts you back outside.
 - Holding still close to a hole with the engines on is allowed, however strong the pull (it would take impossible thrust).
 - A rocket has no lights inside while you ride it: at night its cockpit and cabin are dark (walking inside one, its decks are lit).
