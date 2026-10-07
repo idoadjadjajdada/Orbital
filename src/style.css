@@ -339,8 +339,9 @@ kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-
 }
 @media (pointer: coarse) and (orientation: landscape) {
   /* sideways, the rail runs along the bottom between the thumbs */
-  .rail3 { flex-direction: row; right: auto; left: 50%; transform: translateX(-50%); bottom: calc(14px + env(safe-area-inset-bottom)); }
-  .use3 { bottom: calc(86px + env(safe-area-inset-bottom)); }
+  /* (kept clear of the thumbs: a long rail wraps into a second row above) */
+  .rail3 { flex-direction: row; flex-wrap: wrap-reverse; justify-content: center; max-width: min(560px, 50vw); right: auto; left: 50%; transform: translateX(-50%); bottom: calc(14px + env(safe-area-inset-bottom)); }
+  .use3 { bottom: calc(146px + env(safe-area-inset-bottom)); }
 }
 
 /* ---- small screens: what is not needed folds away ---- */
