@@ -629,3 +629,19 @@ describe('robustness', () => {
     expect(after[2]).toBeCloseTo(before[2], 9);
   });
 });
+
+describe('the pull on the ship and the suit', async () => {
+  const { pull } = await import('../src/three/pull');
+  const { M_EARTH, R_EARTH, AU_M } = await import('../src/physics/units');
+  it('is the world\'s own gravity, falling off with height, and the frame carries the Sun\'s', () => {
+    const sun = new Body({ name: 'Sun', kind: 'test', cls: 'star', look: { style: 'rocky', seed: 1, c1: 0, c2: 0 }, m: 1, r: 0.00465, source: true });
+    const earth = new Body({ name: 'Earth', kind: 'test', cls: 'rock', look: { style: 'rocky', seed: 1, c1: 0, c2: 0 }, m: M_EARTH, r: R_EARTH, source: true });
+    earth.x = 1;
+    const g1 = pull([1 + R_EARTH, 0, 0], earth, [sun, earth]), g2 = pull([1, 2 * R_EARTH, 0], earth, [sun, earth]);
+    expect(-g1[0]).toBeCloseTo(9.82, 1);
+    expect(-g2[1]).toBeCloseTo(9.82 / 4, 1);
+    // (the Sun's 6 mm/s² pulls the Earth and the ship alike: only its tide, a millionth of a g, is left)
+    expect(Math.abs(g1[0] + 9.82)).toBeLessThan(0.02);
+    void AU_M;
+  });
+});

@@ -69,6 +69,10 @@ export class Ship {
   /** overdrive engaged, and how far it has spooled (0–1) */
   od = false;
   odLevel = 0;
+  /** engines off: the ship falls, or goes round, as gravity takes it (otherwise they hold it where you leave it) */
+  coast = false;
+  /** the gravity on it, m/s² (what the engines hold it against, or what it falls by) */
+  grav: V3 = [0, 0, 0];
   /** wormhole drive capacitor, 0–1; a transit needs it full */
   charge = 1;
   worm: Worm | null = null;

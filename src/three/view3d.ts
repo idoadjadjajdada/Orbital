@@ -16,6 +16,7 @@ import { Radar, fmtTime } from './radar';
 import { NavMap } from './navmap';
 import { Ground, bodyQuat, latLonOf, arc } from './ground';
 import { tangent } from './terrain';
+import { pull } from './pull';
 import { gravity, atmosphere } from './science';
 import { Fleet, isModule, type CraftKind, type Craft } from './fleet';
 import { ROCKETS, type RocketModel } from './rocketry';
@@ -1441,6 +1442,12 @@ export class View3D {
   }
 
   /** set down on the ground below, or lift off if landed */
+  /** L at the helm: what the prompt offers (dock, undock, land, lift off), or a landing */
+  helmAct() {
+    if (this.mode === 'pilot' && this.prompt && /^(Dock|Undock|Lift off|Land)/.test(this.prompt.label)) this.prompt.act();
+    else this.landOrLift();
+  }
+
   landOrLift() {
     if (this.landing?.phase === 'landed') { this.liftOff(); return; }
     const why = this.landBlock();
@@ -2024,8 +2031,16 @@ export class View3D {
       if (this.autoOd) { sh.od = false; this.autoOd = false; }
       const sp = this.speed();
       const want = this.mode === 'pilot' ? this.controls.thrust(sp, sh.quat) : [0, 0, 0];
-      sh.thrust = Math.min(1, Math.hypot(want[0], want[1], want[2]) / sp);
-      for (let k = 0; k < 3; k++) v[k] += (want[k] - v[k]) * Math.min(1, dt * 4);
+      const g = sh.grav = this.landing ? [0, 0, 0] : pull(posOf(n), n.anchor, this.app.world.bodies), gl = Math.hypot(g[0], g[1], g[2]);
+      if (sh.coast) {
+        // engines off: gravity has it, and the stick is thrust, not a speed to hold
+        for (let k = 0; k < 3; k++) v[k] += (g[k] + want[k]) * dt;
+        sh.thrust = Math.min(1, Math.hypot(want[0], want[1], want[2]) / sp);
+      } else {
+        // the engines hold the speed you ask for (nothing, with the stick let go) against gravity: they burn for it
+        for (let k = 0; k < 3; k++) v[k] += (want[k] - v[k]) * Math.min(1, dt * 4);
+        sh.thrust = Math.min(1, Math.max(Math.hypot(want[0], want[1], want[2]) / sp, gl / 30));
+      }
     }
     for (let k = 0; k < 3; k++) n.off[k] += (v[k] * dt) / AU_M;
     // a giant's winds carry the ship along
@@ -2154,10 +2169,26 @@ export class View3D {
     const dx = (fx * inp.f + rx * inp.s) * sp * dt, dz = (fz * inp.f + rz * inp.s) * sp * dt;
     if (h.canStand(f.p.x + dx, f.p.z, 0.3, f.deck)) f.p.x += dx;
     if (h.canStand(f.p.x, f.p.z + dz, 0.3, f.deck)) f.p.z += dz;
-    if (inp.jump && f.y <= 0) f.vy = 3.4;
-    f.vy -= 9.8 * dt;
-    f.y = Math.max(0, f.y + f.vy * dt);
+    // the decks' own gravity, a g, in flight; landed, the world's (and a jump goes no higher than the ceiling)
+    const L = this.landing, g = L?.phase === 'landed' ? gravity(L.b) : 9.8;
+    if (inp.jump && f.y <= 0) f.vy = Math.min(3.4, Math.sqrt(2 * g * 0.9));
+    f.vy -= g * dt;
+    f.y = Math.max(0, Math.min(0.9, f.y + f.vy * dt));
     if (f.y <= 0) f.vy = 0;
+  }
+
+  /** what the suit falls along with: the ship's own fall, if it is coasting near you, or a station's orbit; else nothing */
+  private suitFallsWith(): V3 {
+    const sh = this.ship;
+    if (relM(this.suit.nav, sh.nav).length() < 5000 && sh.coast) return [...sh.grav];
+    // (by a station in orbit, you go round with it, as the ship does)
+    const s = posOf(this.suit.nav);
+    for (const c of this.fleet.crafts) {
+      if (c.kind !== 'station' || c.state !== 'orbit') continue;
+      const p = this.visit.worldOf(c, new THREE.Vector3());
+      if (Math.hypot(p[0] - s[0], p[1] - s[1], p[2] - s[2]) * AU_M < 10e3) return pull(s, this.suit.nav.anchor, this.app.world.bodies);
+    }
+    return [0, 0, 0];
   }
 
   /** outside: a suit with thrusters, gentle and slow unless you open the throttle */
@@ -2165,13 +2196,11 @@ export class View3D {
     const s = this.suit.nav, v = s.vel, sh = this.ship;
     const want = this.controls.thrust(4 * this.controls.throttle, this.suit.quat);
     for (let k = 0; k < 3; k++) v[k] += (want[k] - v[k]) * Math.min(1, dt * 1.5);
-    // low over a world with ground, its gravity pulls you down to it (the thrusters, holding you still, slow the
-    // fall to a few metres a second: about six and a half on the Earth, one on the Moon)
-    const near = this.nearest(posOf(s));
-    if (near.b && near.b === this.ground.body && near.alt < 1e5) {
-      const p = posOf(s), d = new THREE.Vector3(p[0] - near.b.x, p[1] - near.b.y, p[2] - near.b.z).normalize(), g = gravity(near.b) * dt;
-      v[0] -= d.x * g; v[1] -= d.y * g; v[2] -= d.z * g;
-    }
+    // gravity pulls you, the ship's frame and all: over a world, down to it (the thrusters, holding you still,
+    // slow the fall to a few metres a second: about six and a half on the Earth, one on the Moon); by a ship or a
+    // station going round with you, you fall together, so only what pulls you apart from it counts
+    const g = pull(posOf(s), s.anchor, this.app.world.bodies), fw = this.suitFallsWith();
+    for (let k = 0; k < 3; k++) v[k] += (g[k] - fw[k]) * dt;
     for (let k = 0; k < 3; k++) s.off[k] += (v[k] * dt) / AU_M;
     this.clear(s, 2);
     // down onto the ground: on your feet
@@ -2206,6 +2235,19 @@ export class View3D {
     return Math.min(cap, Math.max(1, Math.min(isFinite(alt) ? alt : 1e9, 1e16)) * 0.5 * this.controls.throttle);
   }
 
+  /** the drive's line: the engines holding the ship against gravity, or off with it falling */
+  private gravLine() {
+    const sh = this.ship, g = Math.hypot(...sh.grav), gs = g >= 0.01 ? `${(g / 9.81).toFixed(g < 0.981 ? 3 : 2)} g` : g >= 1e-6 ? `${g.toExponential(1)} m/s²` : '';
+    return sh.coast ? `engines off · falling free${gs ? ` · ${gs}` : ''}` : gs && g >= 0.01 ? `cruise drive · holding against ${gs}` : 'cruise drive';
+  }
+
+  /** G at the helm: the engines off, to fall or go round as gravity takes the ship; again, on to hold it */
+  toggleCoast() {
+    const sh = this.ship;
+    sh.coast = !sh.coast;
+    this.app.onToast(sh.coast ? 'Engines off: the ship falls free. Thrust with the stick; G to hold again' : 'Engines on: holding the ship where it is');
+  }
+
   /** seconds to cover a distance (m), using overdrive when it is worth it */
   eta(d: number) {
     if (d < 5 * CRUISE) return d / CRUISE + 1;
@@ -2236,7 +2278,8 @@ export class View3D {
       : w.phase === 'enter' ? `into the wormhole` : w.phase === 'tunnel' ? `in the throat · ${w.to.name} in ${Math.max(0, w.dur - w.t).toFixed(0)} s` : `out of the wormhole`)
       : this.landing ? (this.landing.phase === 'down' ? `landing · ${this.landing.alt < 1000 ? `${Math.max(0, this.landing.alt - LAND_H).toFixed(0)} m` : `${(this.landing.alt / 1000).toFixed(1)} km`} to go` : this.landing.phase === 'up' ? 'lifting off' : `landed on ${this.landing.b.name}`)
       : this.travel ? `autopilot → ${this.travel.name}${sh.odLevel > 0 ? ` · overdrive ${(sh.odLevel * 100).toFixed(0)}%` : ''}`
-      : sh.odLevel > 0 ? `overdrive ${(sh.odLevel * 100).toFixed(0)}%` : 'cruise drive';
+      : sh.odLevel > 0 ? `overdrive ${(sh.odLevel * 100).toFixed(0)}%`
+      : this.gravLine();
     let where = '', speed = fmtV(v);
     if (this.mode === 'pilot') where = `At the helm · ${sh.view === 'chase' ? 'chase view' : 'cockpit'}`;
     else if (this.mode === 'inside' && this.visit.at) where = `${this.visit.at.c.name} · ${this.visit.room()}`;
@@ -2268,8 +2311,9 @@ export class View3D {
     // on or over a world's ground: the conditions there
     const G = this.ground;
     if (G.body && G.atmo && (this.mode === 'surface' || (b === G.body && alt < 50e3))) {
-      const g = gravity(G.body) / 9.81, a = G.atmo;
-      const z = this.mode === 'surface' ? G.heightAt(this.surf.n, 1) : Math.max(0, alt);
+      const a = G.atmo, z = this.mode === 'surface' ? G.heightAt(this.surf.n, 1) : Math.max(0, alt);
+      // (the gravity where you are: less, the higher you go)
+      const R = G.body.r * AU_M, g = (gravity(G.body) / 9.81) * (R / (R + z)) ** 2;
       const bar = a.bar > 0 && a.H > 0 ? a.bar * Math.exp(-Math.max(0, z) / (a.H * 1000)) : a.bar;
       near = `${this.mode === 'surface' ? `${z.toFixed(0)} m elevation` : `${G.body.name} · ${fmtLength(Math.max(0, alt) / AU_M)} up`} · ${g.toFixed(g < 0.1 ? 3 : 2)} g · ${bar > 1e-4 ? `${bar.toPrecision(3)} bar` : 'vacuum'} · ${Math.round(a.T - 273.15)} °C${G.daylight < 0.2 ? ' · night' : ''}`;
     }

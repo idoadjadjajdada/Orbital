@@ -27,7 +27,8 @@ const BINDS: Record<Mode, Bind[]> = {
     { k: ['T'], p: ['A', 'A'], t: 'Fly to target', bar: true },
     { k: ['O'], p: ['X'], t: 'Overdrive', bar: true },
     { k: ['J'], p: ['Y'], t: 'Wormhole', bar: true },
-    { k: ['L'], p: ['X'], t: 'Land · lift off (near the ground)', bar: true },
+    { k: ['L'], p: ['X'], t: 'Land · lift off · dock · undock', bar: true },
+    { k: ['G'], p: [], t: 'Engines off (fall free, orbit) · on (hold)', bar: true },
     { k: ['K'], p: [], t: 'Mission control: launch and watch craft, hang lamps', bar: true },
     { k: ['N'], p: [], t: 'Floodlight' },
     { k: ['M'], p: ['View'], t: 'Nav map', bar: true },
@@ -128,7 +129,7 @@ const THUMB: Record<Mode, [string, string][]> = {
 };
 /** touch: the rail of commands, tapped: key, icon, name */
 const RAIL: Record<Mode, [string, string, string][]> = {
-  pilot: [['go', '◎', 'Go to'], ['od', '⏩', 'Overdrive'], ['worm', '🌀', 'Wormhole'], ['land', '🛬', 'Land'], ['mission', '🛰', 'Craft'], ['light', '🔦', 'Light'], ['map', '🗺', 'Nav map'], ['view', '🎥', 'Camera'], ['leave', '🚶', 'Leave helm'], ['help', '?', 'Help']],
+  pilot: [['go', '◎', 'Go to'], ['od', '⏩', 'Overdrive'], ['worm', '🌀', 'Wormhole'], ['land', '🛬', 'Land · dock'], ['coast', '🪂', 'Engines'], ['mission', '🛰', 'Craft'], ['light', '🔦', 'Light'], ['map', '🗺', 'Nav map'], ['view', '🎥', 'Camera'], ['leave', '🚶', 'Leave helm'], ['help', '?', 'Help']],
   walk: [['mission', '🛰', 'Craft'], ['map', '🗺', 'Nav map'], ['help', '?', 'Help']],
   inside: [['use', '👆', 'Use'], ['mission', '🛰', 'Craft'], ['map', '🗺', 'Nav map'], ['help', '?', 'Help']],
   surface: [['scan', '🔬', 'Scan'], ['ride', '🛞', 'Ride'], ['jet', '🚀', 'Jetpack'], ['sample', '🧪', 'Sample'], ['mission', '🛰', 'Craft'], ['light', '🔦', 'Lamp'], ['call', '📡', 'Call ship'], ['map', '🗺', 'Nav map'], ['help', '?', 'Help']],
@@ -391,7 +392,8 @@ export class Controls3D {
     if (k === 'next') v.cycleCraft(1);
     if (k === 'use') v.prompt?.act();
     if (k === 'call') v.callShip();
-    if (k === 'land') v.landOrLift();
+    if (k === 'land') v.helmAct();
+    if (k === 'coast') v.toggleCoast();
     if (k === 'sland') v.shuttle.land();
     if (k === 'use') v.prompt?.act();
     if (k === 'scan') v.panels.show('scan');
@@ -437,8 +439,9 @@ export class Controls3D {
         if (e.code === 'KeyO') this.toggleOd();
         if (e.code === 'KeyJ') this.jumpSelected();
         if (e.code === 'KeyZ') v.ship.view = v.ship.view === 'chase' ? 'cockpit' : 'chase';
-        if (e.code === 'KeyF') { if (v.placer.kind || v.prompt?.label.startsWith('Dock') || v.prompt?.label.startsWith('Undock')) v.prompt?.act(); else v.leaveHelm(); }
-        if (e.code === 'KeyL') v.landOrLift();
+        if (e.code === 'KeyF') { if (v.placer.kind) v.prompt?.act(); else v.leaveHelm(); }
+        if (e.code === 'KeyL') v.helmAct();
+        if (e.code === 'KeyG') v.toggleCoast();
         break;
       case 'surface':
         if (e.code === 'KeyF' || e.code === 'KeyE') v.prompt?.act();
@@ -511,7 +514,7 @@ export class Controls3D {
         }
         if (p.hit(BTN.B)) v.leaveHelm();
         // near the ground X lands (or lifts off); out in space it is overdrive
-        if (p.hit(BTN.X)) { if (v.landing || !v.landBlock()) v.landOrLift(); else this.toggleOd(); }
+        if (p.hit(BTN.X)) { if (v.landing || !v.landBlock() || /^(Dock|Undock)/.test(v.prompt?.label ?? '')) v.helmAct(); else this.toggleOd(); }
         if (p.hit(BTN.Y)) this.jumpSelected();
         if (p.hit(BTN.RS)) v.ship.view = v.ship.view === 'chase' ? 'cockpit' : 'chase';
         if (p.hit(BTN.UP)) this.zoom(2);

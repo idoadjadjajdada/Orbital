@@ -499,6 +499,11 @@ try {
     v.travel = null; v.ship.nav.anchor = b; v.ship.nav.off = [w.x / AU, w.y / AU, w.z / AU]; v.ship.nav.vel = [0, 0, 0];
   });
   await page.waitForFunction(() => window.orbital.v3.ground.ready, null, { timeout: 90000 }).catch(() => {});
+  // gravity on the ship: the engines hold it against the Earth's pull; off, it falls
+  ok('the engines hold the ship against a g', await until(page, () => { const v = window.orbital.v3; return v.mode === 'pilot' && /holding against 1\.\d\d g/.test(v.readout().drive); }));
+  const alt0 = await page.evaluate(() => { const v = window.orbital.v3; v.toggleCoast(); return v.nearest().alt; });
+  ok('engines off, it falls', await page.waitForFunction(a0 => { const v = window.orbital.v3, n = v.ship.nav, o = n.off, r = Math.hypot(...o); return a0 - v.nearest().alt > 20 && (n.vel[0] * o[0] + n.vel[1] * o[1] + n.vel[2] * o[2]) / r < -5; }, alt0, { timeout: 60000 }).then(() => true, () => false));
+  await page.evaluate(() => { const v = window.orbital.v3; v.toggleCoast(); v.ship.nav.vel = [0, 0, 0]; });
   ok('the spaceports start with a rocket on each pad', await page.evaluate(() => { const f = window.orbital.v3.fleet; return ['Canaveral Launch Pad', 'Baikonur Launch Pad'].every(n => !!f.rocketAt(f.crafts.find(c => c.name === n))); }));
   await page.evaluate(() => { const v = window.orbital.v3, f = v.fleet, c = f.crafts.find(x => x.rocket?.kind === 'wayfarer'); v.toSurface(f.offset(c.n, 7, c.head + Math.PI / 2, c.b.r * 1.495978707e11), c.head - Math.PI / 2); });
   ok('beside it, it can be flown', await until(page, () => /^The Wayfarer 1: load it, fly it, ride it/.test(window.orbital.v3.prompt?.label ?? '')));
@@ -586,6 +591,9 @@ try {
   ok('Dock in Mission Control flies the ship to a station to dock', await page.evaluate(() => window.orbital.v3.travel?.dock?.name === 'ISS'));
   // (the station is going round the Earth at 7.7 km/s: the ship has to catch it up, not just fly to where it was)
   ok('the ship catches the station up and docks', await page.waitForFunction(() => window.orbital.v3.visit.docked?.name === 'ISS', null, { timeout: 150000 }).then(() => true, () => false));
+  ok('docked, the helm offers to undock (L), not F', await until(page, () => window.orbital.v3.mode === 'pilot' && window.orbital.v3.prompt?.label === 'Undock from ISS'));
+  await page.keyboard.press('KeyF');
+  ok('F leaves the helm and the ship stays docked, to walk to the airlock', await until(page, () => window.orbital.v3.mode === 'walk' && window.orbital.v3.visit.docked?.name === 'ISS'));
   await page.evaluate(() => window.orbital.v3.panels.show('mission'));
   await page.click(`.panel3 button[data-act="cdock"][data-id="${iss}"]`);
   ok('docked, Go aboard takes you inside it', await until(page, () => window.orbital.v3.mode === 'inside' && window.orbital.v3.visit.docked?.name === 'ISS'));
