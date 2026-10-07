@@ -26,6 +26,13 @@
       <button class="icon" id="pause" title="Pause (Space)">❚❚</button>
       <input type="range" id="warp" min="-7.5" max="4" step="0.01" value="-0.6" aria-label="Clock speed" />
     </div>
+    <div class="era" id="eraBox" hidden>
+      <div class="era-now"><b id="eraAgo">—</b></div>
+      <div class="era-name" id="eraName">—</div>
+      <div class="era-next" id="eraNext"></div>
+      <div class="row"><button class="chip small" id="eraBtn" title="Jump to an era">Eras ▾</button><button class="chip small" id="eraScore" hidden>Score</button></div>
+      <div class="menu era-menu" id="eraMenu" hidden></div>
+    </div>
   </header>
 
   <nav class="hud top-right">

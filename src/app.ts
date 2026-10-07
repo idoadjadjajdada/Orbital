@@ -3,6 +3,7 @@ import { Feeding } from './physics/feeding';
 import type { Body, Look, Cls, StarState } from './physics/body';
 import { assignHosts, hostOfPoint } from './physics/analysis';
 import { buildPreset, PRESETS } from './physics/presets';
+import { Early } from './physics/early';
 import { makeBody, ENTRY } from './physics/catalog';
 import { placeExtras } from './physics/extras';
 import { SHAPES } from './physics/materials';
@@ -69,6 +70,8 @@ export class App {
   onToast: (msg: string) => void = () => {};
   /** what has happened lately, newest first, for the ship's comms log */
   eventLog: { t: number; msg: string; body: Body | null }[] = [];
+  /** the early solar system's director, while that is what is loaded */
+  early: Early | null = null;
   onFrame: () => void = () => {};
 
   tool: Tool = 'select';
@@ -214,6 +217,8 @@ export class App {
     this.select(null);
     this.focus = null;
     buildPreset(key, this.world);
+    this.early = null;
+    if (key === 'early') this.startEarly(0);
     this.eventLog = [];
     this.hosts = assignHosts(this.world.sources);
     this.view.clearTrails();
@@ -232,7 +237,22 @@ export class App {
     }
   }
 
+  /** the early solar system: its director, and an era to start in */
+  startEarly(era: number) {
+    const e = this.early ?? new Early({
+      toast: m => this.onToast(m),
+      setWarp: w => { const l = Math.log10(Math.max(1e-9, w)); if (this.mode3d) this.warp2d = l; else this.warpLog = l; },
+    });
+    this.early = e;
+    e.jump(this.world, era);
+    this.world.drive = dt => e.drive(this.world, dt);
+    this.hosts = assignHosts(this.world.sources);
+    this.view.clearTrails();
+    if (this.mode3d) this.warpLog = Math.log10(1 / (365.25 * 86400));
+  }
+
   clear() {
+    this.early = null;
     this.remember('clearing');
     this.select(null);
     const c = this.centre();
@@ -472,6 +492,7 @@ export class App {
     let got = 0;
     if (!this.paused) {
       got = this.world.step(this.warp * dtReal, now + 11);
+      this.early?.tick(this.world, got);
       this.feeding.update(this.world, got, dtReal);
       const inst = dtReal > 0 ? got / dtReal : 0;
       this.rate = this.rate ? this.rate + (inst - this.rate) * Math.min(1, dtReal * 3) : inst;

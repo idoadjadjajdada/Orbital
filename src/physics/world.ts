@@ -24,6 +24,8 @@ export class World {
   reach = 0;
   /** events since the renderer last looked */
   events: SimEvent[] = [];
+  /** forces slower than gravity that a scenario adds (migration, a disc's drag), given each span the integrator covers (yr) */
+  drive: ((dt: number) => void) | null = null;
   /** called when bodies are removed, so views can drop what they hold for them */
   onRemove: ((b: Body) => void) | null = null;
 
@@ -59,6 +61,7 @@ export class World {
     this.events = [];
     this.disks.vapour = [];
     this.time = 0;
+    this.drive = null;
     this.reach = 0;
     this.dirtyStructure = this.dirtyForces = true;
   }
@@ -126,6 +129,8 @@ export class World {
       const got = this.integ.advance(this.bodies, this.sources, T - done, deadline);
       done += got;
       this.time += got;
+      // (small kicks to the sources' velocities: their stored accelerations stay good enough, no restart)
+      if (this.drive && got > 0) this.drive(got);
       for (const { p, into } of this.integ.absorbed) {
         // if what it hit was itself merged away this step, the particle flies on
         if (into.alive) accrete(this, into, p);

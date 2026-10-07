@@ -34,6 +34,7 @@ export const PRESETS: PresetInfo[] = [
   { key: 'saturn', group: 'Solar System', name: 'Saturn', blurb: 'Saturn, its rings, and all 291 known moons.', warp: 2 * DAY, view: 0.012, focus: 'Saturn' },
   { key: 'uranus', group: 'Solar System', name: 'Uranus', blurb: 'Lying on its side, its rings and moons with it.', warp: 2 * DAY, view: 0.006, focus: 'Uranus' },
   { key: 'neptune', group: 'Solar System', name: 'Neptune', blurb: 'Triton going backwards, Nereid on a wild ellipse.', warp: 3 * DAY, view: 0.004, focus: 'Neptune' },
+  { key: 'early', group: 'Solar System', name: 'Early solar system', blurb: 'From the Sun’s disc to today: Jupiter’s Grand Tack, the giant impacts, Theia and the Moon, a fifth giant thrown out, the great bombardment. Jump to any era; scored against the real one.', warp: 8, view: 9, focus: 'Sun' },
   { key: 'pluto', group: 'Solar System', name: 'Pluto and Charon', blurb: 'A double world circling a point in empty space, four small moons round both.', warp: 2 * DAY, view: 0.0007, focus: 'Pluto' },
   { key: 'trappist', group: 'Exoplanets', name: 'TRAPPIST-1', blurb: 'Seven Earths round an ultracool dwarf, chained in resonance.', warp: 0.02, view: 0.08, focus: 'TRAPPIST-1' },
   { key: 'kepler16', group: 'Exoplanets', name: 'Kepler-16', blurb: 'A Saturn with two suns — the first circumbinary planet found by transit.', warp: 0.1, view: 1.1, focus: 'Kepler-16 A' },
@@ -496,6 +497,8 @@ const BUILDERS: Record<string, (w: World) => void> = {
   jupiter: w => planetPreset(w, 'Jupiter'), saturn: w => planetPreset(w, 'Saturn'),
   uranus: w => planetPreset(w, 'Uranus'), neptune: w => planetPreset(w, 'Neptune'), pluto: w => planetPreset(w, 'Pluto'),
   trappist, kepler16, hr8799, cnc55, kepler90, proxima,
+  // (built by the app's Early director, which runs it: see physics/early.ts)
+  early: () => {},
   theia, ringmaker, xrb, merger, sgra, kirkwood, tde, spaghetti, quasar,
 };
 

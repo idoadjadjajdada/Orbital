@@ -8,6 +8,7 @@ import { GRID } from '../physics/materials';
 import type { Body } from '../physics/body';
 import { CATALOG, SHELVES, makeBody, type Shelf } from '../physics/catalog';
 import { PRESETS } from '../physics/presets';
+import { ERAS, Early } from '../physics/early';
 import { osculating, relative, norm } from '../physics/orbit';
 import { fmtMass, fmtLength, fmtDuration, sig, KMS, M_EARTH, M_JUP, densityOf } from '../physics/units';
 import { msLife, giantLife } from '../physics/stellar';
@@ -97,6 +98,7 @@ export class Hud {
     this.buildClock();
     this.buildTools();
     this.buildFind();
+    this.buildEras();
     app.openBuilder = () => this.builder.open();
     $('undoBtn').onclick = () => app.undo();
     app.onUndo = label => {
@@ -190,6 +192,39 @@ export class Hud {
     document.addEventListener('pointerdown', e => {
       if (!menu.hidden && !menu.contains(e.target as Node) && e.target !== $('findBtn')) menu.hidden = true;
     });
+  }
+
+  /** the early solar system's eras: where it is, what comes next, a jump to any era, and at the end the score */
+  private buildEras() {
+    const menu = $('eraMenu');
+    const fill = (score: boolean) => {
+      const e = this.app.early;
+      if (!e) return;
+      if (score && e.score) {
+        menu.innerHTML = `<div class="era-score"><div><span>Against the real solar system</span><b class="big">${e.score.total.toFixed(0)}%</b></div>`
+          + e.score.rows.map(r => `<div><span>${r.name}<i>${r.note}</i></span><b>${(r.score * 100).toFixed(0)}%</b></div>`).join('') + '</div>';
+        return;
+      }
+      menu.innerHTML = '<div class="mgroup">Jump to an era, as the textbooks have it</div>' + ERAS.map((x, k) => `<button data-era="${k}"${k === e.era ? ' class="on"' : ''}><b>${x.name}</b><span>${Early.ago(x.at)}</span></button>`).join('');
+      for (const b of menu.querySelectorAll<HTMLElement>('[data-era]')) b.onclick = () => { this.app.remember('jumping to an era'); this.app.startEarly(Number(b.dataset.era)); menu.hidden = true; };
+    };
+    // (open on the first press, or when it shows the other list; shut on the second)
+    const open = (kind: string) => { const show = menu.hidden || menu.dataset.kind !== kind; menu.hidden = !show; menu.dataset.kind = kind; if (show) fill(kind === 'score'); };
+    $('eraBtn').onclick = () => open('eras');
+    $('eraScore').onclick = () => open('score');
+  }
+
+  private eraTick() {
+    const e = this.app.early, box = $('eraBox');
+    box.hidden = !e;
+    document.body.classList.toggle('era-on', !!e);
+    if (!e) { $('eraMenu').hidden = true; return; }
+    const set = (id: string, t: string) => { const el = $(id); if (el.textContent !== t) el.textContent = t; };
+    set('eraAgo', Early.ago(e.age));
+    set('eraName', e.current.name);
+    set('eraNext', e.next());
+    $('eraScore').hidden = !e.score;
+    $('eraName').title = e.current.blurb;
   }
 
   private buildPresets() {
@@ -560,6 +595,7 @@ export class Hud {
     rb.hidden = !rt;
     if (rt && rb.textContent !== rt) rb.textContent = rt;
     for (const el of document.querySelectorAll<HTMLElement>('[data-tool]')) el.classList.toggle('on', el.dataset.tool === a.tool);
+    this.eraTick();
     this.inspect();
   }
 }
