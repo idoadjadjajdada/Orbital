@@ -3,6 +3,9 @@
 What looks wrong, and where: the world and the latitude and longitude from the readout help, and so does a screenshot.
 
 ## Open
+- [ ] Docking and leaving the helm are on the same key, so you can't get into an orbiting station ([message](Feedback/2026-10-07.md#controls-gravity-the-black-hole-and-an-early-solar-system))
+- [ ] Your gravity and the ship's still don't seem right: not everything is counted ([message](Feedback/2026-10-07.md#controls-gravity-the-black-hole-and-an-early-solar-system))
+- [ ] A black hole's ring looks ridiculous in 2D ([message](Feedback/2026-10-07.md#controls-gravity-the-black-hole-and-an-early-solar-system))
 ## Known limits
 - A rocket has no lights inside while you ride it: at night its cockpit and cabin are dark (walking inside one, its decks are lit).
 - Inside a rocket you walk through its seats and terminals (only its crates and ladders are in the way).
