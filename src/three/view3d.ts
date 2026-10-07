@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { App } from '../app';
 import type { Body } from '../physics/body';
-import { AU_M, schwarzschild, fmtLength, sig } from '../physics/units';
+import { AU_M, YEAR_S, schwarzschild, fmtLength, sig } from '../physics/units';
 import { paintCrater, ringTau, cloneMap, lookKey, type SurfaceMap } from '../pixel/surface';
 import { maps, MapService } from '../pixel/maps';
 import { bodyFrame, starRGB, type V3 } from '../pixel/sprites';
@@ -2054,6 +2054,7 @@ export class View3D {
   private fly(dt: number) {
     if (this.fall) { this.falling(dt); return; }
     const sh = this.ship, n = sh.nav, v = n.vel;
+    let moved = false;
     const t = this.travel;
     const tb = t?.b;
     if (t && (!tb || tb.alive)) {
@@ -2093,8 +2094,20 @@ export class View3D {
       const want = this.mode === 'pilot' ? this.controls.thrust(sp, sh.quat) : [0, 0, 0];
       const g = sh.grav = this.landing ? [0, 0, 0] : pull(posOf(n), n.anchor, this.app.world.bodies), gl = Math.hypot(g[0], g[1], g[2]);
       if (sh.coast) {
-        // engines off: gravity has it, and the stick is thrust, not a speed to hold
-        for (let k = 0; k < 3; k++) v[k] += (g[k] + want[k]) * dt;
+        // engines off: gravity has it, and the stick is thrust, not a speed to hold. It falls in the sandbox's own
+        // time, as the worlds move (the time cheat too), in steps short enough for a close pass to bend it right
+        // round and fling it on (a slingshot)
+        const dS = this.app.paused ? dt : this.app.warp * YEAR_S * dt;
+        let left = dS, guard = 0;
+        while (left > 0 && guard++ < 200) {
+          const gg = pull(posOf(n), n.anchor, this.app.world.bodies), gm = Math.hypot(gg[0], gg[1], gg[2]);
+          const nr = this.nearest(posOf(n));
+          // (a fiftieth of the time to fall the distance to what is nearest)
+          const h = Math.min(left, gm > 0 ? 0.02 * Math.sqrt(Math.max(1, nr.alt + (nr.b ? this.visR(nr.b) * AU_M : 0)) / gm) : left);
+          for (let k = 0; k < 3; k++) { v[k] += (gg[k] + want[k] * (dt / dS)) * h; n.off[k] += (v[k] * h) / AU_M; }
+          left -= h;
+        }
+        moved = true;
         sh.thrust = Math.min(1, Math.hypot(want[0], want[1], want[2]) / sp);
       } else {
         // the engines hold the speed you ask for (nothing, with the stick let go) against gravity: they burn for it
@@ -2102,7 +2115,7 @@ export class View3D {
         sh.thrust = Math.min(1, Math.max(Math.hypot(want[0], want[1], want[2]) / sp, gl / 30));
       }
     }
-    for (let k = 0; k < 3; k++) n.off[k] += (v[k] * dt) / AU_M;
+    if (!moved) for (let k = 0; k < 3; k++) n.off[k] += (v[k] * dt) / AU_M;
     // a giant's winds carry the ship along
     if (this.giant.body && this.giant.inside > 0) {
       const w = this.giant.windVec, k = Math.min(1, this.giant.inside) * dt / AU_M;
@@ -2548,6 +2561,10 @@ export class View3D {
       else (mesh.material as THREE.MeshBasicMaterial).color.setRGB(c[0], c[1], c[2]);
       const glow = g.children[1] as THREE.Mesh;
       g.scale.setScalar(Rm);
+      // under a daytime sky the sun is the sky's own white disc, drawn its true size: the star's photographed
+      // surface (and its glow) would only show as a second, orange sun inside it
+      const sky = this.ground.body ? this.ground.glare : 0;
+      mesh.visible = glow.visible = sky < 0.15;
       if (b.name === 'Sun' || b.look.real === 'Sun') this.aimGlow(g, glow, 1, 0.78, 0.42);
       else this.aimGlow(g, glow, c[0], c[1], c[2]);
       this.surrounds(b, o, Rm);

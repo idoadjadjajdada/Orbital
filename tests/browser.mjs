@@ -53,6 +53,16 @@ try {
     ok(`${key} loads and runs`, await page.evaluate(() => window.orbital.world.sources.length > 0 && isFinite(window.orbital.world.time)));
   }
 
+  // the early solar system: its eras, a jump to Theia, and Theia striking the proto-Earth
+  await page.evaluate(() => window.orbital.loadPreset('early'));
+  ok('the early solar system starts in the Sun\'s disc, 4.567 billion years ago', await until(page, () => !document.getElementById('eraBox').hidden && /4\.567 billion years ago/.test(document.getElementById('eraAgo').textContent) && window.orbital.world.sources.some(b => b.name === 'Planet Five')));
+  await page.click('#eraBtn');
+  await page.click('#eraMenu [data-era="3"]');
+  ok('Eras jumps to Theia: it waits at the Earth\'s Lagrange point', await until(page, () => window.orbital.early.current.key === 'theia' && window.orbital.world.sources.some(b => b.name === 'Theia') && /Theia/.test(document.getElementById('eraName').textContent)));
+  await page.evaluate(() => { window.orbital.early.age = 62.0001; });
+  ok('Theia strikes the proto-Earth', await page.waitForFunction(() => !window.orbital.world.sources.some(b => b.name === 'Theia'), null, { timeout: 90000 }).then(() => true, () => false));
+  await page.evaluate(() => window.orbital.loadPreset('solar'));
+
   await page.keyboard.press('Space');
   const before = await page.evaluate(() => window.orbital.world.sources.length);
   await page.click('.card[data-key="terran"]');
@@ -503,6 +513,19 @@ try {
   ok('the engines hold the ship against a g', await until(page, () => { const v = window.orbital.v3; return v.mode === 'pilot' && /holding against 1\.\d\d g/.test(v.readout().drive); }));
   const alt0 = await page.evaluate(() => { const v = window.orbital.v3; v.toggleCoast(); return v.nearest().alt; });
   ok('engines off, it falls', await page.waitForFunction(a0 => { const v = window.orbital.v3, n = v.ship.nav, o = n.off, r = Math.hypot(...o); return a0 - v.nearest().alt > 20 && (n.vel[0] * o[0] + n.vel[1] * o[1] + n.vel[2] * o[2]) / r < -5; }, alt0, { timeout: 60000 }).then(() => true, () => false));
+  // (and with the clock sped up, it falls in the sandbox's time: a minute a second, sixty times as fast)
+  ok('engines off, it falls in the sandbox\'s time, the time cheat too', await page.evaluate(async () => {
+    const v = window.orbital.v3, a = window.orbital, n = v.ship.nav, w0 = a.warpLog, off0 = [...n.off];
+    // (a thousand kilometres up, so it is still falling, not stopped on the ground, after a while)
+    const R = n.anchor.r * 1.495978707e11, l = Math.hypot(...n.off); n.off = n.off.map(x => x / l * (R + 1e6) / 1.495978707e11);
+    n.vel = [0, 0, 0]; a.warpLog = Math.log10(60 / (365.25 * 86400));
+    const f0 = a.frameNo;
+    while (a.frameNo < f0 + 4) await new Promise(r => setTimeout(r, 50));
+    const o = n.off, r = Math.hypot(...o), vr = -(n.vel[0] * o[0] + n.vel[1] * o[1] + n.vel[2] * o[2]) / r, frames = a.frameNo - f0;
+    a.warpLog = w0; n.off = off0; n.vel = [0, 0, 0];
+    // (a frame is never more than a tenth of a second of real time: at 60 times that, well over what real time would give)
+    return vr > 9.8 * 0.1 * frames * 10;
+  }));
   await page.evaluate(() => { const v = window.orbital.v3; v.toggleCoast(); v.ship.nav.vel = [0, 0, 0]; });
   ok('the spaceports start with a rocket on each pad', await page.evaluate(() => { const f = window.orbital.v3.fleet; return ['Canaveral Launch Pad', 'Baikonur Launch Pad'].every(n => !!f.rocketAt(f.crafts.find(c => c.name === n))); }));
   await page.evaluate(() => { const v = window.orbital.v3, f = v.fleet, c = f.crafts.find(x => x.rocket?.kind === 'wayfarer'); v.toSurface(f.offset(c.n, 7, c.head + Math.PI / 2, c.b.r * 1.495978707e11), c.head - Math.PI / 2); });

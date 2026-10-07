@@ -368,10 +368,13 @@ uniform float thick;
 uniform float haze;
 uniform float inside;
 uniform vec3 fogCol;
+/** the sun's angular radius as seen from here (radians): smaller from Mars, a point from Neptune */
+uniform float sunAng;
 varying vec3 vDir;
 void main() {
   vec3 v = normalize(vDir);
   float e = dot(v, up), s = dot(sunDir, up);
+  float th = acos(clamp(dot(v, sunDir), -1.0, 1.0));
   float day = smoothstep(-0.2, 0.1, s);
   float mu = max(dot(v, sunDir), 0.0);
   float hz = pow(1.0 - clamp(e, 0.0, 1.0), 3.0);
@@ -380,7 +383,11 @@ void main() {
   float low = 1.0 - smoothstep(0.0, 0.35, abs(s + 0.05));
   c = mix(c, duskCol, low * clamp(pow(mu, 2.5) * 1.2 + hz * 0.35, 0.0, 1.0));
   c *= 0.2 + 0.8 * day;
-  c += vec3(1.0, 0.94, 0.85) * (pow(mu, 600.0) * 4.0 + pow(mu, 14.0) * (0.15 + 0.5 * haze)) * day;
+  // the sun's own disc, as big as it really is from here (drawn under the star itself, which then sits in it), and
+  // the aureole the air scatters round it, a few of its widths across; the wide glow of a hazy sky round that
+  float disc = 1.0 - smoothstep(sunAng * 0.9, sunAng * 1.15 + 0.0015, th);
+  float aureole = exp(-th / max(sunAng * 3.0, 0.002));
+  c += vec3(1.0, 0.94, 0.85) * (disc * 4.0 + aureole * 0.9 + pow(mu, 14.0) * (0.15 + 0.5 * haze)) * day;
   float a = thick * clamp(day + 0.6 * low * (1.0 - day), 0.0, 1.0);
   // inside a giant: the fog all round
   c = mix(c, fogCol, inside);
@@ -470,7 +477,7 @@ export class Ground {
       vertexShader: SKY_VERT, fragmentShader: SKY_FRAG, side: THREE.BackSide, depthTest: false, depthWrite: false,
       blending: THREE.CustomBlending, blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneMinusSrcAlphaFactor,
       uniforms: {
-        up: { value: new THREE.Vector3(0, 0, 1) }, sunDir: { value: new THREE.Vector3(0, 0, 1) }, skyCol: { value: new THREE.Vector3() }, duskCol: { value: new THREE.Vector3() },
+        up: { value: new THREE.Vector3(0, 0, 1) }, sunDir: { value: new THREE.Vector3(0, 0, 1) }, sunAng: { value: 0.0047 }, skyCol: { value: new THREE.Vector3() }, duskCol: { value: new THREE.Vector3() },
         thick: { value: 0 }, haze: { value: 0 }, inside: { value: 0 }, fogCol: { value: new THREE.Vector3() },
       },
     }));
@@ -621,6 +628,16 @@ export class Ground {
       if (alt > Math.min(0.15 * near.r * AU_M, 300e3) * (this.body === near ? 1.2 : 1)) { this.setBody(null, stars); }
       else this.setBody(near, stars);
     } else this.setBody(null, stars);
+    // the sun's size in this sky: its radius over its distance, for the star that lights this world most
+    if (this.body) {
+      let best = 0, ang = 0.0047;
+      for (const s of stars) {
+        const d = Math.hypot(s.x - this.body.x, s.y - this.body.y, s.z - this.body.z);
+        const f = (s.star?.L ?? 1) / (d * d);
+        if (f > best) { best = f; ang = s.r / d; }
+      }
+      (this.sky.material as THREE.ShaderMaterial).uniforms.sunAng.value = ang;
+    }
     this.skyFrame(rel, sun, sunRGB, giant);
     const body = this.body, spec = this.spec;
     if (!body || !spec) { this.root.visible = false; this.fogK = 0; return; }
