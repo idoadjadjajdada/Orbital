@@ -516,11 +516,10 @@ try {
   // (and with the clock sped up, it falls in the sandbox's time: a minute a second, sixty times as fast)
   ok('engines off, it falls in the sandbox\'s time, the time cheat too', await page.evaluate(async () => {
     const v = window.orbital.v3, a = window.orbital, n = v.ship.nav, w0 = a.warpLog, off0 = [...n.off];
-    // (a thousand kilometres up, so it is still falling, not stopped on the ground, after a while)
-    const R = n.anchor.r * 1.495978707e11, l = Math.hypot(...n.off); n.off = n.off.map(x => x / l * (R + 1e6) / 1.495978707e11);
+    // (two frames only: at most twelve seconds of fall, still well clear of the ground, which stays built round you)
     n.vel = [0, 0, 0]; a.warpLog = Math.log10(60 / (365.25 * 86400));
     const f0 = a.frameNo;
-    while (a.frameNo < f0 + 4) await new Promise(r => setTimeout(r, 50));
+    while (a.frameNo < f0 + 2) await new Promise(r => setTimeout(r, 20));
     const o = n.off, r = Math.hypot(...o), vr = -(n.vel[0] * o[0] + n.vel[1] * o[1] + n.vel[2] * o[2]) / r, frames = a.frameNo - f0;
     a.warpLog = w0; n.off = off0; n.vel = [0, 0, 0];
     // (a frame is never more than a tenth of a second of real time: at 60 times that, well over what real time would give)
