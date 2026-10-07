@@ -3,12 +3,9 @@
 What looks wrong, and where: the world and the latitude and longitude from the readout help, and so does a screenshot.
 
 ## Open
-- [ ] me and my ships gravity are not affected by the time cheat, fix, also doesnt rea ([message](Feedback/2026-10-06.md#bug-me-and-my-ships-gravity-are-not-affected-by-the-time-cheat-fix-also-doesnt-rea))
-- [ ] Sun is projected the same size on every body you land on, and even overlaps some ([message](Feedback/2026-10-06.md#bug-sun-is-projected-the-same-size-on-every-body-you-land-on-and-even-overlaps-some))
-- [ ] Docking and leaving the helm are on the same key, so you can't get into an orbiting station ([message](Feedback/2026-10-07.md#controls-gravity-the-black-hole-and-an-early-solar-system))
-- [ ] Your gravity and the ship's still don't seem right: not everything is counted ([message](Feedback/2026-10-07.md#controls-gravity-the-black-hole-and-an-early-solar-system))
-- [ ] A black hole's ring looks ridiculous in 2D ([message](Feedback/2026-10-07.md#controls-gravity-the-black-hole-and-an-early-solar-system))
 ## Known limits
+- Falling into a black hole is shown at a watchable pace: a stellar hole's fall from horizon to singularity takes microseconds of your time, so it is slowed; a quasar's takes minutes, so it is sped up. At the singularity the game puts you back outside.
+- Holding still close to a hole with the engines on is allowed, however strong the pull (it would take impossible thrust).
 - A rocket has no lights inside while you ride it: at night its cockpit and cabin are dark (walking inside one, its decks are lit).
 - Inside a rocket you walk through its seats and terminals (only its crates and ladders are in the way).
 - A base's crew and stores are not kept when the page is reloaded (nor is anything else in Mission Control).
@@ -21,6 +18,11 @@ What looks wrong, and where: the world and the latitude and longitude from the r
 - Locally, the browser test's touch part times out when run after other parts in the same process (CI runs each part separately, where it passes).
 
 ## Fixed
+- [x] Docking and leaving the helm were both F, so once docked you could never get up to walk to the airlock. Now L docks and undocks (as the prompt said); F only leaves the helm (0892313). ([message](Feedback/2026-10-07.md#controls-gravity-the-black-hole-and-an-early-solar-system))
+- [x] The ship and you weren't pulled by gravity: the ship just hovered. Now every body pulls on it; the engines hold it (and say so), and G turns them off so it falls or orbits; in a spacewalk every body pulls you; landed, the decks have the world's gravity (0892313). ([message](Feedback/2026-10-07.md#controls-gravity-the-black-hole-and-an-early-solar-system))
+- [x] A black hole on the map: a hard orange outline, and a disc drawn as fingerprint ripples. Now a faint glow of light round the shadow, and a disc of spiral streaks (972e662). ([message](Feedback/2026-10-07.md#controls-gravity-the-black-hole-and-an-early-solar-system))
+- [x] The ship's gravity ignored the time cheat, and it didn't slingshot past dense objects. With its engines off (G) it now falls in the sandbox's own time, the cheat included, in small enough steps that a close pass swings it round and flings it on (e0ff039). ([message](Feedback/2026-10-06.md#bug-me-and-my-ships-gravity-are-not-affected-by-the-time-cheat-fix-also-doesnt-rea))
+- [x] The Sun was the same size from every world, and from Earth there were two: the sky's own glow and the star's surface inside it. Now the sky's sun is its real size from there, and only one (e0ff039). ([message](Feedback/2026-10-06.md#bug-sun-is-projected-the-same-size-on-every-body-you-land-on-and-even-overlaps-some))
 - [x] "Caves" weren't caves: a hill of rock on the ground with a tunnel through it. Now they are networks of passages and chambers under the land, reached by a ramp cut down into it (c23f94b). ([message](Feedback/2026-10-04.md#bug-caves-arent-really-caves-theyre-above-ground-structures-with-a-tunnel-there))
 - [x] The rocket test stood exactly at the edge of "beside the rocket" (9 m), so it failed now and then (c23f94b)
 - [x] Trying to dock with a station, it kept flying away: the ship flew to where it was, not where it was going, and trailed it by nine kilometres (21c210e). ([message](Feedback/2026-10-05.md#docking-the-station-flies-away))

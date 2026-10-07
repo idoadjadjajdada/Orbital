@@ -3,7 +3,7 @@
 What's next, in order. Move things up or down; tick them when done.
 
 ## Next
-- [ ] Black hole: a better ring in 3D, and falling in: what you'd see on the way down to the singularity, as the simulations show it ([message](Feedback/2026-10-07.md#controls-gravity-the-black-hole-and-an-early-solar-system))
+- [x] Black hole: a better ring in 3D, and falling in: what you'd see on the way down to the singularity, as the simulations show it (972e662) ([message](Feedback/2026-10-07.md#controls-gravity-the-black-hole-and-an-early-solar-system))
 - [ ] An early solar system preset: the planets forming, the extra planets and objects (Theia, a fifth giant), the giant impacts and the giants' migration, run at any speed or jumped to any era, ending close to today's solar system, with a score of how close ([message](Feedback/2026-10-07.md#controls-gravity-the-black-hole-and-an-early-solar-system))
 - [x] The ship: better looking, outside and inside (6039531) ([message](Feedback/2026-10-04.md#gravity-the-ships-looks-and-the-map))
 - [x] Call the two views 2D and 3D (09cc9fd) ([message](Feedback/2026-10-04.md#gravity-the-ships-looks-and-the-map))
