@@ -733,6 +733,9 @@ try {
   ok('iPhone: 👁 hides everything', !(await ph.isVisible('#tools')) && !(await ph.isVisible('#inspector')) && await ph.isVisible('#showUi'));
   await ph.tap('#showUi');
   ok('iPhone: and brings it back', await ph.isVisible('#tools'));
+  // paused on the map, then 3D: the pause button is folded away there, so the clock has to run
+  await ph.tap('#pause');
+  ok('iPhone: the pause button pauses', await ph.evaluate(() => window.orbital.paused));
   // 3D upright: every button on the rail is on the screen, and none is on top of another control
   await ph.tap('#modeBtn');
   await ph.waitForFunction(() => window.orbital.mode3d && window.orbital.v3?.active && document.querySelectorAll('.rail3 button').length >= 11, null, { timeout: 30000 });
@@ -746,6 +749,8 @@ try {
     const bad = await railFits();
     ok(`iPhone ${w}x${h}: the 3D rail fits on the screen and covers nothing`, bad.length === 0, bad.join(', '));
   }
+  const t3 = await ph.evaluate(() => window.orbital.world.time);
+  ok('iPhone: paused, then 3D, the clock runs', await until(ph, t => window.orbital.world.time > t, t3));
   ok('iPhone: no errors', perrs.length === 0, perrs.join(' | '));
   await phone.close();
   }
