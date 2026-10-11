@@ -19,6 +19,7 @@ What's next, in order. Move things up or down; tick them when done.
 - [x] The ship's 3D model as a file to download (c310445) ([message](Feedback/2026-10-05.md#textures-from-orbit-and-the-ships-model-to-download))
 - [x] Replace the ship with the new model (v2) (d4a9b6a) ([message](Feedback/2026-10-06.md#the-new-ship-v2))
 - [ ] Give the telescope more zoom, and its own map to view objects. ([message](Feedback/2026-10-06.md#feature-give-the-telescope-more-zoom-and-its-own-map-to-view-objects))
+- [ ] The textures in general are very low quality and inaccurate when you get closer, ([message](Feedback/2026-10-10.md#feature-the-textures-in-general-are-very-low-quality-and-inaccurate-when-you-get-closer))
 
 ## Later
 - [x] Interiors you can walk through in the rockets (cabins, ladders, cargo decks) (1e3716e)
