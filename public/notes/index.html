@@ -340,7 +340,7 @@ async function add() {
         let t = (await rd(`${ROOT}Bugs.md`)) ?? '# Bugs\n\n## Open\n';
         if (!/^## Open/m.test(t)) t = t.replace(/\s*$/, '\n') + '\n## Open\n';
         t = t.replace(/^- \[ \]\s*$\n?/m, '');
-        t = t.replace(/^## Open\s*\n/m, `## Open\n- [ ] ${first}${where ? ` · ${where}` : ''} (${link})\n`);
+        t = t.replace(/^## Open\s*\n/m, () => `## Open\n- [ ] ${first}${where ? ` · ${where}` : ''} (${link})\n`);
         out.push({ path: `${ROOT}Bugs.md`, text: t });
       } else if (kind === 'feature') {
         let t = (await rd(`${ROOT}Roadmap.md`)) ?? '# Roadmap\n\n## Next\n';
