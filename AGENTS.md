@@ -36,3 +36,12 @@ Use ordinary Markdown links (`[Bugs](Bugs.md)`), not `[[wikilinks]]`: they work 
 - In browser checks, wait for the condition (`until`, `waitForFunction`) and hold keys or buttons until their effect shows. Never wait a fixed time: CI's software renderer is slow.
 - After pushing, watch the "Test and deploy" run on `main` and fix whatever fails.
 - To see a change working, use `tests/surface-shot.mjs` (a picture from the ground at a latitude and longitude) or a short Playwright script, and look at the picture.
+
+## Bugfix passes with subagents
+For a big bugfix, Claude Code uses the agents in `.claude/agents/`:
+1. **bug-hunter** (read-only): one per area (map, ship, land, base, rocket, giant, touch), run side by side. They return ranked bugs with how to see them.
+2. Pick the bugs to fix. **notes-keeper** logs every one in `notes/Bugs.md` before work starts, so the owner sees the list.
+3. **bug-fixer**: one per bug, each in its own worktree, each with a test. Fixes touching the same files go one after another, not side by side.
+4. **verifier**: checks each fix on its own; only a SHIP gets merged onto `main` and pushed (the rules under Commits apply).
+5. **notes-keeper** ticks off what was fixed, with hashes, and records limits left in.
+Browser parts are slow: don't run more than one at a time across agents.
