@@ -3,6 +3,7 @@
 What looks wrong, and where: the world and the latitude and longitude from the readout help, and so does a screenshot.
 
 ## Open
+- [ ] As shown in the photo, the artifacts/strucutres are completely unrealistic to ea · Earth ([message](Feedback/2026-10-10.md#bug-as-shown-in-the-photo-the-artifactsstrucutres-are-completely-unrealistic-to-ea))
 - [ ] The ship and its inside become dark when in some places for some reason? Lights  ([message](Feedback/2026-10-10.md#bug-the-ship-and-its-inside-become-dark-when-in-some-places-for-some-reason-lights))
 - [ ] Related to the ring terrain thing. Trees can poke through the ship, not to menti ([message](Feedback/2026-10-10.md#bug-related-to-the-ring-terrain-thing-trees-can-poke-through-the-ship-not-to-menti))
 - [ ] Odd ring of terrain features that end up looking horrible, and the trees are bla ([message](Feedback/2026-10-10.md#bug-odd-ring-of-terrain-features-that-end-up-looking-horrible-and-the-trees-are-bla))
