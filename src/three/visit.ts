@@ -401,6 +401,7 @@ export class Visit {
   dock(c: Craft) {
     const v = this.v;
     if (v.landing) { this.toast('Lift off first'); return; }
+    if (v.fall) { this.toast('Inside the horizon: there is no way back out'); return; }
     const p = this.worldOf(c, STATION.port), s = v.shipPos(), d = Math.hypot(p[0] - s[0], p[1] - s[1], p[2] - s[2]) * AU_M;
     if (d > 3000) {
       v.travel = { b: null, stop: 400 / AU_M, name: c.name, at: () => this.worldOf(c, STATION.port.clone().add(new THREE.Vector3(0, 0, -60))), dock: c };

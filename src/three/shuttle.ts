@@ -62,6 +62,7 @@ export class Shuttle {
     const v = this.v, sh = v.ship;
     if (this.out) { v.app.onToast('Lander 1 is already out'); return; }
     if (sh.worm) { v.app.onToast('Not during a wormhole transit'); return; }
+    if (v.fall) { v.app.onToast('Inside the horizon: there is no way back out'); return; }
     if (v.landing) { v.app.onToast('The bay doors open onto the ground: lift off first, then launch the lander'); return; }
     const drop = new THREE.Vector3(0.6, -9, 12.5).applyQuaternion(sh.quat), n = sh.nav;
     this.nav = { anchor: n.anchor, off: [n.off[0] + drop.x / AU_M, n.off[1] + drop.y / AU_M, n.off[2] + drop.z / AU_M], vel: [...n.vel] as V3 };

@@ -325,6 +325,23 @@ try {
   ok('RT zooms the 2D map in', await hold(7, () => window.orbital.view.scale > window.__s0 * 1.5));
   ok('Menu steps back into 3D', await hold(9, () => window.orbital.mode3d));
   await page.evaluate(() => { window.__pad.connected = false; });
+  // through a black hole's horizon: no wormhole, no spacewalk, no lander out of it
+  await page.evaluate(() => { const a = window.orbital; a.loadPreset('xrb'); a.select(a.world.sources.find(b => b.cls === 'bh')); });
+  await page.keyboard.press('KeyV'); await page.keyboard.press('KeyV');
+  await page.waitForFunction(() => window.orbital.mode3d && window.orbital.v3.active, null, { timeout: 30000 });
+  await page.evaluate(() => { const v = window.orbital.v3; v.mode = 'pilot'; v.travel = null; v.ship.charge = 1; v.ship.nav.anchor = window.orbital.selected; v.ship.nav.off = [3e-12, 0, 0]; v.ship.nav.vel = [0, 0, 0]; });
+  ok('inside the horizon the ship falls', await until(page, () => !!window.orbital.v3.fall));
+  ok('and no wormhole opens, no spacewalk, no lander', await page.evaluate(() => {
+    const a = window.orbital, v = a.v3, star = a.world.sources.find(b => b.cls === 'star');
+    v.jumpTo(star);
+    const worm = !!v.ship.worm;
+    v.goTo(star);
+    const go = !!v.travel;
+    v.mode = 'walk'; v.stepOut();
+    const out = v.mode;
+    v.mode = 'pilot'; v.shuttle.launch();
+    return !worm && !go && out === 'walk' && v.mode === 'pilot' && !!v.fall;
+  }));
   await page.keyboard.press('KeyV');
   // (and the 3D picture is gone, not left frozen over the 2D view; the button offers 3D again)
   ok('V goes back to 2D', await until(page, () => !window.orbital.mode3d && getComputedStyle(document.getElementById('c3')).display === 'none' && document.getElementById('modeBtn').textContent === '3D'));

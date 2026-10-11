@@ -858,6 +858,7 @@ export class View3D {
     if (this.mode === 'shuttle') return 'You are flying Lander 1: dock with the ship first (fly within 100 m, F)';
     if (this.mode === 'eva' || this.mode === 'surface') return 'Board the ship first: it holds station while you are outside';
     if (this.landing) return this.landing.phase === 'landed' ? 'Lift off first (L)' : 'Not while landing';
+    if (this.fall) return 'Inside the horizon: there is no way back out';
     if (this.ship.worm) return 'Not during a wormhole transit';
     if (this.aboardDock()) return 'Go back aboard the ship first: it is docked here';
     return '';
@@ -869,6 +870,7 @@ export class View3D {
     if (this.mode === 'shuttle') return 'You are flying Lander 1: dock with the ship first (fly within 100 m, F)';
     if (this.mode === 'eva' || this.mode === 'surface') return 'Board the ship first: it holds station while you are outside';
     if (this.landing) return 'Lift off first';
+    if (this.fall) return 'Inside the horizon: there is no way back out';
     if (sh.worm) return 'A transit is under way';
     if (this.aboardDock()) return 'Go back aboard the ship first: it is docked here';
     if (sh.charge < 1) return `The wormhole drive is recharging: ${Math.ceil((1 - sh.charge) * sh.refill())} s`;
@@ -1051,6 +1053,7 @@ export class View3D {
   stepOut() {
     const sh = this.ship;
     if (sh.worm) { this.app.onToast('Not in the middle of a wormhole transit'); return; }
+    if (this.fall) { this.app.onToast('Not inside the horizon: the hole would take you as it takes the ship'); return; }
     if (this.landing) {
       if (this.landing.phase !== 'landed') { this.app.onToast('Wait until the ship has landed'); return; }
       const foot = this.ladderFoot()!;
