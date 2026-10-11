@@ -17,7 +17,7 @@ Both are finished. `fix/fleet`: tsc, vitest (96) and the rocket part passed; the
 
 ## Not started
 - Sleeping while paused passes no time (desktop only now; the fix is in `goToSleep`, src/three/view3d.ts).
-- The rest of Open in [Bugs](Bugs.md).
+- The rest of Open in [Bugs](Bugs.md), including two flaky browser checks (`[tests]`): fix those first, so CI can be trusted.
 - 4 `[map]` bugs from the map hunter, in [Bugs](Bugs.md). The ground hunter found nothing it could reproduce; its suspicions: the base terrace's corners have no walkable platform, animals wander into the sea, cliffs are climbed instantly with no fall, and the builder's flood fill ignores mirror.
 
 ## To carry on
