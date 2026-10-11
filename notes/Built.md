@@ -43,3 +43,4 @@ What's in the game, newest first. The README has the full description.
 - Landing, the sky, real sites and life, gas giant interiors, a fleet of craft (eabc2f1)
 - Walk the ship, spacewalks, wormholes, the nav map (c0a5bbd)
 - The notes app keeps what you typed when there's no token (it comes back after you save one), hides + Add while you edit, has 16 px fields so the iPhone doesn't zoom, and files bugs with $ in them as typed; `tests/notes-app.mjs` checks all of it (57282c6, 6c8f5c8, a757484, 6a6c653)
+- In 3D on an upright phone the long button rail goes into two columns so it fits under the top buttons; entering 3D un-pauses, since a phone has no pause button there (7aab695, 16941d1)

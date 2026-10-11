@@ -3,22 +3,22 @@
 Where the bugfix pass of 11 October stands, so another Claude session (or account) can pick it up. The workflow is in [AGENTS.md](../AGENTS.md) ("Bugfix passes with subagents"); the agents are in `.claude/agents/`.
 
 ## Shipped to main
-- Notes app: 4 bugs, verified SHIP (57282c6, 6c8f5c8, a757484, 6a6c653). See [Bugs](Bugs.md), Fixed.
+- Notes app: 4 bugs, verified SHIP (57282c6, 6c8f5c8, a757484, 6a6c653).
+- Phone 3D: the rail and pause, verified SHIP (7aab695, 16941d1). See [Bugs](Bugs.md), Fixed.
 
 ## Fixed on a branch, not verified yet
 Each branch is based on an older main; rebase or cherry-pick onto main after it passes.
 | Branch | Bugs | Commits |
 |---|---|---|
-| `fix/phone-3d` | 3D button rail off the top of a phone; paused then 3D stays frozen | 3dd9b22, 8cf733d |
 | `fix/ship` | Use runs twice on touch; T/J while docked; wormhole/spacewalk inside a black hole's fall | 0ed7a2c, c06caa1, bd8e5aa |
 | `fix/fleet` | Retire strands a rocket; a rover flown to a station vanishes | d10c2bf, 81964e0 |
 
-The ship and fleet fixers were stopped mid-pass to save usage: their branches hold what was committed, and their checks may not all have run.
+Both are finished. `fix/fleet`: tsc, vitest (96) and the rocket part passed; the base part didn't finish. `fix/ship`: the ship part passed; vitest, the build and the rocket and touch parts didn't run. The verifier should run them all.
 
 ## Not started
-- Sleeping while paused passes no time (wait for `fix/phone-3d`: it changes how pause works in 3D).
+- Sleeping while paused passes no time (desktop only now; the fix is in `goToSleep`, src/three/view3d.ts).
 - The rest of Open in [Bugs](Bugs.md).
-- The map and ground hunters were stopped early: anything they logged is in [Bugs](Bugs.md) under `[map]` and `[land]`.
+- 4 `[map]` bugs from the map hunter, in [Bugs](Bugs.md). The ground hunter found nothing it could reproduce; its suspicions: the base terrace's corners have no walkable platform, animals wander into the sea, cliffs are climbed instantly with no fall, and the builder's flood fill ignores mirror.
 
 ## To carry on
 Open a Claude Code session on this repository and say:
