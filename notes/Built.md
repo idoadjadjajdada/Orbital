@@ -42,3 +42,4 @@ What's in the game, newest first. The README has the full description.
 - Weather on the giants, the Sun from a photograph, Mars from MOLA (9fe28ec, 4af1bd3, 7d47086)
 - Landing, the sky, real sites and life, gas giant interiors, a fleet of craft (eabc2f1)
 - Walk the ship, spacewalks, wormholes, the nav map (c0a5bbd)
+- The notes app keeps what you typed when there's no token (it comes back after you save one), hides + Add while you edit, has 16 px fields so the iPhone doesn't zoom, and files bugs with $ in them as typed; `tests/notes-app.mjs` checks all of it (57282c6, 6c8f5c8, a757484, 6a6c653)

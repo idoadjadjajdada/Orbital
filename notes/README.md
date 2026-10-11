@@ -2,6 +2,7 @@
 
 The project's notebook, kept in the repo so Claude can read and edit it in any session. Open this `notes/` folder as an Obsidian vault.
 
+- [Handoff](Handoff.md): where the bugfix pass stands, for the next session
 - [Roadmap](Roadmap.md): what's next, in order
 - [Ideas](Ideas.md): anything, unsorted
 - [Bugs](Bugs.md): what looks wrong, and where
