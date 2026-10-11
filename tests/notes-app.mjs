@@ -75,6 +75,27 @@ try {
     ok('no token: nothing is written by Save', writes.length === 0, `${writes.length} writes`);
     await ctx.close();
   }
+  // 2. The floating + Add is not over Add, Edit or Settings, where it would throw away what is typed
+  {
+    const { page, ctx } = await phone('#/edit/notes%2FBugs.md', { withToken: true });
+    await page.waitForSelector('#ed');
+    await page.fill('#ed', 'my unsaved edit');
+    const shown = () => page.evaluate(() => !document.querySelector('#addBtn').hidden && getComputedStyle(document.querySelector('#addBtn')).display !== 'none');
+    ok('+ Add is not shown on Edit', !(await shown()));
+    if (await shown()) {
+      await page.tap('#addBtn');
+      await page.waitForFunction(() => location.hash === '#/add');
+      await page.goBack();
+      await page.waitForSelector('#ed');
+      ok('the edit is still there after + Add and Back', await page.evaluate(() => document.querySelector('#ed').value === 'my unsaved edit'));
+    }
+    for (const [h, sel, want] of [['#/add', '#msg', false], ['#/settings', '#tok', false], ['#/', '.tiles', true], ['#/n/notes%2FBugs.md', '.md', true]]) {
+      await page.evaluate(x => { location.hash = x; }, h);
+      await page.waitForSelector(sel);
+      ok(`+ Add is ${want ? '' : 'not '}shown on ${h}`, (await shown()) === want);
+    }
+    await ctx.close();
+  }
 } catch (e) { fails++; console.log(`FAIL  ${e.stack || e}`); }
 await browser.close();
 await server.close();

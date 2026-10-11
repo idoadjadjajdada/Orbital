@@ -393,6 +393,8 @@ function setTitle(t, html = false) { if (html) $('#title').innerHTML = t; else $
 async function route() {
   const h = decodeURIComponent(location.hash.slice(1) || '/');
   window.scrollTo(0, 0);
+  // not over a page with a form: tapping it there would throw away what was typed
+  $('#addBtn').hidden = /^\/(add|edit\/|settings)/.test(h);
   try {
     if (!head) await refresh();
     if (h.startsWith('/n/')) await showNote(h.slice(3));
