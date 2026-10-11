@@ -38,10 +38,9 @@ Use ordinary Markdown links (`[Bugs](Bugs.md)`), not `[[wikilinks]]`: they work 
 - To see a change working, use `tests/surface-shot.mjs` (a picture from the ground at a latitude and longitude) or a short Playwright script, and look at the picture.
 
 ## Bugfix passes with subagents
-For a big bugfix, Claude Code uses the agents in `.claude/agents/`:
-1. **bug-hunter** (read-only): one per area (map, ship, land, base, rocket, giant, touch), run side by side. They return ranked bugs with how to see them.
-2. Pick the bugs to fix. **notes-keeper** logs every one in `notes/Bugs.md` before work starts, so the owner sees the list.
-3. **bug-fixer**: one per bug, each in its own worktree, each with a test. Fixes touching the same files go one after another, not side by side.
-4. **verifier**: checks each fix on its own; only a SHIP gets merged onto `main` and pushed (the rules under Commits apply).
-5. **notes-keeper** ticks off what was fixed, with hashes, and records limits left in.
-Browser parts are slow: don't run more than one at a time across agents.
+A big bugfix runs through the agents in `.claude/agents/`. The main session coordinates: subagents can't call each other, so it hands each one's results to the next.
+1. **bug-hunter** (Sonnet) starts it: one per area (map, ship, land, base, rocket, giant, touch), side by side. It reproduces each bug and logs it under Open in `notes/Bugs.md`, so the owner sees the list first.
+2. The coordinator picks the order and gives each bug to a **bug-fixer** (Opus): one bug each, in its own worktree, with a test that fails before and passes after. Fixes touching the same files go one after another.
+3. **verifier** (Opus) is the last check before shipping. Only a SHIP gets merged onto `main` and pushed (the rules under Commits apply).
+4. **notes-keeper** (Haiku) ticks off what was fixed, with hashes, writes "Done" under the owner's messages, and records limits left in.
+Browser parts are slow: run only one at a time across all agents.

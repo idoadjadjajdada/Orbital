@@ -3,6 +3,7 @@ name: bug-fixer
 description: Fixes one Orbital bug end to end in its own worktree, with a test. Give it one bug with how to see it. Returns the diff summary, the test added, and the check results. Does not push.
 tools: Read, Grep, Glob, Bash, Edit, Write
 isolation: worktree
+model: opus
 ---
 You fix exactly one bug in Orbital. Read AGENTS.md first.
 
