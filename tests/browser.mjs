@@ -733,6 +733,19 @@ try {
   ok('iPhone: 👁 hides everything', !(await ph.isVisible('#tools')) && !(await ph.isVisible('#inspector')) && await ph.isVisible('#showUi'));
   await ph.tap('#showUi');
   ok('iPhone: and brings it back', await ph.isVisible('#tools'));
+  // 3D upright: every button on the rail is on the screen, and none is on top of another control
+  await ph.tap('#modeBtn');
+  await ph.waitForFunction(() => window.orbital.mode3d && window.orbital.v3?.active && document.querySelectorAll('.rail3 button').length >= 11, null, { timeout: 30000 });
+  const railFits = () => ph.evaluate(() => [...document.querySelectorAll('.rail3 button, #hideBtn, #moreBtn, #modeBtn')].filter(e => {
+    const r = e.getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2;
+    return r.top < 0 || r.bottom > innerHeight || !e.contains(document.elementFromPoint(x, y)) || !e.contains(document.elementFromPoint(x, r.top + 3));
+  }).map(e => e.dataset.b || e.id));
+  for (const [w, h] of [[390, 844], [375, 667]]) {
+    await ph.setViewportSize({ width: w, height: h });
+    await ph.waitForFunction(w => innerWidth === w, w);
+    const bad = await railFits();
+    ok(`iPhone ${w}x${h}: the 3D rail fits on the screen and covers nothing`, bad.length === 0, bad.join(', '));
+  }
   ok('iPhone: no errors', perrs.length === 0, perrs.join(' | '));
   await phone.close();
   }
