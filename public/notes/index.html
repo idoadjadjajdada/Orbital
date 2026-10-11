@@ -154,7 +154,8 @@ async function imageURL(path) {
  * to write ({ path, text } or { path, base64 }). If main moved meanwhile, it is done again on top.
  */
 async function commit(message, change) {
-  if (!token) { location.hash = '#/settings'; toast('Add your GitHub token first'); throw new Error('no token'); }
+  // stay on the page: what was typed or edited is still there once a token is saved
+  if (!token) { toast('Add your GitHub token first (⚙︎ Settings)', 5000); throw new Error('no token'); }
   for (let attempt = 0; attempt < 3; attempt++) {
     await refresh();
     const out = await change(read);
@@ -268,10 +269,15 @@ async function showHome() {
 // ---------------------------------------------------------------- adding
 const KINDS = { bug: 'Bug', feature: 'Feature', idea: 'Idea', reference: 'Reference', note: 'Just a note' };
 let kind = 'bug', shots = [];
+/** what was typed in Add while there was no token yet, kept until the token is saved */
+const DRAFT = 'orbital-notes-draft';
 function showAdd() {
   setTitle('Add');
   $('#editBtn').hidden = true;
-  shots = [];
+  let draft = null;
+  try { draft = JSON.parse(store.get(DRAFT)); } catch {}
+  store.set(DRAFT, null);
+  if (draft) kind = KINDS[draft.kind] ? draft.kind : kind; else shots = [];
   view.innerHTML = `<div class="form">
     <label>What is it?</label>
     <div class="seg" id="kinds">${Object.entries(KINDS).map(([k, n]) => `<button data-k="${k}" class="${k === kind ? 'on' : ''}">${n}</button>`).join('')}</div>
@@ -291,6 +297,7 @@ function showAdd() {
     $('#thumbs').innerHTML = shots.map(s => `<img src="${s.url}">`).join('');
   };
   $('#go').onclick = add;
+  if (draft) { $('#msg').value = draft.msg || ''; $('#where').value = draft.where || ''; $('#thumbs').innerHTML = shots.map(s => `<img src="${s.url}">`).join(''); }
 }
 
 /** a photo, as the notebook keeps them: a JPEG at most 1600 px across */
@@ -312,6 +319,7 @@ function shrink(file) {
 async function add() {
   const msg = $('#msg').value.trim(), where = $('#where').value.trim();
   if (!msg) { toast('Write something first'); return; }
+  if (!token) { store.set(DRAFT, JSON.stringify({ kind, msg: $('#msg').value, where: $('#where').value })); location.hash = '#/settings'; toast('Add your GitHub token first: your message is kept'); return; }
   $('#go').disabled = true; $('#state').textContent = 'Saving…';
   const d = today(), first = msg.split('\n')[0].replace(/\s+/g, ' ').slice(0, 80);
   const heading = `${KINDS[kind] === 'Just a note' ? 'Note' : KINDS[kind]}: ${first}`;
@@ -375,7 +383,7 @@ function showSettings() {
     <p>In Safari: Share → <b>Add to Home Screen</b>. It opens like an app.</p>
   </div>`;
   const who = async () => { if (!token) { $('#who').textContent = 'No token: reading only'; return; } try { const u = await gh('/user'); $('#who').textContent = `Signed in as ${u.login}`; } catch { $('#who').textContent = 'That token does not work'; } };
-  $('#saveTok').onclick = async () => { token = $('#tok').value.trim(); store.set('orbital-notes-token', token || null); await who(); toast(token ? 'Saved on this phone' : 'Cleared'); };
+  $('#saveTok').onclick = async () => { token = $('#tok').value.trim(); store.set('orbital-notes-token', token || null); await who(); toast(token ? 'Saved on this phone' : 'Cleared'); if (token && store.get(DRAFT)) location.hash = '#/add'; };
   $('#clearTok').onclick = () => { token = ''; store.set('orbital-notes-token', null); $('#tok').value = ''; who(); };
   who();
 }
