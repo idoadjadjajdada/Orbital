@@ -395,7 +395,6 @@ export class Controls3D {
     if (k === 'land') v.helmAct();
     if (k === 'coast') v.toggleCoast();
     if (k === 'sland') v.shuttle.land();
-    if (k === 'use') v.prompt?.act();
     if (k === 'scan') v.panels.show('scan');
     if (k === 'ride') v.kit.cycleRide();
     if (k === 'jet') v.kit.toggleJet();

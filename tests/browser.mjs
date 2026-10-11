@@ -240,6 +240,7 @@ try {
   const view0 = await page.evaluate(() => window.orbital.v3.ship.view);
   await page.keyboard.press('KeyZ');
   ok('Z switches between the cockpit and the chase view', await page.evaluate(v => window.orbital.v3.ship.view !== v, view0));
+  ok('the touch Use button runs the prompt once', await page.evaluate(() => { const v = window.orbital.v3; let n = 0; v.prompt = { label: 'x', act: () => n++ }; v.controls.touchButton('use'); v.prompt = null; return n === 1; }));
   // out of the airlock and back
   await page.evaluate(() => { const a = window.orbital; a.loadPreset('earth'); a.select(a.world.sources.find(b => b.name === 'Moon')); });
   await page.keyboard.press('KeyV'); await page.keyboard.press('KeyV');
