@@ -45,3 +45,12 @@ The main session coordinates; the agents in `.claude/agents/` do the heavy parts
 4. **verifier** (Opus): once per pass, over all the fix branches together, running the full suite once. Only what it calls SHIP is merged onto `main` and pushed (the rules under Commits apply).
 5. **The coordinator keeps the notes**: ticks bugs with hashes, writes "Done" under the owner's messages, adds Built lines, logs what the verifier found, and updates `notes/Handoff.md` if work is left open.
 At most two agents at once: browser parts share port 4174, so they run one at a time behind a lock (`flock <lockfile> node tests/browser.mjs`).
+
+## Building features with subagents
+Features come from `notes/Roadmap.md` (the owner's words, linked from each entry, are the spec). The main session coordinates, as for bugfixes.
+1. **Size it.** Small (one area, a few files, no open questions): skip to step 3, the builder plans it at the top of its report. Medium or large: plan first.
+2. **feature-planner** (Opus, read-only): finds the holes and writes `notes/Plans/<name>.md`, linked from the Roadmap entry. **The owner approves the plan before anything is built**: they read it in the notes app and answer its questions. Nothing is built from an unapproved plan. A large feature is split into steps that each ship on their own.
+3. **feature-builder** (Opus): one per feature (or per step), in its own worktree; builds to the plan, tests every edge case in it, looks at it on a phone-sized screen.
+4. **verifier** (Opus): the same final review as for bugfixes, once per batch of branches. Only SHIP goes to `main`.
+5. **The coordinator keeps the notes**: ticks the Roadmap entry with its hashes, adds it to `notes/Built.md` (with a screenshot if it's something you see), writes "Done" under the owner's message, and logs what was left out in `notes/Ideas.md` or Known limits.
+Features and bugfixes can share one verifier run. At most two agents at once.

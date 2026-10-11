@@ -4,6 +4,7 @@ The project's notebook, kept in the repo so Claude can read and edit it in any s
 
 - [Handoff](Handoff.md): where the bugfix pass stands, for the next session
 - [Roadmap](Roadmap.md): what's next, in order
+- `Plans/`: a plan for each bigger feature, to read and approve before it's built
 - [Ideas](Ideas.md): anything, unsorted
 - [Bugs](Bugs.md): what looks wrong, and where
 - [Assets](Assets.md): the model packs and where they're used
