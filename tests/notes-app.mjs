@@ -96,6 +96,22 @@ try {
     }
     await ctx.close();
   }
+  // 3. Every text field is at least 16 px, so iOS does not zoom the page when one is focused
+  {
+    const { page, ctx } = await phone('#/add', { withToken: true });
+    const px = sel => page.evaluate(x => parseFloat(getComputedStyle(document.querySelector(x)).fontSize), sel);
+    await page.waitForSelector('#msg');
+    for (const sel of ['#msg', '#where']) ok(`${sel} is at least 16 px`, (await px(sel)) >= 16, `${await px(sel)} px`);
+    if (process.env.SHOTS) await page.screenshot({ path: `${process.env.SHOTS}/notes-add.png` });
+    await page.evaluate(() => { location.hash = '#/settings'; });
+    await page.waitForSelector('#tok');
+    ok('#tok is at least 16 px', (await px('#tok')) >= 16, `${await px('#tok')} px`);
+    await page.evaluate(() => { location.hash = '#/edit/notes%2FBugs.md'; });
+    await page.waitForSelector('#ed');
+    ok('#ed is at least 16 px', (await px('#ed')) >= 16, `${await px('#ed')} px`);
+    if (process.env.SHOTS) await page.screenshot({ path: `${process.env.SHOTS}/notes-edit.png` });
+    await ctx.close();
+  }
 } catch (e) { fails++; console.log(`FAIL  ${e.stack || e}`); }
 await browser.close();
 await server.close();
