@@ -112,6 +112,21 @@ try {
     if (process.env.SHOTS) await page.screenshot({ path: `${process.env.SHOTS}/notes-edit.png` });
     await ctx.close();
   }
+  // 4. A bug with $&, $1, $` or $' in it goes into Bugs.md as typed
+  {
+    const { page, ctx, writes } = await phone('#/add', { withToken: true });
+    await page.waitForSelector('#msg');
+    const first = "Costs $& and $1 here, $` and $' too", where = 'Mars $& $1';
+    await page.fill('#msg', first);
+    await page.fill('#where', where);
+    await page.tap('#go');
+    ok('$ in a bug: it is added', await until(page, () => location.hash === '#/n/notes%2FBugs.md'));
+    const bugs = blobs(writes).find(t => t.startsWith('# Bugs')) || '';
+    ok('$ in a bug: the line in Bugs.md is as typed', bugs.includes(`## Open\n- [ ] ${first} · ${where} ([message](Feedback/`), JSON.stringify(bugs.slice(0, 160)));
+    ok('$ in a bug: the rest of Bugs.md is untouched', bugs.endsWith(')\n- [ ] old thing\n\n## Known limits\n'), JSON.stringify(bugs.slice(-80)));
+    ok('$ in a bug: the Feedback copy is as typed', blobs(writes).some(t => t.includes(`> ${first}\n`)));
+    await ctx.close();
+  }
 } catch (e) { fails++; console.log(`FAIL  ${e.stack || e}`); }
 await browser.close();
 await server.close();
