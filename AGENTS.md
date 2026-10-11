@@ -54,3 +54,10 @@ Features come from `notes/Roadmap.md` (the owner's words, linked from each entry
 4. **verifier** (Opus): the same final review as for bugfixes, once per batch of branches. Only SHIP goes to `main`.
 5. **The coordinator keeps the notes**: ticks the Roadmap entry with its hashes, adds it to `notes/Built.md` (with a screenshot if it's something you see), writes "Done" under the owner's message, and logs what was left out in `notes/Ideas.md` or Known limits.
 Features and bugfixes can share one verifier run. At most two agents at once.
+
+## Handing off
+Work must survive the session ending (the container is thrown away) and be picked up by any session or account:
+- Every fix or feature branch that isn't on `main` yet is pushed to GitHub as `fix/<name>` or `feature/<name>` as soon as an agent commits to it, not only at the end.
+- `notes/Handoff.md` always says where things stand: what shipped, each open branch and what it holds and which checks ran, plans waiting for approval, and what to do next. Update it whenever that changes.
+- Each plan in `notes/Plans/` starts with a status line: `Status: waiting for approval`, `approved`, `building (feature/<name>)` or `built (hashes)`.
+- A new session starts with: "Read notes/Handoff.md and AGENTS.md, then carry on."

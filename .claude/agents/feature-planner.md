@@ -14,7 +14,7 @@ You plan one feature for Orbital. You never edit code; you write one file, `note
    - What it shares with existing systems (gravity, time cheat, fleet, saving, the early solar system) and how it could break them.
    - Performance on a slow phone and on CI's software renderer.
    - What the owner asked for that is unclear: list it as a question, don't guess.
-4. Write the plan, short and plain, in the owner's style:
+4. Write the plan, short and plain, in the owner's style. Its first line under the title is `Status: waiting for approval`.
    - **What it does**, as the player sees it (3-6 lines).
    - **How**: the files to change and the approach, following existing patterns.
    - **Edge cases and decisions**: each hole and what the game does about it.
