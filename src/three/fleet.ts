@@ -856,6 +856,19 @@ export class Fleet {
     return [w.x, w.y, w.z];
   }
 
+  /** take a craft out of service: '' if it went, or why not (a rocket standing on it, docked at it or flying to or from it) */
+  retire(c: Craft): string {
+    if (c.rocket?.aboard) return `You are aboard ${c.name}`;
+    for (const x of this.crafts) {
+      const r = x.rocket;
+      if (!r || x === c) continue;
+      if (r.trip && (r.trip.to.site === c.id || r.trip.from.site === c.id)) return `${x.name} is flying ${r.trip.to.site === c.id ? 'to' : 'from'} ${c.name}: retire it when ${x.name} is down`;
+      if (r.at === c.id) return `${x.name} is ${r.docked ? 'docked at' : 'on'} ${c.name}: fly it somewhere else first`;
+    }
+    this.remove(c);
+    return '';
+  }
+
   remove(c: Craft) {
     const k = this.crafts.indexOf(c);
     if (k >= 0) this.crafts.splice(k, 1);

@@ -141,7 +141,14 @@ export class Panels {
       const c = v.fleet.byId(Number(id));
       if (c) { this.close(); if (v.visit.docked === c) v.visit.enter(c, 'dock'); else v.visit.dock(c); return; }
     }
-    else if (a === 'cdrop') { const c = v.fleet.byId(Number(id)); if (c) { v.fleet.remove(c); v.app.onToast(`${c.name} decommissioned`); } }
+    else if (a === 'cdrop') {
+      // not the craft you are docked at or inside; nor one a rocket stands on, docks at or is flying to or from
+      const c = v.fleet.byId(Number(id));
+      if (c) {
+        const why = v.visit.docked === c ? `The ship is docked at ${c.name}: undock first` : v.visit.at?.c === c ? `You are inside ${c.name}: step out first` : v.fleet.retire(c);
+        v.app.onToast(why || `${c.name} decommissioned`);
+      }
+    }
     else if (a === 'mission') { this.show('mission'); return; }
     else if (a === 'site') { /* handled above */ }
     else if (a === 'gosite') { const t = v.missionTarget(); if (t) { v.goToSite(t, id); this.close(); return; } }

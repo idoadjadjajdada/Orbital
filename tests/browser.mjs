@@ -621,6 +621,11 @@ try {
   await page.evaluate(() => window.orbital.v3.panels.show('mission'));
   await page.click(`.panel3 button[data-act="cdock"][data-id="${iss}"]`);
   ok('docked, Go aboard takes you inside it', await until(page, () => window.orbital.v3.mode === 'inside' && window.orbital.v3.visit.docked?.name === 'ISS'));
+  // (Retire is refused for the station you are docked at and inside: it stays)
+  await page.evaluate(id => window.orbital.v3.panels.show('craft', id), iss);
+  await page.click(`.panel3 button[data-act="cdrop"][data-id="${iss}"]`);
+  ok('the station you are docked at cannot be retired', await page.evaluate(id => { const v = window.orbital.v3; return !!v.fleet.byId(id) && v.visit.docked?.name === 'ISS'; }, iss));
+  await page.evaluate(() => window.orbital.v3.panels.close());
   ok('a rocket can be stacked on a free pad', await page.evaluate(() => { const f = window.orbital.v3.fleet, pad = f.crafts.find(c => c.name === 'Canaveral Launch Pad'); const c = f.stack('courier', pad); return typeof c !== 'string' && c.state === 'surface' && c.build === 0; }));
   clean('rocket');
   }
