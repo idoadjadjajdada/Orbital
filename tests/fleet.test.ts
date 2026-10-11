@@ -35,3 +35,23 @@ describe('retiring a craft', () => {
     expect(f.fly(wayfarer, f.crafts.find(c => c.kind === 'base')!)).toBe('');
   });
 });
+
+describe('a rover on a rocket', () => {
+  it('stays aboard at a station, and rolls out where the rocket next lands', () => {
+    const { f, iss, mammoth } = earthFleet();
+    const rovers = () => f.crafts.filter(c => c.kind === 'rover').length;
+    const home = f.byId(mammoth.rocket!.at!)!;
+    mammoth.rocket!.load.rover = true;
+    expect(f.fly(mammoth, iss)).toBe('');
+    for (let k = 0; k < 100 && mammoth.rocket!.trip; k++) f.step(50);
+    expect(mammoth.status).toBe('docked at ISS');
+    expect(rovers()).toBe(0);
+    expect(mammoth.rocket!.load.rover).toBe(true);
+    expect(mammoth.log.at(-1)!.msg).toMatch(/rover stays aboard/);
+    expect(f.fly(mammoth, home)).toBe('');
+    for (let k = 0; k < 100 && mammoth.rocket!.trip; k++) f.step(50);
+    expect(mammoth.state).toBe('surface');
+    expect(rovers()).toBe(1);
+    expect(mammoth.rocket!.load.rover).toBe(false);
+  });
+});

@@ -754,8 +754,11 @@ export class Fleet {
     if (L.supplies) { const fit = Math.max(0, Math.min(L.supplies, Math.floor((room.stores - (to.stores ?? STORES0)) / HOLD_DAYS))); keep.supplies = L.supplies - fit; L.supplies = fit; if (keep.supplies) got.push(`${keep.supplies * HOLD_DAYS} days of supplies stay aboard: the stores are full`); }
     if (L.crew) { to.crew = (to.crew ?? CREW0) + L.crew; got.push(`${L.crew} crew aboard ${to.name} (now ${to.crew})`); }
     if (L.supplies) { to.stores = Math.round(((to.stores ?? STORES0) + L.supplies * HOLD_DAYS) * 10) / 10; got.push(`${L.supplies * HOLD_DAYS} days of supplies unloaded (${to.stores} in store)`); }
-    if (L.rover && c.state === 'surface') { const rv = this.launch('rover', to.b, new THREE.Vector3(), null, c); rv.name = `${to.name} rover`; got.push(`${rv.name} rolled out`); }
-    r.load = { crew: keep.crew, supplies: keep.supplies, rover: false };
+    // (a rover drives off on the ground; at a station it stays aboard, for the next landing)
+    const keepRover = L.rover && c.state !== 'surface';
+    if (L.rover && !keepRover) { const rv = this.launch('rover', to.b, new THREE.Vector3(), null, c); rv.name = `${to.name} rover`; got.push(`${rv.name} rolled out`); }
+    if (keepRover) got.push('the rover stays aboard: nowhere to drive it here');
+    r.load = { crew: keep.crew, supplies: keep.supplies, rover: keepRover };
     if (r.route) r.route.wait = TURNAROUND;
     if (L.crew || L.supplies) { to.short = 0; to.warned = 0; }
     if (L.crew && /empty/.test(to.status)) to.status = to.kind === 'station' ? 'in orbit, crewed' : 'crewed';
