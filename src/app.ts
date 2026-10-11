@@ -108,7 +108,7 @@ export class App {
   warp2d = -0.6;
   onMode: () => void = () => {};
 
-  /** Switch between the map and the 3D view. In 3D the clock runs at one second a second unless the cheat says otherwise. */
+  /** Switch between the map and the 3D view. In 3D the clock runs (un-paused) at one second a second unless the cheat says otherwise. */
   private loading3d: Promise<unknown> | null = null;
   async toggle3D() {
     if (!this.mode3d) {
@@ -122,6 +122,8 @@ export class App {
       this.mode3d = true;
       this.warp2d = this.warpLog;
       this.warpLog = Math.log10(1 / (365.25 * 86400));
+      // and it runs: Space flies here, and on a phone the pause button is folded away with the rest of the top-left
+      this.paused = false;
       this.armed = null;
       this.view.setAim(null, null);
       this.v3.enter();
