@@ -38,9 +38,10 @@ Use ordinary Markdown links (`[Bugs](Bugs.md)`), not `[[wikilinks]]`: they work 
 - To see a change working, use `tests/surface-shot.mjs` (a picture from the ground at a latitude and longitude) or a short Playwright script, and look at the picture.
 
 ## Bugfix passes with subagents
-A big bugfix runs through the agents in `.claude/agents/`. The main session coordinates: subagents can't call each other, so it hands each one's results to the next.
-1. **bug-hunter** (Sonnet) starts it: one per area (map, ship, land, base, rocket, giant, touch), side by side. It reproduces each bug and logs it under Open in `notes/Bugs.md`, so the owner sees the list first.
-2. The coordinator picks the order and gives each bug to a **bug-fixer** (Opus): one bug each, in its own worktree, with a test that fails before and passes after. Fixes touching the same files go one after another.
-3. **verifier** (Opus) is the last check before shipping. Only a SHIP gets merged onto `main` and pushed (the rules under Commits apply).
-4. **notes-keeper** (Haiku) ticks off what was fixed, with hashes, writes "Done" under the owner's messages, and records limits left in.
-Browser parts are slow: run only one at a time across all agents.
+The main session coordinates; the agents in `.claude/agents/` do the heavy parts. Subagents can't call each other, so the coordinator passes results along. Every agent starts cold and re-reads the code, so use as few as the job needs.
+1. **Bugs come from the notes.** The owner's reports and Open in `notes/Bugs.md` are the list. A **bug-hunter** (Sonnet) runs only when the owner asks for a hunt: one area at a time, stopping at 5 reproduced bugs, which it logs under Open.
+2. **The coordinator triages.** Tiny, obvious fixes (a line or two) it makes itself, with a test. The rest it groups by area or files.
+3. **bug-fixer** (Opus): one per group, not one per bug, in its own worktree; one commit and one test per bug; runs only its area's browser part. Groups touching the same files go one after another.
+4. **verifier** (Opus): once per pass, over all the fix branches together, running the full suite once. Only what it calls SHIP is merged onto `main` and pushed (the rules under Commits apply).
+5. **The coordinator keeps the notes**: ticks bugs with hashes, writes "Done" under the owner's messages, adds Built lines, logs what the verifier found, and updates `notes/Handoff.md` if work is left open.
+At most two agents at once: browser parts share port 4174, so they run one at a time behind a lock (`flock <lockfile> node tests/browser.mjs`).

@@ -23,6 +23,6 @@ The ship and fleet fixers were stopped mid-pass to save usage: their branches ho
 ## To carry on
 Open a Claude Code session on this repository and say:
 
-> Read notes/Handoff.md and AGENTS.md. For each branch under "Fixed on a branch, not verified yet", run the verifier agent on it. Merge only the ones it says SHIP onto main, push, tick them off in notes/Bugs.md with the new hashes, and update this file.
+> Read notes/Handoff.md and AGENTS.md. Run one verifier over all the branches under "Fixed on a branch, not verified yet". Merge only what it says SHIP onto main, push, tick those bugs off in notes/Bugs.md with the new hashes, and update this file.
 
-Cheaper: give one verifier all three branches at once. If your plan has no Opus, change `model: opus` to `model: sonnet` in `.claude/agents/bug-fixer.md` and `verifier.md`.
+If your plan has no Opus, change `model: opus` to `model: sonnet` in `.claude/agents/bug-fixer.md` and `verifier.md`.
