@@ -240,7 +240,18 @@ try {
   const view0 = await page.evaluate(() => window.orbital.v3.ship.view);
   await page.keyboard.press('KeyZ');
   ok('Z switches between the cockpit and the chase view', await page.evaluate(v => window.orbital.v3.ship.view !== v, view0));
-  ok('the touch Use button runs the prompt once', await page.evaluate(() => { const v = window.orbital.v3; let n = 0; v.prompt = { label: 'x', act: () => n++ }; v.controls.touchButton('use'); v.prompt = null; return n === 1; }));
+  // T and J while docked at the ISS: the ship comes off the port and goes
+  const dockISS = () => page.evaluate(() => { const v = window.orbital.v3; v.travel = null; v.ship.od = false; v.visit.docked = v.fleet.crafts.find(c => c.kind === 'station' && c.name === 'ISS'); });
+  await dockISS();
+  ok('docked at the ISS, the ship is held at its port', await until(page, () => { const v = window.orbital.v3, n = v.nearest(); return !!v.visit.docked && n.b?.name === 'Earth' && n.alt < 1e6; }));
+  await page.evaluate(() => { const a = window.orbital; a.v3.goTo(a.world.sources.find(b => b.name === 'Moon')); });
+  ok('T while docked undocks and flies off', await page.waitForFunction(() => { const v = window.orbital.v3; return !v.visit.docked && !!v.travel && v.nearest().alt > 1e6; }, null, { timeout: 40000 }).then(() => true, () => false));
+  await dockISS();
+  await until(page, () => window.orbital.v3.nearest().alt < 1e6);
+  await page.evaluate(() => { const a = window.orbital; a.v3.ship.charge = 1; a.v3.jumpTo(a.world.sources.find(b => b.name === 'Moon')); });
+  ok('J while docked undocks to open the wormhole', await until(page, () => { const v = window.orbital.v3; return !v.visit.docked && v.ship.worm?.phase === 'charge'; }));
+  await page.evaluate(() => { const a = window.orbital; a.v3.jumpTo(a.world.sources.find(b => b.name === 'Moon')); });
+  ok('the touch Use button runs the prompt once',await page.evaluate(() => { const v = window.orbital.v3; let n = 0; v.prompt = { label: 'x', act: () => n++ }; v.controls.touchButton('use'); v.prompt = null; return n === 1; }));
   // out of the airlock and back
   await page.evaluate(() => { const a = window.orbital; a.loadPreset('earth'); a.select(a.world.sources.find(b => b.name === 'Moon')); });
   await page.keyboard.press('KeyV'); await page.keyboard.press('KeyV');

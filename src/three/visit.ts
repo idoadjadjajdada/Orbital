@@ -385,6 +385,8 @@ export class Visit {
     if (!c) return;
     if (!c.b.alive || c.state === 'lost') { this.docked = null; return; }
     if (v.mode === 'pilot' && v.controls.moving()) { this.undock(); return; }
+    // sent somewhere (the autopilot, a wormhole, called to you): off the port first
+    if (v.travel || sh.worm) { this.undock(); return; }
     const q = v.fleet.quat(c);
     // the ship's x is the station's −z (its airlock, on the ship's port side, faces the station), its y the station's
     const local = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 1, 0), new THREE.Vector3(1, 0, 0)));

@@ -859,6 +859,7 @@ export class View3D {
     if (this.mode === 'eva' || this.mode === 'surface') return 'Board the ship first: it holds station while you are outside';
     if (this.landing) return this.landing.phase === 'landed' ? 'Lift off first (L)' : 'Not while landing';
     if (this.ship.worm) return 'Not during a wormhole transit';
+    if (this.aboardDock()) return 'Go back aboard the ship first: it is docked here';
     return '';
   }
 
@@ -869,9 +870,13 @@ export class View3D {
     if (this.mode === 'eva' || this.mode === 'surface') return 'Board the ship first: it holds station while you are outside';
     if (this.landing) return 'Lift off first';
     if (sh.worm) return 'A transit is under way';
+    if (this.aboardDock()) return 'Go back aboard the ship first: it is docked here';
     if (sh.charge < 1) return `The wormhole drive is recharging: ${Math.ceil((1 - sh.charge) * sh.refill())} s`;
     return '';
   }
+
+  /** in the station the ship is docked at: it should not fly off without you */
+  private aboardDock() { return this.mode === 'inside' && !!this.visit.docked && this.visit.at?.c === this.visit.docked; }
 
   /** fly to a body and stop a few radii out; a wormhole's mouth, fly on in */
   goTo(b: Body) {
