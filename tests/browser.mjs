@@ -519,8 +519,14 @@ try {
     // (two frames only: at most twelve seconds of fall, still well clear of the ground, which stays built round you)
     n.vel = [0, 0, 0]; a.warpLog = Math.log10(60 / (365.25 * 86400));
     const f0 = a.frameNo, t0 = performance.now();
-    while (a.frameNo < f0 + 2) await new Promise(r => setTimeout(r, 20));
-    const o = n.off, r = Math.hypot(...o), vr = -(n.vel[0] * o[0] + n.vel[1] * o[1] + n.vel[2] * o[2]) / r, frames = a.frameNo - f0;
+    // (the fastest it fell on any frame: frames can come in a burst, and a third one may already have put it down)
+    let vr = 0;
+    while (a.frameNo < f0 + 2) {
+      await new Promise(r => requestAnimationFrame(r));
+      const o = n.off, r = Math.hypot(...o);
+      vr = Math.max(vr, -(n.vel[0] * o[0] + n.vel[1] * o[1] + n.vel[2] * o[2]) / r);
+    }
+    const frames = a.frameNo - f0;
     // (what real time would give: the time that passed, a frame counting for a tenth of a second at most)
     const real = 9.8 * Math.min((performance.now() - t0) / 1000, 0.1 * frames);
     a.warpLog = w0; n.off = off0; n.vel = [0, 0, 0];
