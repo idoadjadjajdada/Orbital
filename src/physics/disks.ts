@@ -125,7 +125,7 @@ export class DiskPhysics {
       const vx = p.vx - host.vx, vy = p.vy - host.vy, vz = p.vz - host.vz;
       const x = rx * e1[0] + ry * e1[1] + rz * e1[2];
       const y = rx * e2[0] + ry * e2[1] + rz * e2[2];
-      const R = Math.hypot(x, y);
+      const R = Math.sqrt(x * x + y * y);
       const vxp = vx * e1[0] + vy * e1[1] + vz * e1[2], vyp = vx * e2[0] + vy * e2[1] + vz * e2[2];
       loc[k * 6] = R; loc[k * 6 + 1] = x; loc[k * 6 + 2] = y;
       loc[k * 6 + 3] = (x * vxp + y * vyp) / R;             // radial
@@ -214,52 +214,49 @@ export class DiskPhysics {
         touched = true;
       }
 
-      // the fluid Roche limit for this patch's own material
-      const aRoche = host.cls === 'bh' || host.cls === 'ns' ? Infinity : 2.44 * host.r * Math.cbrt(rhoHost / (c.m / c.vol));
-      let ux = 0, uy = 0, uz = 0;
-      for (const i of c.idx) { const p = list[i]; ux += p.m * p.vx; uy += p.m * p.vy; uz += p.m * p.vz; }
-      ux /= c.m; uy /= c.m; uz /= c.m;
-      const cl = { gas: c.gas, m: c.m, vol: c.vol, list: c.idx.map(i => list[i]) };
       // Gathering into a moonlet, only outside the Roche limit. Pieces that hit
       // each other slower than the escape speed of what they would make stick;
       // once the collisions have damped the patch that far, it accretes.
       // ...and only if the patch's orbit stays outside it: a clump whose periapsis
       // dips inside will be torn apart again on its next pass, so it never forms
-      let rpOk = false;
       // (a patch holding a moonlet already has its clump: moonlets merge by gather())
-      if (cl.gas === 0 && c.src === 0 && cl.list.length >= 4 && R > aRoche) {
-        const vR = c.mvR / c.m, vP = c.L / c.m / R, vZ = c.mvz / c.m;
-        const eps = (vR * vR + vP * vP + vZ * vZ) / 2 - GM / R;
-        if (eps < 0) {
-          const aM = -GM / (2 * eps), h = R * vP;
-          const ecc = Math.sqrt(Math.max(0, 1 - (h * h) / (GM * aM)));
-          rpOk = aM * (1 - ecc) > aRoche;
-        }
+      if (c.gas !== 0 || c.src !== 0 || c.idx.length < 4) continue;
+      // the fluid Roche limit for this patch's own material
+      const aRoche = host.cls === 'bh' || host.cls === 'ns' ? Infinity : 2.44 * host.r * Math.cbrt(rhoHost / (c.m / c.vol));
+      if (!(R > aRoche)) continue;
+      const vR = c.mvR / c.m, vP = c.L / c.m / R, vZ = c.mvz / c.m;
+      const eps = (vR * vR + vP * vP + vZ * vZ) / 2 - GM / R;
+      if (!(eps < 0)) continue;
+      const aM = -GM / (2 * eps), h = R * vP;
+      const ecc = Math.sqrt(Math.max(0, 1 - (h * h) / (GM * aM)));
+      if (!(aM * (1 - ecc) > aRoche)) continue;
+
+      // random speeds in the patch, with the Keplerian shear taken out
+      let dv2 = 0;
+      const uR = c.mvR / c.m, uzc = c.mvz / c.m, lam = c.L / c.Lk;
+      for (const i of c.idx) {
+        const Ri = loc[i * 6];
+        dv2 += list[i].m * ((loc[i * 6 + 3] - uR) ** 2 + (loc[i * 6 + 4] - lam * Math.sqrt(GM / Ri)) ** 2 + (loc[i * 6 + 5] - uzc) ** 2);
       }
-      if (rpOk) {
-        // random speeds in the patch, with the Keplerian shear taken out
-        let dv2 = 0;
-        const uR = c.mvR / c.m, uzc = c.mvz / c.m, lam = c.L / c.Lk;
-        for (const i of c.idx) {
-          const Ri = loc[i * 6];
-          dv2 += list[i].m * ((loc[i * 6 + 3] - uR) ** 2 + (loc[i * 6 + 4] - lam * Math.sqrt(GM / Ri)) ** 2 + (loc[i * 6 + 5] - uzc) ** 2);
-        }
-        const rClump = radiusFromDensity(c.m, c.m / c.vol);
-        if (dv2 / c.m < 2 * G * c.m / rClump) {
-          let x = 0, y = 0, z = 0;
-          for (const p of cl.list) { x += p.m * p.x; y += p.m * p.y; z += p.m * p.z; w.kill(p); }
-          const b = new Body({ name: 'moonlet', kind: 'fragment', cls: 'debris', m: c.m, r: rClump,
-            look: { style: 'barren', seed: Math.floor(Math.random() * 1e6), c1: 0x6a625a, c2: 0x9a9088 }, source: c.m > Math.max(1e-13, 1e-4 * host.m), spin: 0 });
-          b.setPos(x / c.m, y / c.m, z / c.m);
-          b.setVel(ux, uy, uz);
-          b.heat = 0.4;
-          b.dens = c.m / c.vol;
-          refreshRoche(b);
-          w.add(b);
-          w.structural();
-          touched = true;
-        }
+      const rClump = radiusFromDensity(c.m, c.m / c.vol);
+      if (!(dv2 / c.m < 2 * G * c.m / rClump)) continue;
+      let x = 0, y = 0, z = 0, ux = 0, uy = 0, uz = 0;
+      for (const i of c.idx) {
+        const p = list[i];
+        x += p.m * p.x; y += p.m * p.y; z += p.m * p.z;
+        ux += p.m * p.vx; uy += p.m * p.vy; uz += p.m * p.vz;
+        w.kill(p);
       }
+      const b = new Body({ name: 'moonlet', kind: 'fragment', cls: 'debris', m: c.m, r: rClump,
+        look: { style: 'barren', seed: Math.floor(Math.random() * 1e6), c1: 0x6a625a, c2: 0x9a9088 }, source: c.m > Math.max(1e-13, 1e-4 * host.m), spin: 0 });
+      b.setPos(x / c.m, y / c.m, z / c.m);
+      b.setVel(ux / c.m, uy / c.m, uz / c.m);
+      b.heat = 0.4;
+      b.dens = c.m / c.vol;
+      refreshRoche(b);
+      w.add(b);
+      w.structural();
+      touched = true;
     }
     return touched;
   }
@@ -370,14 +367,15 @@ function friction(w: World, host: Body, list: Body[], hosts: Map<Body, { host: B
     if (s === host || !s.alive || s.held || s.m > 0.05 * host.m || s.cls === 'star' || s.compact) continue;
     if (hosts.get(s)?.host !== host) continue;
     const rx = s.x - host.x, ry = s.y - host.y, rz = s.z - host.z;
-    const R = Math.hypot(rx, ry, rz);
-    // the disc material near its orbit
+    const R2 = rx * rx + ry * ry + rz * rz, R = Math.sqrt(R2);
+    // the disc material near its orbit, within 20% of its distance
+    const in2 = 0.64 * R2, out2 = 1.44 * R2;
     let mAnn = 0, Lx = 0, Ly = 0, Lz = 0;
     const near: Body[] = [];
     for (const p of list) {
       const px = p.x - host.x, py = p.y - host.y, pz = p.z - host.z;
-      const pr = Math.hypot(px, py, pz);
-      if (Math.abs(pr - R) > 0.2 * R) continue;
+      const pr2 = px * px + py * py + pz * pz;
+      if (pr2 < in2 || pr2 > out2) continue;
       near.push(p);
       mAnn += p.m;
       const vx = p.vx - host.vx, vy = p.vy - host.vy, vz = p.vz - host.vz;

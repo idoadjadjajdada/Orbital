@@ -1,3 +1,4 @@
+import { icon, type IconName } from '../ui/icons';
 import * as THREE from 'three';
 import type { View3D, Mode } from './view3d';
 import type { V3 } from '../pixel/sprites';
@@ -116,31 +117,31 @@ const BINDS: Record<Mode, Bind[]> = {
 
 const TITLE: Record<Mode, string> = { pilot: 'At the helm', walk: 'On foot', eva: 'Spacewalk', scope: 'Telescope', surface: 'On the ground', craft: 'Watching a craft', shuttle: 'Flying Lander 1', inside: 'Inside' };
 
-/** touch: the buttons under the right thumb, held down */
-const THUMB: Record<Mode, [string, string][]> = {
-  pilot: [['up', '▲'], ['down', '▼'], ['boost', 'Boost']],
+/** touch: the buttons under the right thumb, held down: key, and an icon (named for screen readers) or a word */
+const THUMB: Record<Mode, [string, IconName | string, string?][]> = {
+  pilot: [['up', 'chev-up', 'Thrust up'], ['down', 'chev-down', 'Thrust down'], ['boost', 'Boost']],
   walk: [['jump', 'Jump']],
-  inside: [['up', '▲'], ['down', '▼'], ['boost', 'Faster']],
+  inside: [['up', 'chev-up', 'Up'], ['down', 'chev-down', 'Down'], ['boost', 'Faster']],
   surface: [['jump', 'Jump'], ['boost', 'Run']],
-  craft: [['zin', '＋'], ['zout', '−']],
-  shuttle: [['up', '▲'], ['down', '▼'], ['boost', 'Boost']],
-  eva: [['up', '▲'], ['down', '▼'], ['boost', 'Boost']],
-  scope: [['zin', '＋'], ['zout', '−']],
+  craft: [['zin', 'plus', 'Closer'], ['zout', 'minus', 'Further']],
+  shuttle: [['up', 'chev-up', 'Thrust up'], ['down', 'chev-down', 'Thrust down'], ['boost', 'Boost']],
+  eva: [['up', 'chev-up', 'Thrust up'], ['down', 'chev-down', 'Thrust down'], ['boost', 'Boost']],
+  scope: [['zin', 'plus', 'Zoom in'], ['zout', 'minus', 'Zoom out']],
 };
 /** touch: the rail of commands, tapped: key, icon, name */
-const RAIL: Record<Mode, [string, string, string][]> = {
-  pilot: [['go', '◎', 'Go to'], ['od', '⏩', 'Overdrive'], ['worm', '🌀', 'Wormhole'], ['land', '🛬', 'Land · dock'], ['coast', '🪂', 'Engines'], ['mission', '🛰', 'Craft'], ['light', '🔦', 'Light'], ['map', '🗺', 'Nav map'], ['view', '🎥', 'Camera'], ['leave', '🚶', 'Leave helm'], ['help', '?', 'Help']],
-  walk: [['mission', '🛰', 'Craft'], ['map', '🗺', 'Nav map'], ['help', '?', 'Help']],
-  inside: [['use', '👆', 'Use'], ['mission', '🛰', 'Craft'], ['map', '🗺', 'Nav map'], ['help', '?', 'Help']],
-  surface: [['scan', '🔬', 'Scan'], ['ride', '🛞', 'Ride'], ['jet', '🚀', 'Jetpack'], ['sample', '🧪', 'Sample'], ['mission', '🛰', 'Craft'], ['light', '🔦', 'Lamp'], ['call', '📡', 'Call ship'], ['map', '🗺', 'Nav map'], ['help', '?', 'Help']],
-  shuttle: [['sland', '🛬', 'Land'], ['use', '👆', 'Use'], ['map', '🗺', 'Nav map'], ['help', '?', 'Help']],
-  craft: [['prev', '◀', 'Prev'], ['next', '▶', 'Next'], ['seat', '🎥', 'Seat'], ['mission', '🛰', 'Mission'], ['leave', '↩', 'Back'], ['help', '?', 'Help']],
-  eva: [['call', '📡', 'Call ship'], ['light', '🔦', 'Lamp'], ['map', '🗺', 'Nav map'], ['help', '?', 'Help']],
-  scope: [['track', '◎', 'Track'], ['leave', '↩', 'Step back'], ['help', '?', 'Help']],
+const RAIL: Record<Mode, [string, IconName, string][]> = {
+  pilot: [['go', 'target', 'Go to'], ['od', 'overdrive', 'Overdrive'], ['worm', 'wormhole', 'Wormhole'], ['land', 'land', 'Land · dock'], ['coast', 'flame', 'Engines'], ['mission', 'satellite', 'Craft'], ['light', 'lamp', 'Light'], ['map', 'map', 'Nav map'], ['view', 'camera', 'Camera'], ['leave', 'walk', 'Leave helm'], ['help', 'help', 'Help']],
+  walk: [['mission', 'satellite', 'Craft'], ['map', 'map', 'Nav map'], ['help', 'help', 'Help']],
+  inside: [['use', 'tap', 'Use'], ['mission', 'satellite', 'Craft'], ['map', 'map', 'Nav map'], ['help', 'help', 'Help']],
+  surface: [['scan', 'scan', 'Scan'], ['ride', 'wheel', 'Ride'], ['jet', 'rocket', 'Jetpack'], ['sample', 'flask', 'Sample'], ['mission', 'satellite', 'Craft'], ['light', 'lamp', 'Lamp'], ['call', 'antenna', 'Call ship'], ['map', 'map', 'Nav map'], ['help', 'help', 'Help']],
+  shuttle: [['sland', 'land', 'Land'], ['use', 'tap', 'Use'], ['map', 'map', 'Nav map'], ['help', 'help', 'Help']],
+  craft: [['prev', 'chev-left', 'Prev'], ['next', 'chev-right', 'Next'], ['seat', 'camera', 'Seat'], ['mission', 'satellite', 'Mission'], ['leave', 'back', 'Back'], ['help', 'help', 'Help']],
+  eva: [['call', 'antenna', 'Call ship'], ['light', 'lamp', 'Lamp'], ['map', 'map', 'Nav map'], ['help', 'help', 'Help']],
+  scope: [['track', 'crosshair', 'Track'], ['leave', 'back', 'Step back'], ['help', 'help', 'Help']],
 };
 const HELD = new Set(['up', 'down', 'boost', 'jump']);
 
-const TOUCH_HELP = 'Touch: put your left thumb down anywhere on the left of the screen and move it to fly or walk; drag anywhere else to look; tap something to select it (on foot: tap to use what is under the dot). The buttons under your right thumb are held; the ones down the side are tapped. − and + above the stick set the throttle. Things fade back when you leave them alone; 👁 at the top hides them all.';
+const TOUCH_HELP = 'Touch: put your left thumb down anywhere on the left of the screen and move it to fly or walk; drag anywhere else to look; tap something to select it (on foot: tap to use what is under the dot). The buttons under your right thumb are held; the ones down the side are tapped. − and + above the stick set the throttle. Things fade back when you leave them alone; the eye at the top hides them all.';
 
 export class Controls3D {
   throttle = 1;
@@ -366,7 +367,7 @@ export class Controls3D {
     if (document.pointerLockElement) document.exitPointerLock();
     const pad = this.dev === 'pad';
     const order: Mode[] = [this.v.mode, ...(['pilot', 'walk', 'surface', 'eva', 'scope', 'craft'] as Mode[]).filter(m => m !== this.v.mode)];
-    this.sheetEl.innerHTML = `<div class="fhead">Controls <button class="icon close">✕</button></div><div class="cols">`
+    this.sheetEl.innerHTML = `<div class="fhead">Controls <button class="icon close" aria-label="Close">${icon('close')}</button></div><div class="cols">`
       + order.map(m => `<div class="col${m === this.v.mode ? ' now' : ''}"><div class="bsub">${TITLE[m]}</div><table>`
         + BINDS[m].map(b => `<tr><td>${b.t}</td><td>${glyphs(b.k, 'kb')}</td><td>${glyphs(b.p, 'pad')}</td></tr>`).join('')
         + `</table></div>`).join('')
@@ -395,7 +396,6 @@ export class Controls3D {
     if (k === 'land') v.helmAct();
     if (k === 'coast') v.toggleCoast();
     if (k === 'sland') v.shuttle.land();
-    if (k === 'use') v.prompt?.act();
     if (k === 'scan') v.panels.show('scan');
     if (k === 'ride') v.kit.cycleRide();
     if (k === 'jet') v.kit.toggleJet();
@@ -603,7 +603,7 @@ export class Controls3D {
     // what you can use, under the crosshair
     const dev = this.dev;
     const useKey = mode === 'pilot' ? (dev === 'pad' ? 'X' : 'L') : dev === 'pad' ? 'A' : 'F';
-    const use = r.prompt ? `${dev === 'touch' ? '<b>👆</b>' : glyphs([useKey], dev === 'pad' ? 'pad' : 'kb')} ${r.prompt}` : '';
+    const use = r.prompt ? `${dev === 'touch' ? `<b>${icon('tap')}</b>` : glyphs([useKey], dev === 'pad' ? 'pad' : 'kb')} ${r.prompt}` : '';
     if (this.useEl.innerHTML !== use) { this.useEl.innerHTML = use; this.useEl.hidden = !use; }
 
     // the bar of main actions, in the glyphs of what was used last
@@ -619,8 +619,8 @@ export class Controls3D {
     // touch buttons for where you are
     if (this.shownMode !== mode) {
       this.shownMode = mode;
-      this.thumbEl.innerHTML = THUMB[mode].map(([k, t]) => `<button data-b="${k}">${t}</button>`).join('');
-      this.railEl.innerHTML = RAIL[mode].map(([k, i, t]) => `<button data-b="${k}"><b>${i}</b><span>${t}</span></button>`).join('');
+      this.thumbEl.innerHTML = THUMB[mode].map(([k, t, name]) => name ? `<button data-b="${k}" aria-label="${name}">${icon(t as IconName)}</button>` : `<button data-b="${k}">${t}</button>`).join('');
+      this.railEl.innerHTML = RAIL[mode].map(([k, i, t]) => `<button data-b="${k}"><b>${icon(i)}</b><span>${t}</span></button>`).join('');
       this.root.dataset.mode = mode;
     }
     for (const b of this.railEl.querySelectorAll<HTMLElement>('[data-b="od"]')) b.classList.toggle('on', r.od);

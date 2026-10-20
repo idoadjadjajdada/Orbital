@@ -251,7 +251,7 @@ export class Visit {
       v.feeds.target = `${c.id}:${id.slice(8)}`;
       const on = v.feeds.showing(v.feeds.target), cr = on !== null ? v.fleet.byId(on) : null;
       v.panels.show('mission');
-      this.toast(cr ? `${v.feeds.label(v.feeds.target)} shows ${cr.name}'s camera. 📺 buttons change it` : `Put a craft's camera on ${v.feeds.label(v.feeds.target)} with its 📺 button`);
+      this.toast(cr ? `${v.feeds.label(v.feeds.target)} shows ${cr.name}'s camera. The monitor buttons in Mission Control change it` : `Put a craft's camera on ${v.feeds.label(v.feeds.target)} with its monitor button in Mission Control`);
       return;
     }
     const pick = (l: string[]) => l[Math.floor(Math.random() * l.length)];
@@ -471,7 +471,7 @@ export class Visit {
       const air = atmosphere(b, v.stars());
       const ship = v.landing?.phase === 'landed' && v.landing.b === b ? (this.distToPad(c) < 30 ? 'on the pad' : 'landed nearby') : v.travel?.name.endsWith('pad') ? 'on its way to the pad' : 'away';
       const rovers = v.fleet.crafts.filter(r => r.kind === 'rover' && r.b === b && r.state !== 'lost');
-      const cam = ['CAMERA', 'no craft on this screen', 'F: Mission Control,', 'then a craft\'s 📺'];
+      const cam = ['CAMERA', 'no craft on this screen', 'F: Mission Control,', 'then a craft\'s monitor'];
       I.drawScreen('base', [c.name.toUpperCase(), `crew ${c.crew ?? 6} · power 140 kW`, `stores ${Math.floor(c.stores ?? 90)} days`, `water 94 % recycled · ${hhmm}`]);
       I.drawScreen('ship', ['THE SHIP', ship, 'the flight desk calls', 'it to the pad']);
       I.drawScreen('weather', ['OUTSIDE', air.bar > 1e-4 ? `${air.bar.toPrecision(3)} bar · ${Math.round(air.T - 273.15)} °C` : `vacuum · ${Math.round(air.T - 273.15)} °C`, `${(gravity(b) / 9.81).toFixed(2)} g`, hhmm]);

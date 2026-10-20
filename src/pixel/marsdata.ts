@@ -20,7 +20,8 @@ export let MARS: MarsData | null = null;
 /** use these data (tests set them from the files directly) */
 export function setMars(d: MarsData | null) { MARS = d; }
 
-async function pixels(url: string) {
+/** a picture's pixels, RGBA, decoded as stored (no colour management) */
+export async function pixels(url: string) {
   const blob = await (await fetch(url)).blob();
   const bmp = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
   const c = new OffscreenCanvas(bmp.width, bmp.height);

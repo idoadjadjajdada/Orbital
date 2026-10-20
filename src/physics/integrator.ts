@@ -23,9 +23,12 @@ import { G, C } from './units';
 const K_TICKS = 52;               // local time is counted in 2^-52 of the span
 const SPAN = 2 ** K_TICKS;
 const K_MAX = 44;                 // finest level allowed: span / 2^44
+/** length of a step at each level, in ticks */
+const TICKS = Array.from({ length: K_MAX + 1 }, (_, k) => 2 ** (K_TICKS - k));
 const C2 = C * C;
 const C5 = C2 * C2 * C;
 const GW_K = (32 / 5) * G ** 4;
+const GR_K = 6 * G / C2;
 const DISC = 2e-5; // AU, ~3000 km
 
 export interface Hit { a: Body; b: Body; kind: 'collide' | 'roche'; }
@@ -53,14 +56,26 @@ export class Hermite {
   /** test particles that ran into a source; they are dead already, the
    *  caller hands their mass and momentum over once everything is in step */
   absorbed: { p: Body; into: Body }[] = [];
-  /** force evaluations performed, for the performance readout */
-  evals = 0;
 
-  private levels: Set<Body>[] = Array.from({ length: K_MAX + 1 }, () => new Set());
-  private level = new Map<Body, number>();
+  /** the bodies on each block level; a body's `level` and `slot` say where it sits */
+  private levels: Body[][] = Array.from({ length: K_MAX + 1 }, () => []);
+  private active: Body[] = [];
+  private groupSrcs: Body[] = [];
   private srcs: Body[] = [];
   private span = 0;
   private tick = 0;
+
+  // The sources, packed for the force loop: their predicted state, copied in
+  // before every pass, and what does not change during an `advance` call.
+  private ns = 0;
+  private sx = new Float64Array(0); private sy = new Float64Array(0); private sz = new Float64Array(0);
+  private svx = new Float64Array(0); private svy = new Float64Array(0); private svz = new Float64Array(0);
+  private sm = new Float64Array(0);   // mass
+  private sgm = new Float64Array(0);  // G m
+  private scr = new Float64Array(0);  // capture radius
+  private sgl = new Float64Array(0);  // G L of a shining star, else 0
+  private scb = new Float64Array(0);  // ∛m, for the Roche distance
+  private sco = new Uint8Array(0);    // compact object
 
   // scratch outputs of evalForce
   private fa = [0, 0, 0];
@@ -68,10 +83,12 @@ export class Hermite {
   private cross = Infinity;
   private hStep = 0;
 
-  /** Fresh accelerations and step sizes for every body at the current state. */
+  /** Fresh accelerations and step sizes for `bodies` (all of them, or only new test particles) at the current state. */
   init(bodies: Body[], sources: Body[]) {
-    this.srcs = sources;
+    this.packSources(sources);
+    for (const b of sources) { b.px = b.x; b.py = b.y; b.pz = b.z; b.pvx = b.vx; b.pvy = b.vy; b.pvz = b.vz; }
     for (const b of bodies) { b.px = b.x; b.py = b.y; b.pz = b.z; b.pvx = b.vx; b.pvy = b.vy; b.pvz = b.vz; b.t = 0; }
+    this.packState();
     for (const b of bodies) {
       this.evalForce(b, false);
       b.ax = this.fa[0]; b.ay = this.fa[1]; b.az = this.fa[2];
@@ -92,56 +109,61 @@ export class Hermite {
    * wall-clock `deadline` passes. Returns the time actually advanced.
    */
   advance(bodies: Body[], sources: Body[], T: number, deadline: number): number {
-    this.srcs = sources;
+    this.packSources(sources);
     this.hits.length = 0;
     this.absorbed.length = 0;
     if (T <= 0 || bodies.length === 0) return T;
     this.span = T;
     this.tick = T / SPAN;
 
-    for (const s of this.levels) s.clear();
-    this.level.clear();
-    for (const b of bodies) {
-      b.t = 0;
-      const k = this.levelFor(b.dtWant, 0, 0);
-      this.levels[k].add(b);
-      this.level.set(b, k);
-    }
+    for (const l of this.levels) l.length = 0;
+    for (const b of bodies) { b.t = 0; this.place(b, this.levelFor(b.dtWant, 0, 0)); }
 
     let tau = 0;
-    let blocks = 0;
-    const active: Body[] = [];
+    const active = this.active;
     while (tau < SPAN) {
       let kf = K_MAX;
-      while (kf > 0 && this.levels[kf].size === 0) kf--;
-      const tn = tau + 2 ** (K_TICKS - kf);
+      while (kf > 0 && this.levels[kf].length === 0) kf--;
+      const tn = tau + TICKS[kf];
 
       active.length = 0;
       for (let k = 0; k <= kf; k++) {
-        if (this.levels[k].size && tn % 2 ** (K_TICKS - k) === 0) for (const b of this.levels[k]) active.push(b);
+        const l = this.levels[k];
+        if (l.length && tn % TICKS[k] === 0) for (const b of l) active.push(b);
       }
 
       for (const s of sources) this.predict(s, tn);
       this.stepGroup(active, tn, true);
 
       for (const b of active) {
-        const k = this.level.get(b)!;
         // a particle swallowed this step leaves the schedule, or its tiny
         // last step would keep the block clock ticking with nothing to do
-        if (!b.alive) { this.levels[k].delete(b); this.level.delete(b); continue; }
-        const kn = this.levelFor(b.dtWant, k, tn);
-        if (kn !== k) { this.levels[k].delete(b); this.levels[kn].add(b); this.level.set(b, kn); }
+        if (!b.alive) { this.unplace(b); continue; }
+        const kn = this.levelFor(b.dtWant, b.level, tn);
+        if (kn !== b.level) { this.unplace(b); this.place(b, kn); }
       }
       tau = tn;
 
-      if (this.hits.length) { this.syncTo(bodies, tau); return tau * this.tick; }
-      if ((++blocks & 63) === 0 && performance.now() > deadline && tau < SPAN) {
+      if (this.hits.length || (tau < SPAN && performance.now() > deadline)) {
         this.syncTo(bodies, tau);
         return tau * this.tick;
       }
     }
     for (const b of bodies) b.t = 0;
     return T;
+  }
+
+  private place(b: Body, k: number) {
+    b.level = k;
+    b.slot = this.levels[k].length;
+    this.levels[k].push(b);
+  }
+
+  /** Take `b` off its level, moving the level's last body into its slot. */
+  private unplace(b: Body) {
+    const l = this.levels[b.level];
+    const last = l.pop()!;
+    if (last !== b) { l[b.slot] = last; last.slot = b.slot; }
   }
 
   /** Bring every body to local tick `tau` with a partial step, then zero the clocks. */
@@ -161,7 +183,7 @@ export class Hermite {
     if (k > K_MAX) k = K_MAX;
     if (tn > 0 && k < kOld) {
       k = kOld - 1;
-      if (tn % 2 ** (K_TICKS - k) !== 0) k = kOld;
+      if (tn % TICKS[k] !== 0) k = kOld;
     }
     return k;
   }
@@ -178,6 +200,36 @@ export class Hermite {
     b.pvz = b.vz + b.az * h + b.jz * h2;
   }
 
+  /** What the force loop needs from the sources that holds for a whole `advance` call. */
+  private packSources(sources: Body[]) {
+    this.srcs = sources;
+    const n = this.ns = sources.length;
+    if (this.sx.length < n) {
+      const cap = Math.max(n, 2 * this.sx.length, 16);
+      for (const k of ['sx', 'sy', 'sz', 'svx', 'svy', 'svz', 'sm', 'sgm', 'scr', 'sgl', 'scb'] as const) this[k] = new Float64Array(cap);
+      this.sco = new Uint8Array(cap);
+    }
+    for (let j = 0; j < n; j++) {
+      const s = sources[j];
+      this.sm[j] = s.m;
+      this.sgm[j] = G * s.m;
+      this.scr[j] = s.captureRadius;
+      this.sgl[j] = s.star && s.star.L > 0 ? G * s.star.L : 0;
+      this.scb[j] = Math.cbrt(s.m);
+      this.sco[j] = s.compact ? 1 : 0;
+    }
+  }
+
+  /** Copy the sources' predicted states in, before a pass of force evaluations. */
+  private packState() {
+    const { srcs, sx, sy, sz, svx, svy, svz } = this;
+    for (let j = 0; j < this.ns; j++) {
+      const s = srcs[j];
+      sx[j] = s.px; sy[j] = s.py; sz[j] = s.pz;
+      svx[j] = s.pvx; svy[j] = s.pvy; svz[j] = s.pvz;
+    }
+  }
+
   /**
    * Take every body in `group` from its own time to `tn`. Sources outside the
    * group must already be predicted to `tn`. The corrector is the
@@ -186,18 +238,27 @@ export class Hermite {
    * removes most of the secular energy drift of the one-pass scheme.
    */
   private stepGroup(group: Body[], tn: number, live: boolean) {
-    for (const b of group) if (!b.source || !live) this.predict(b, tn);
+    const srcs = this.groupSrcs;
+    srcs.length = 0;
+    for (const b of group) {
+      if (!b.source || !live) this.predict(b, tn);
+      if (b.source) srcs.push(b);
+    }
     for (let it = 0; it < this.iterations; it++) {
+      // later passes only re-evaluate the sources
+      const pass = it === 0 ? group : srcs;
+      if (!pass.length) break;
       const last = it === this.iterations - 1;
-      for (const b of group) {
-        if (!b.alive || (it > 0 && !b.source)) continue;
+      this.packState();
+      for (const b of pass) {
+        if (!b.alive) continue;
         this.hStep = (tn - b.t) * this.tick;
         this.evalForce(b, live && (last || !b.source));
         b.nax = this.fa[0]; b.nay = this.fa[1]; b.naz = this.fa[2];
         b.njx = this.fj[0]; b.njy = this.fj[1]; b.njz = this.fj[2];
         b.ncross = this.cross;
       }
-      for (const b of group) if (b.alive && (it === 0 || b.source)) this.correct(b, (tn - b.t) * this.tick);
+      for (const b of pass) if (b.alive) this.correct(b, (tn - b.t) * this.tick);
     }
     for (const b of group) this.commit(b, tn, live);
   }
@@ -222,24 +283,26 @@ export class Hermite {
     b.x = b.px; b.y = b.py; b.z = b.pz;
     b.vx = b.pvx; b.vy = b.pvy; b.vz = b.pvz;
     if (b.held) { b.ax = b.ay = b.az = b.jx = b.jy = b.jz = 0; return; }
+    // second and third derivatives of the acceleration over the step, from the
+    // Hermite interpolant; S is the second at the end of the step
     const ih = 1 / h, ih2 = ih * ih, ih3 = ih2 * ih;
-    const da = [b.ax - b.nax, b.ay - b.nay, b.az - b.naz];
-    const j0 = [b.jx, b.jy, b.jz], j1 = [b.njx, b.njy, b.njz];
-    let S = 0, R = 0;
-    for (let k = 0; k < 3; k++) {
-      const s2 = (-6 * da[k] - h * (4 * j0[k] + 2 * j1[k])) * ih2;
-      const s3 = (12 * da[k] + 6 * h * (j0[k] + j1[k])) * ih3;
-      const c2 = s2 + h * s3;
-      S += c2 * c2; R += s3 * s3;
-    }
-    S = Math.sqrt(S); R = Math.sqrt(R);
+    const dax = b.ax - b.nax, day = b.ay - b.nay, daz = b.az - b.naz;
+    const s3x = (12 * dax + 6 * h * (b.jx + b.njx)) * ih3;
+    const s3y = (12 * day + 6 * h * (b.jy + b.njy)) * ih3;
+    const s3z = (12 * daz + 6 * h * (b.jz + b.njz)) * ih3;
+    const c2x = (-6 * dax - h * (4 * b.jx + 2 * b.njx)) * ih2 + h * s3x;
+    const c2y = (-6 * day - h * (4 * b.jy + 2 * b.njy)) * ih2 + h * s3y;
+    const c2z = (-6 * daz - h * (4 * b.jz + 2 * b.njz)) * ih2 + h * s3z;
+    const S = Math.sqrt(c2x * c2x + c2y * c2y + c2z * c2z);
+    const R = Math.sqrt(s3x * s3x + s3y * s3y + s3z * s3z);
     b.ax = b.nax; b.ay = b.nay; b.az = b.naz;
     b.jx = b.njx; b.jy = b.njy; b.jz = b.njz;
 
     // Aarseth's criterion at the end of the step; skip it for sliver steps
     // taken only to synchronise, whose difference quotients are noise.
     if (!live && h < 0.25 * b.dtWant) return;
-    const A = Math.hypot(b.ax, b.ay, b.az), J = Math.hypot(b.jx, b.jy, b.jz);
+    const A = Math.sqrt(b.ax * b.ax + b.ay * b.ay + b.az * b.az);
+    const J = Math.sqrt(b.jx * b.jx + b.jy * b.jy + b.jz * b.jz);
     const den = J * R + S * S;
     let dt = den > 0 ? Math.sqrt((b.source ? this.eta : this.etaParticle) * (A * S + J * J) / den) : Infinity;
     if (!(dt > 0)) dt = Infinity;
@@ -255,44 +318,48 @@ export class Hermite {
 
   /**
    * Acceleration and jerk on `b` at its predicted state, from every source at
-   * its predicted state. Also notes contacts and Roche-limit incursions.
+   * its predicted state (as last packed). Also notes contacts and Roche-limit incursions.
    */
   private evalForce(b: Body, detect: boolean) {
-    this.evals++;
+    if (b.held) { this.fa[0] = this.fa[1] = this.fa[2] = 0; this.fj[0] = this.fj[1] = this.fj[2] = 0; this.cross = Infinity; return; }
+    const { sx, sy, sz, svx, svy, svz, sm, sgm, scr, sgl, scb, sco } = this;
     let ax = 0, ay = 0, az = 0, jx = 0, jy = 0, jz = 0;
     let cross = Infinity;
     const xi = b.px, yi = b.py, zi = b.pz, vxi = b.pvx, vyi = b.pvy, vzi = b.pvz;
     const mi = b.m;
     const bcr = b.captureRadius;
     const rocheK = b.rocheK;
+    const particle = !b.source;
+    const gr = this.gr;
     const gwB = this.gw && b.compact;
     const beta = this.rad ? b.beta : 0;
-    if (b.held) { this.fa[0] = this.fa[1] = this.fa[2] = 0; this.fj[0] = this.fj[1] = this.fj[2] = 0; this.cross = Infinity; return; }
+    const hStep = this.hStep;
 
-    for (const s of this.srcs) {
-      if (s === b) continue;
-      const dx = s.px - xi, dy = s.py - yi, dz = s.pz - zi;
-      const dvx = s.pvx - vxi, dvy = s.pvy - vyi, dvz = s.pvz - vzi;
+    for (let j = 0; j < this.ns; j++) {
+      const dx = sx[j] - xi, dy = sy[j] - yi, dz = sz[j] - zi;
       const r2 = dx * dx + dy * dy + dz * dz;
-      // two bodies on exactly the same spot would turn everything to NaN: the collision code deals with them
+      // b itself (packed from the same predicted state, so exactly 0), or two
+      // bodies on exactly the same spot, which would turn everything to NaN:
+      // the collision code deals with them
       if (!(r2 > 0)) continue;
+      const dvx = svx[j] - vxi, dvy = svy[j] - vyi, dvz = svz[j] - vzi;
       const rv = dx * dvx + dy * dvy + dz * dvz;
       const v2 = dvx * dvx + dvy * dvy + dvz * dvz;
       const inv2 = 1 / r2, inv = Math.sqrt(inv2), inv3 = inv * inv2;
-      const ms = s.m;
+      const ms = sm[j];
 
-      const fN = G * ms * inv3;
+      const fN = sgm[j] * inv3;
       let f = fN;
       let g = -3 * rv * inv2 * fN;
-      if (this.gr) {
+      if (gr) {
         // potential -3 G² M m_i m_s / (c² r²): force 6 G² M m_s / c² · r / r⁴ on b
-        const fG = 6 * G * G * (mi + ms) * ms / C2 * inv2 * inv2;
+        const fG = GR_K * (mi + ms) * sgm[j] * inv2 * inv2;
         f += fG;
         g += -4 * rv * inv2 * fG;
       }
       let prx = 0, pry = 0, prz = 0;
-      if (beta > 0 && s.star && s.star.L > 0) {
-        const fR = beta * G * s.star.L * inv3;
+      if (beta > 0 && sgl[j] > 0) {
+        const fR = beta * sgl[j] * inv3;
         f -= fR;
         g -= -3 * rv * inv2 * fR;
         // Poynting–Robertson drag: the light is aberrated by the grain's own
@@ -307,7 +374,7 @@ export class Hermite {
       ax += f * dx + prx; ay += f * dy + pry; az += f * dz + prz;
       jx += f * dvx + g * dx; jy += f * dvy + g * dy; jz += f * dvz + g * dz;
 
-      if (gwB && s.compact && v2 > 0) {
+      if (gwB && sco[j] && v2 > 0) {
         // Radiation reaction on the relative orbit, sized so the power drawn
         // matches Peters' dE/dt = -(32/5) G⁴ m1² m2² M / (c⁵ r⁵).
         const M = mi + ms;
@@ -332,22 +399,22 @@ export class Hermite {
         // A test particle that reaches a compact object joins its accretion
         // disc, which is not resolved here, rather than being followed down
         // to a 12 km surface on microsecond steps.
-        const rc = !b.source && s.compact ? Math.max(bcr + s.captureRadius, DISC) : bcr + s.captureRadius;
-        if (r2 < rc * rc) { if (this.contact(b, s)) break; }
+        const rc = particle && sco[j] ? Math.max(bcr + scr[j], DISC) : bcr + scr[j];
+        if (r2 < rc * rc) { if (this.contact(b, this.srcs[j])) break; }
         else {
           // swept test over the step just taken: did the pair pass through
           // contact between the previous block and this one?
-          const h = this.hStep;
-          const reach = rc + Math.sqrt(v2) * h;
+          const reach = rc + Math.sqrt(v2) * hStep;
           if (r2 < reach * reach && rv > 0) {
-            const tc = Math.max(-h, -rv / v2);
+            const tc = Math.max(-hStep, -rv / v2);
             const d2 = r2 + 2 * rv * tc + v2 * tc * tc;
-            if (d2 < rc * rc && this.contact(b, s)) break;
+            if (d2 < rc * rc && this.contact(b, this.srcs[j])) break;
           }
           if (rocheK > 0 && ms > 10 * mi) {
             // first the Roche distance, where tides start to win; once a pass is
             // under way, the distance at which this pass actually tears it
-            const rr = b.tidalHost === s.id ? b.tidalR : rocheK * Math.cbrt(ms);
+            const s = this.srcs[j];
+            const rr = b.tidalHost === s.id ? b.tidalR : rocheK * scb[j];
             if (r2 < rr * rr) this.hits.push({ a: b, b: s, kind: 'roche' });
           }
         }

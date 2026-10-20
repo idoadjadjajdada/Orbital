@@ -5,6 +5,7 @@ import { AU_M } from '../src/physics/units';
 import { atmosphere, interior, composition, habitability, habitableZone, life, gravity, giantPressure, giantTemp, cloudDecks, airAt } from '../src/three/science';
 import { groundSpec, groundAt, buildTile, faceDir, faceOf, TILE_N, type GroundSample } from '../src/three/terrain';
 import { SITES, sitesOn, earthBiome, speciesIn } from '../src/three/sites';
+import { setMoon } from '../src/pixel/moondata';
 
 const solar = buildPreset('solar');
 const stars = solar.sources.filter(b => b.cls === 'star');
@@ -144,6 +145,27 @@ describe('the ground', () => {
   });
 });
 
+describe('the Moon from LOLA', () => {
+  it('paints its heights from the measured map once it is in, at 40 km a unit', () => {
+    const moon = body('Moon');
+    // a stand-in map: the northern half 1 km up, the southern 3 km down
+    const w = 64, h = 32, km = new Float32Array(w * h).map((_, i) => (Math.floor(i / w) < h / 2 ? 1 : -3));
+    setMoon({ w, h, km });
+    try {
+      const spec = groundSpec(moon.look, moon.r * AU_M, 1.62, 0);
+      expect([spec.scale, spec.datum]).toEqual([40000, 0.5]);
+      const out: GroundSample = { h: 0, r: 0, g: 0, b: 0, sea: false, rock: 0 };
+      // (fine enough to leave the small craters out: what is left is the map's)
+      const north = groundAt(spec, faceDir(4, 0.1, 0.1), 50000, out), south = groundAt(spec, faceDir(5, 0.1, 0.1), 50000, out);
+      expect(north).toBeGreaterThan(400);
+      expect(north).toBeLessThan(1600);
+      expect(south).toBeLessThan(-2400);
+    } finally { setMoon(null); }
+    // without it, the painter's own basins, at the scale they are drawn to
+    expect(groundSpec(moon.look, moon.r * AU_M, 1.62, 0).scale).toBe(22000);
+  });
+});
+
 describe('the sites', () => {
   it('has every Apollo landing, and the cities are on the Earth', () => {
     expect(sitesOn('Moon').filter(s => s.kind === 'apollo').length).toBe(6);
@@ -152,7 +174,22 @@ describe('the sites', () => {
   it('finds a biome’s life', () => {
     expect(earthBiome(-80, [0.9, 0.92, 0.95], false, 2000, false)).toBe('ice');
     expect(earthBiome(5, [0.2, 0.4, 0.15], false, 200, false)).toBe('tropical');
-    expect(speciesIn('desert').some(s => s.name === 'Dromedary')).toBe(true);
+    expect(speciesIn('desert', 25, 10).some(s => s.name === 'Dromedary')).toBe(true);
+  });
+  it('puts life only where it really lives', () => {
+    const names = (b: Parameters<typeof speciesIn>[0], lat: number, lon: number) => speciesIn(b, lat, lon).map(s => s.name);
+    // the Sahara has camels, the Mojave Joshua trees, and neither has the other's
+    expect(names('desert', 35, -116)).toContain('Joshua tree');
+    expect(names('desert', 35, -116)).not.toContain('Dromedary');
+    expect(names('desert', 25, 10)).not.toContain('Joshua tree');
+    // giant sequoias grow in the Sierra Nevada, not in the Black Forest
+    expect(names('temperate', 37, -119)).toContain('Giant sequoia');
+    expect(names('temperate', 48, 8)).not.toContain('Giant sequoia');
+    expect(names('temperate', 48, 8)).toContain('English oak');
+    // no lions on the prairie; and every inhabited realm's forest has trees of its own
+    expect(names('grassland', 40, -100)).not.toContain('Lion');
+    for (const [b, lat, lon] of [['temperate', 40, -80], ['temperate', 35, 135], ['temperate', -38, 146], ['boreal', 60, 100], ['tropical', 2, 110], ['tropical', 0, 20], ['tropical', -3, -60]] as const)
+      expect(speciesIn(b, lat, lon).some(s => s.kind === 'plant' && s.size > 1)).toBe(true);
   });
 });
 

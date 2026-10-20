@@ -28,6 +28,13 @@ button { font: inherit; color: inherit; }
 .chip:hover { border-color: rgba(160, 180, 255, 0.35); }
 .chip.on { background: rgba(255, 210, 122, 0.16); border-color: rgba(255, 210, 122, 0.55); color: #fff3d6; }
 .chip.danger:hover { border-color: var(--danger); color: var(--danger); }
+/* the icons (ui/icons.ts): one outline family, drawn in the colour of the text round them */
+.ic { width: 1.15em; height: 1.15em; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; vertical-align: -0.22em; flex: none; pointer-events: none; }
+.icon { display: inline-flex; align-items: center; justify-content: center; color: var(--text); }
+.icon .ic { width: 16px; height: 16px; vertical-align: 0; }
+[data-icon] > .ic:first-child:not(:only-child) { margin-right: 0.38em; }
+i[data-icon] { font-style: normal; display: inline-flex; vertical-align: -0.15em; opacity: 0.75; }
+i[data-icon] > .ic { width: 0.95em; height: 0.95em; }
 .icon { background: var(--panel); border: 1px solid var(--line); border-radius: 50%; width: 32px; height: 32px; cursor: pointer; font-size: 12px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); touch-action: manipulation; }
 .close { width: 26px; height: 26px; font-size: 11px; margin-left: auto; }
 
@@ -169,7 +176,9 @@ kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-
 
 .tools { left: calc(16px + env(safe-area-inset-left)); top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; max-height: calc(100vh - 200px); overflow-y: auto; scrollbar-width: none; gap: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 5px; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
 .tools button { display: flex; flex-direction: column; align-items: center; gap: 1px; width: 52px; padding: 6px 0 4px; background: none; border: 1px solid transparent; border-radius: 9px; cursor: pointer; touch-action: manipulation; }
-.tools button b { font-size: 17px; line-height: 1; font-weight: 400; filter: grayscale(0.4); }
+.tools button b { line-height: 1; display: flex; color: #c9d2ee; }
+.tools button b .ic { width: 18px; height: 18px; }
+.tools button.on b { color: #ffe2a8; }
 .tools button span { font-size: 10px; color: var(--dim); }
 .tools button:hover { border-color: rgba(160, 180, 255, 0.3); }
 .tools button.on { background: rgba(255, 210, 122, 0.14); border-color: rgba(255, 210, 122, 0.55); }
@@ -334,6 +343,7 @@ kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-
   .thr3 span { font-size: 12px; color: var(--dim); min-width: 42px; text-align: center; font-variant-numeric: tabular-nums; }
   #ui3[data-mode="scope"] .stick3, #ui3[data-mode="scope"] .thr3, #ui3[data-mode="walk"] .thr3 { display: none; }
   .thumb3 { display: grid; position: absolute; right: calc(20px + env(safe-area-inset-right)); bottom: calc(24px + env(safe-area-inset-bottom)); grid-template-columns: 64px 64px; grid-template-rows: 64px 64px; gap: 10px; grid-template-areas: ". up" "boost down"; }
+  .thumb3 button .ic { width: 26px; height: 26px; vertical-align: middle; }
   .thumb3 button { border-radius: 50%; background: rgba(14, 16, 26, 0.62); border: 1px solid rgba(160, 180, 255, 0.32); color: var(--text); font-size: 18px; touch-action: none; padding: 0; }
   .thumb3 button.down { background: rgba(255, 210, 122, 0.32); border-color: rgba(255, 226, 168, 0.75); }
   .thumb3 [data-b="up"] { grid-area: up; }
@@ -343,7 +353,8 @@ kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-
   #ui3[data-mode="scope"] .thumb3 { grid-template-columns: 64px; grid-template-areas: "a" "b"; }
   .rail3 { display: flex; flex-direction: column; gap: 8px; position: absolute; right: calc(12px + env(safe-area-inset-right)); bottom: calc(188px + env(safe-area-inset-bottom)); }
   .rail3 button { width: 54px; height: 52px; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); color: var(--text); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; touch-action: none; padding: 0; }
-  .rail3 b { font-size: 18px; font-weight: 400; line-height: 1; }
+  .rail3 b { font-size: 18px; font-weight: 400; line-height: 1; display: flex; }
+  .rail3 b .ic { width: 22px; height: 22px; }
   .rail3 span { font-size: 8.5px; color: var(--dim); white-space: nowrap; }
   .rail3 button.on { background: rgba(200, 144, 255, 0.3); border-color: rgba(200, 144, 255, 0.6); }
   .use3 { top: auto; bottom: calc(184px + env(safe-area-inset-bottom)); font-size: 16px; padding: 11px 20px 11px 14px; background: rgba(40, 32, 16, 0.86); border-color: rgba(255, 226, 168, 0.7); }
@@ -375,7 +386,7 @@ kbd { font: 11px ui-monospace, monospace; border: 1px solid var(--line); border-
 .inspector.min #iMin { transform: rotate(180deg); }
 #showUi { right: calc(12px + env(safe-area-inset-right)); top: calc(10px + env(safe-area-inset-top)); z-index: 6; }
 #showUi[hidden] { display: none; }
-/* 👁: just the sky (in 3D the stick and the held buttons stay) */
+/* the eye button: just the sky (in 3D the stick and the held buttons stay) */
 body.clean .hud:not(#showUi), body.clean #ui3 .top3, body.clean #ui3 .radar3, body.clean #ui3 .bar3, body.clean #ui3 .rail3, body.clean #ui3 .thr3, body.clean .stats { display: none !important; }
 .check { display: flex; gap: 8px; align-items: center; font-size: 12.5px; color: var(--dim); margin: 6px 0; }
 @media (max-width: 720px), (max-height: 520px) {

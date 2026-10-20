@@ -1,3 +1,4 @@
+import { icon } from '../ui/icons';
 import type { Body } from '../physics/body';
 import { AU_M, fmtLength } from '../physics/units';
 import { relative, osculating, ellipsePoints, type V3 } from '../physics/orbit';
@@ -75,15 +76,15 @@ export class NavMap {
       <div class="navmain">
         <canvas></canvas>
         <div class="navtools">
-          <button data-n="ship" title="Centre on the ship (X)">⌖ Ship</button>
-          <button data-n="target" title="Centre on the target">◎ Target</button>
-          <button data-n="in" title="Zoom in (+)">＋</button>
-          <button data-n="out" title="Zoom out (−)">−</button>
+          <button data-n="ship" title="Centre on the ship (X)">${icon('crosshair')} Ship</button>
+          <button data-n="target" title="Centre on the target">${icon('target')} Target</button>
+          <button data-n="in" title="Zoom in (+)" aria-label="Zoom in">${icon('plus')}</button>
+          <button data-n="out" title="Zoom out (−)" aria-label="Zoom out">${icon('minus')}</button>
         </div>
         <div class="navscale"></div>
       </div>
       <div class="navside">
-        <div class="navhead">Nav map <button class="icon close" data-n="close" title="Close (M)">✕</button></div>
+        <div class="navhead">Nav map <button class="icon close" data-n="close" title="Close (M)" aria-label="Close">${icon('close')}</button></div>
         <div class="navinfo"></div>
         <div class="dest3"></div>
       </div>`;

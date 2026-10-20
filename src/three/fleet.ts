@@ -755,7 +755,8 @@ export class Fleet {
     if (L.crew) { to.crew = (to.crew ?? CREW0) + L.crew; got.push(`${L.crew} crew aboard ${to.name} (now ${to.crew})`); }
     if (L.supplies) { to.stores = Math.round(((to.stores ?? STORES0) + L.supplies * HOLD_DAYS) * 10) / 10; got.push(`${L.supplies * HOLD_DAYS} days of supplies unloaded (${to.stores} in store)`); }
     if (L.rover && c.state === 'surface') { const rv = this.launch('rover', to.b, new THREE.Vector3(), null, c); rv.name = `${to.name} rover`; got.push(`${rv.name} rolled out`); }
-    r.load = { crew: keep.crew, supplies: keep.supplies, rover: false };
+    else if (L.rover) got.push('the rover stays aboard: a station has no ground to drive it on');
+    r.load = { crew: keep.crew, supplies: keep.supplies, rover: L.rover && c.state !== 'surface' };
     if (r.route) r.route.wait = TURNAROUND;
     if (L.crew || L.supplies) { to.short = 0; to.warned = 0; }
     if (L.crew && /empty/.test(to.status)) to.status = to.kind === 'station' ? 'in orbit, crewed' : 'crewed';
@@ -854,6 +855,12 @@ export class Fleet {
   onBase(c: Craft, x: number, z: number): V3 {
     const w = this.bodyPoint(c, new THREE.Vector3(x, 0, z)).normalize();
     return [w.x, w.y, w.z];
+  }
+
+  /** why a craft cannot be retired now, or '': a site a rocket stands on, flies to or runs a route through */
+  retireBlock(c: Craft) {
+    const user = this.crafts.find(o => o !== c && o.rocket && (o.rocket.at === c.id || o.rocket.trip?.to.site === c.id || o.rocket.route?.a === c.id || o.rocket.route?.b === c.id));
+    return user ? `${user.name} ${user.rocket!.trip ? 'is flying to' : user.rocket!.at === c.id ? 'stands on' : 'runs a route through'} ${c.name}: move or retire it first` : '';
   }
 
   remove(c: Craft) {

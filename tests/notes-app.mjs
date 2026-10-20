@@ -21,6 +21,8 @@ async function phone(hash, { withToken = false } = {}) {
   if (withToken) await ctx.addInitScript(() => localStorage.setItem('orbital-notes-token', 'x'));
   const writes = [], errs = [];
   const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET,POST,PATCH,OPTIONS' };
+  // the stand-ins for the CDN's scripts cannot match the page's integrity hashes: this copy of the page goes without them
+  await ctx.route(/\/notes\/index\.html/, async r => { const res = await r.fetch(); r.fulfill({ response: res, body: (await res.text()).replace(/ integrity="[^"]*"/g, '') }); });
   await ctx.route('https://cdn.jsdelivr.net/**', r => r.fulfill({ contentType: 'application/javascript', body: /purify/.test(r.request().url()) ? 'window.DOMPurify={sanitize:x=>x}' : 'window.marked={parse:t=>"<p>"+t+"</p>"}' }));
   await ctx.route('https://api.github.com/**', r => {
     const q = r.request(), url = q.url(), m = q.method();
@@ -125,6 +127,17 @@ try {
     ok('$ in a bug: the line in Bugs.md is as typed', bugs.includes(`## Open\n- [ ] ${first} · ${where} ([message](Feedback/`), JSON.stringify(bugs.slice(0, 160)));
     ok('$ in a bug: the rest of Bugs.md is untouched', bugs.endsWith(')\n- [ ] old thing\n\n## Known limits\n'), JSON.stringify(bugs.slice(-80)));
     ok('$ in a bug: the Feedback copy is as typed', blobs(writes).some(t => t.includes(`> ${first}\n`)));
+    await ctx.close();
+  }
+  // 5. A tick box flips its own line, counted as boxes are drawn: in quotes and numbered lists too, not in code
+  {
+    const { page, ctx } = await phone('#/');
+    await page.waitForFunction(() => typeof toggleTask === 'function');
+    const src = ['> - [ ] quoted', '```', '- [ ] in code', '```', '1. [ ] numbered', '- [x] done', ''].join('\n');
+    const flip = k => page.evaluate(([s, i]) => toggleTask(s, i).split('\n'), [src, k]);
+    ok('tick: a quoted box is the first', (await flip(0))[0] === '> - [x] quoted');
+    ok('tick: the box shown as code is not counted', (await flip(1))[4] === '1. [x] numbered' && (await flip(1))[2] === '- [ ] in code');
+    ok('tick: a ticked box unticks', (await flip(2))[5] === '- [ ] done');
     await ctx.close();
   }
 } catch (e) { fails++; console.log(`FAIL  ${e.stack || e}`); }

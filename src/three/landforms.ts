@@ -88,7 +88,7 @@ function formIn(s: GroundSpec, f: number, L: number, cx: number, cy: number, sam
   const at = (x: number, y: number) => { const m: V3 = [n[0] + e[0] * x + nn[0] * y, n[1] + e[1] * x + nn[1] * y, n[2] + e[2] * x + nn[2] * y]; const l = Math.hypot(...m); return sample([m[0] / l, m[1] / l, m[2] / l], 4).h; };
   const gx = (at(d, 0) - at(-d, 0)) / 40, gy = (at(0, d) - at(0, -d)) / 40, slope = Math.hypot(gx, gy);
   if (slope > 0.9) return null;
-  const set = setting(s, g, slope);
+  const set = setting(s, g, slope, n);
   if (!set) return null;
   if (h1 > set.chance) return null;
   if (slope > 0.35) set.w = set.w.filter(w => w[0] !== 'cave' && w[0] !== 'arch');
@@ -117,9 +117,39 @@ function faceDirOf(f: number, a: number, b: number): V3 {
   return [x / l, y / l, z / l];
 }
 
+/**
+ * On the Earth they are where they really are, and only there: sandstone arches and hoodoos in the
+ * country famous for them, caves in the great karst regions, crags in high mountains. Boxes of
+ * [lat min, lat max, lon min, lon max], degrees.
+ */
+const EARTH_SANDSTONE: [number, number, number, number][] = [
+  [35.5, 39.5, -113, -107.5], // the Colorado Plateau: Arches, Bryce, Canyonlands, Monument Valley
+  [38.4, 38.9, 34.6, 35.2],   // Cappadocia
+  [29.3, 29.9, 35.2, 35.7],   // Wadi Rum
+  [24.5, 26.5, 7.5, 10.5],    // Tassili n'Ajjer
+  [-17.7, -17.2, 128.2, 128.7], // the Bungle Bungles
+];
+const EARTH_KARST: [number, number, number, number][] = [
+  [42, 46.5, 13.5, 20],       // the Dinaric karst
+  [24.3, 25.8, 109.8, 111],   // Guilin
+  [20.6, 21.2, 106.8, 107.6], // Ha Long Bay
+  [19, 21.6, -90.5, -87],     // the Yucatán's cenotes
+  [36.9, 37.4, -86.4, -85.9], // Mammoth Cave
+  [43.7, 44.7, 2.7, 3.9],     // the Causses
+];
+const inBox = (boxes: [number, number, number, number][], lat: number, lon: number) => boxes.some(([a, b, c, d]) => lat >= a && lat <= b && lon >= c && lon <= d);
+
 /** the setting at a point: what rock is there, how likely a form is, and which */
-function setting(s: GroundSpec, g: GroundSample, slope: number): { rock: Rock; chance: number; w: [FormKind, number][] } | null {
+function setting(s: GroundSpec, g: GroundSample, slope: number, n: V3): { rock: Rock; chance: number; w: [FormKind, number][] } | null {
   const real = s.look.real, st = s.look.style;
+  if (real === 'Earth') {
+    const lat = Math.asin(Math.max(-1, Math.min(1, n[2]))) * 180 / Math.PI, lon = Math.atan2(n[1], n[0]) * 180 / Math.PI;
+    if (inBox(EARTH_SANDSTONE, lat, lon)) return { rock: 'sandstone', chance: 0.4, w: [['arch', 3], ['hoodoo', 3], ['shelter', 2], ['spire', 1]] };
+    if (inBox(EARTH_KARST, lat, lon)) return { rock: 'limestone', chance: 0.3, w: [['cave', 3], ['shelter', 2], ['spire', 1]] };
+    // high, bare crags: a shelter under a cliff now and then, a split pinnacle
+    if (g.rock > 0.6 && slope > 0.3) return { rock: 'granite', chance: 0.12, w: [['shelter', 2], ['spire', 1]] };
+    return null;
+  }
   const lum = (g.r + g.g + g.b) / 3, warm = g.r - g.b;
   const airless = s.craters >= 1 && !s.seas && s.dunes === 0;
   const icy = st === 'ice' || ['Europa', 'Enceladus', 'Ganymede', 'Callisto', 'Triton', 'Pluto', 'Charon', 'Eris', 'Iapetus', 'Rhea', 'Dione', 'Tethys', 'Mimas', 'Miranda', 'Ariel', 'Titania', 'Oberon', 'Umbriel'].includes(real ?? '')

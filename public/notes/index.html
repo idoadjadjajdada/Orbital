@@ -11,8 +11,9 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" type="image/png" href="favicon.png">
 <link rel="manifest" href="manifest.webmanifest">
-<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<!-- pinned by hash: this page holds a token that can write to the repository, so a changed copy must not run -->
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js" integrity="sha256-Ffq85bZYmLMrA/XtJen4kacprUwNbYdxEKd0SqhHqJQ=" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js" integrity="sha256-wIRQlqfEpnQfNirFBslMHH0n3GA7zBv2Slh/dvLb46E=" crossorigin="anonymous"></script>
 <style>
   :root {
     --bg: #0b0f17; --panel: #131a26; --panel2: #1a2333; --line: #263247; --text: #e6ecf5; --dim: #8d9bb2;
@@ -115,7 +116,8 @@ async function gh(path, opts = {}) {
   if (!r.ok) { const e = new Error(`${r.status} ${(await r.text()).slice(0, 200)}`); e.status = r.status; throw e; }
   return opts.raw ? r : r.json();
 }
-const b64 = s => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
+// (in pieces: Safari takes no more than 65536 arguments to one call, and a note can be longer than that)
+const b64 = s => { const u = new TextEncoder().encode(s); let t = ''; for (let i = 0; i < u.length; i += 0x8000) t += String.fromCharCode(...u.subarray(i, i + 0x8000)); return btoa(t); };
 const unb64 = s => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\n/g, '')), c => c.charCodeAt(0)));
 
 /** the newest commit on main, and the notes in it */
@@ -213,15 +215,26 @@ async function showNote(path) {
       b.disabled = true;
       try {
         await commit(`notes: ${b.checked ? 'tick' : 'untick'} an item in ${nice(path)} (from the notes app)`, async rd => {
-          const src = await rd(path); let n = -1;
-          const out = src.replace(/^(\s*[-*] \[)( |x|X)(\])/gm, (m, a, c, z) => (++n === k ? `${a}${c === ' ' ? 'x' : ' '}${z}` : m));
-          return [{ path, text: out }];
+          return [{ path, text: toggleTask(await rd(path), k) }];
         });
         toast(b.checked ? 'Ticked' : 'Unticked');
       } catch (e) { b.checked = !b.checked; toast(`Not saved: ${e.message}`, 5000); }
       b.disabled = false;
     };
   });
+}
+
+/**
+ * Flip the k-th task box in a note's Markdown, counting them as they are drawn: in quotes (how messages
+ * are kept) and numbered lists too, and not the ones shown as code.
+ */
+function toggleTask(src, k) {
+  let n = -1, fence = false;
+  return src.split('\n').map(line => {
+    if (/^[ \t>]*(```|~~~)/.test(line)) { fence = !fence; return line; }
+    if (fence) return line;
+    return line.replace(/^([ \t>]*(?:[-*+]|\d+[.)])[ \t]+\[)( |x|X)(\])/, (m, a, c, z) => (++n === k ? `${a}${c === ' ' ? 'x' : ' '}${z}` : m));
+  }).join('\n');
 }
 
 async function showEdit(path) {

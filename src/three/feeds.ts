@@ -1,3 +1,4 @@
+import { icon } from '../ui/icons';
 import * as THREE from 'three';
 import { AU_M } from '../physics/units';
 import type { View3D } from './view3d';
@@ -138,7 +139,7 @@ export class Feeds {
   buttonFor(c: Craft) {
     if (!this.target) return '';
     const on = this.showing(this.target) === c.id;
-    return `<button data-act="feed" data-id="${on ? -1 : c.id}">${on ? '📺 Off' : '📺 On the monitor'}</button>`;
+    return `<button data-act="feed" data-id="${on ? -1 : c.id}">${icon('monitor')} ${on ? 'Off' : 'On the monitor'}</button>`;
   }
 }
 

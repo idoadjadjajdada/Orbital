@@ -8,3 +8,7 @@ notes/.trash/
 .obsidian/workspace*.json
 .obsidian/cache
 .trash/
+bench/dist
+# the Moon bake's 33 MB source (tools/bake-moon.mjs fetches it)
+tools/data/moon/
+.DS_Store

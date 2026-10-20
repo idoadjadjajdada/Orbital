@@ -1,3 +1,4 @@
+import { MOON } from '../pixel/moondata';
 import type { Look } from '../physics/body';
 import { pointPainter, detailFor } from '../pixel/surface';
 import { fbm, ridged, vnoise, hash } from '../pixel/noise';
@@ -41,6 +42,8 @@ export interface GroundSpec {
   belts: number;
   /** painter heights: the datum (0.5 normally, sea level for a world with seas) and metres per unit */
   datum: number; scale: number;
+  /** the finest relief a measured map gives here, m (the Moon's LOLA texels), 0 if none: craters bigger are the map's */
+  measured: number;
 }
 
 /** real elevation ranges, m: lowest basin to highest peak (land only for the Earth) */
@@ -81,10 +84,15 @@ export function groundSpec(look: Look, R: number, gSurf: number, bar: number): G
   const dunes = real === 'Titan' ? 0.8 : real === 'Mars' ? 0.35 : st === 'desert' ? 1 : real === 'Earth' ? 0.4 : 0;
   // a made-up rocky world's ranges: folded belts where its crust is pushed together, fewer on ice, none on a rubble pile
   const belts = real || isGas(st) || R < 2e5 ? 0 : ({ terran: 1, ocean: 0.8, desert: 0.9, lava: 0.7, iron: 0.8, ice: 0.5 } as Record<string, number>)[st] ?? 0.4;
-  const spec: GroundSpec = { look, R, relief, seas, craters, dunes, lumpy: R < 2e5 ? 1 : 0, belts, datum: 0.5, scale: 0 };
+  const spec: GroundSpec = { look, R, relief, seas, craters, dunes, lumpy: R < 2e5 ? 1 : 0, belts, datum: 0.5, scale: 0, measured: real === 'Moon' && MOON ? (2 * Math.PI * R) / MOON.w : 0 };
   calibrate(spec);
   return spec;
 }
+
+/** metres a painted unit and the datum's painted height, for a world whose painter gives real elevations
+ *  (Mars always; the Moon once LOLA's map is in, moondata.ts), or undefined where they are measured from the painter */
+const scaleOf = (real: string) => (real === 'Moon' ? (MOON ? 40000 : SCALE.Moon) : SCALE[real]);
+const datumOf = (real: string) => (real === 'Moon' && MOON ? 0.5 : DATUM[real]);
 
 /** measure the painter's spread of heights, so its relief can be scaled to the real one */
 function calibrate(s: GroundSpec) {
@@ -105,19 +113,19 @@ function calibrate(s: GroundSpec) {
   }
   hs.sort((a, b) => a - b);
   const lo = hs[Math.floor(hs.length * 0.005)] ?? 0.4, hi = hs[Math.floor(hs.length * 0.995)] ?? 0.6;
-  if (s.seas && isFinite(seaH) && SCALE[s.look.real ?? ''] === undefined) {
+  if (s.seas && isFinite(seaH) && scaleOf(s.look.real ?? '') === undefined) {
     // sea level at the sea's painted height; the land rises from it
     s.datum = seaH;
     s.scale = (0.6 * s.relief) / Math.max(1e-3, hi - seaH);
   } else {
-    s.datum = DATUM[s.look.real ?? ''] ?? hs[Math.floor(hs.length / 2)] ?? 0.5;
+    s.datum = datumOf(s.look.real ?? '') ?? hs[Math.floor(hs.length / 2)] ?? 0.5;
     // scaled so the spread of heights is the measured one (or a sixth of the full range): the
     // extremes — Olympus, Hellas, Maxwell — then fall where the painter's features put them.
     // A flat painter (a cloud-top map) gets its relief from the fractal instead
     const mean = hs.reduce((a, x) => a + x, 0) / Math.max(1, hs.length);
     const sd = Math.sqrt(hs.reduce((a, x) => a + (x - mean) ** 2, 0) / Math.max(1, hs.length));
     const want = SIGMA[s.look.real ?? ''] ?? s.relief / 6;
-    s.scale = SCALE[s.look.real ?? ''] ?? (sd > 0.003 && hi - lo > 0.01 ? Math.min(want / sd, (0.9 * s.relief) / (hi - lo)) : 0);
+    s.scale = scaleOf(s.look.real ?? '') ?? (sd > 0.003 && hi - lo > 0.01 ? Math.min(want / sd, (0.9 * s.relief) / (hi - lo)) : 0);
   }
 }
 
@@ -189,6 +197,8 @@ export interface GroundSample {
   sea: boolean;
   /** 0 smooth – 1 rocky, for scattering boulders */
   rock: number;
+  /** under the sea, how deep it is, m (0 on land) */
+  depth?: number;
 }
 
 const tmp: Tx = { r: 0, g: 0, b: 0, h: 0.5, e: 0, s: 0, c: 0 };
@@ -338,7 +348,7 @@ function groundBase(s: GroundSpec, n: V3, fine: number, out: GroundSample, paint
   const lat = Math.asin(Math.max(-1, Math.min(1, n[2])));
   const lon = ((Math.atan2(n[1], n[0]) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
   const o = tmp;
-  o.r = o.g = o.b = 0.5; o.h = 0.5; o.e = 0; o.s = 0; o.c = 0;
+  o.r = o.g = o.b = 0.5; o.h = 0.5; o.e = 0; o.s = 0; o.c = 0; o.dp = undefined;
   paint(o, lat, lon, n, det);
   const sea = s.seas && o.s >= 1;
   let h = (o.h - s.datum) * s.scale;
@@ -375,7 +385,7 @@ function groundBase(s: GroundSpec, n: V3, fine: number, out: GroundSample, paint
   }
   if (s.lumpy) h += (fbm(n[0] * 2 + seed, n[1] * 2, n[2] * 2, 4) - 0.5) * R * 0.25;
   // craters at every scale: the big ones are in the map, these are what it cannot hold
-  if (s.craters > 0 && !sea) h += craters(px, py, pz, Math.min(R * 0.02, 20000), Math.max(fine, 1), s.craters, seed);
+  if (s.craters > 0 && !sea) h += craters(px, py, pz, Math.min(R * 0.02, 20000, s.measured ? s.measured / 2 : Infinity), Math.max(fine, 1), s.craters, seed);
   // dunes: long ridges across the wind, wandering
   if (s.dunes > 0 && !sea) {
     const sandy = o.r > o.b * 1.4 || s.look.real === 'Titan' ? 1 : 0.2;
@@ -384,6 +394,8 @@ function groundBase(s: GroundSpec, n: V3, fine: number, out: GroundSample, paint
     const ridge = Math.pow(Math.abs(Math.sin(ph)), 0.6);
     h += s.dunes * sandy * 25 * ridge * (0.5 + 0.5 * fbm(px / 9000, py / 9000 + seed, pz / 9000, 2));
   }
+  // (the sea's floor: as the painter knows it, or where its heights put it under the surface)
+  out.depth = sea ? o.dp ?? Math.max(2, -h) : 0;
   if (sea) h = 0;
   // the Earth's only tops over 8 km are its named 8000ers: the fractal does not make new ones
   if (s.look.real === 'Earth' && h > 8000) h = 8000 + (h - 8000) * 0.3;
@@ -504,7 +516,8 @@ export function buildTile(job: TileJob): Tile {
     const q = j * M + i, rr = R + h;
     P[q * 3] = n[0] * rr - cx; P[q * 3 + 1] = n[1] * rr - cy; P[q * 3 + 2] = n[2] * rr - cz;
     C[q * 3] = out.r; C[q * 3 + 1] = out.g; C[q * 3 + 2] = out.b;
-    SEA[q] = out.sea ? 1 : 0; ROCK[q] = out.sea ? 0 : out.rock;
+    // (the sea: 1 at the shore, rising to 2 where it is 60 m deep and more, for the water's colour)
+    SEA[q] = out.sea ? 1 + Math.min(1, (out.depth ?? 60) / 60) : 0; ROCK[q] = out.sea ? 0 : out.rock;
   }
   // the grid proper, and the skirt: one more ring of vertices under the edge
   const nv = (N + 1) * (N + 1), ns = 4 * N;

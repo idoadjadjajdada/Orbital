@@ -67,6 +67,3 @@ export function hawking(b: Body, dt: number): boolean {
   b.m = Math.cbrt(m3);
   return false;
 }
-
-/** the luminosity of a black hole's Hawking radiation, L☉ */
-export const hawkingL = (m: number) => 9.0e-56 / (m * m);

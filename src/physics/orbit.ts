@@ -106,5 +106,3 @@ export function ellipsePoints(o: Osculating, r: V3, n: number): V3[] {
   }
   return out;
 }
-
-export const circularSpeed = (mu: number, r: number) => Math.sqrt(mu / r);

@@ -52,6 +52,8 @@ export interface StarState {
 let nextId = 1;
 /** a new body id */
 export function freshId() { return nextId++; }
+/** bodies with ids up to `max` have come back (a save loaded): new ones are numbered after them */
+export function reserveIds(max: number) { nextId = Math.max(nextId, Math.floor(max) + 1); }
 
 export class Body {
   id = nextId++;
@@ -75,8 +77,9 @@ export class Body {
   njx = 0; njy = 0; njz = 0;
   ncross = Infinity;
   t = 0;                       // time this body's state refers to, within the frame
-  dt = 0;                      // current block step
   dtWant = 0;                  // what the error criterion asked for
+  level = 0;                   // block level, and place in that level's list
+  slot = 0;
 
   /** Exerts gravity. Fragments and gas parcels are test particles: they feel
    *  everything that is a source, but nothing feels them. */

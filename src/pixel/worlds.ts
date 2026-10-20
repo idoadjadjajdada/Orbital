@@ -1,6 +1,7 @@
 import { fbm, ridged, vnoise, hash } from './noise';
 import { EARTH_RLE, EARTH_W, EARTH_H } from './data/earth';
 import { MARS, type MarsData } from './marsdata';
+import { MOON, moonReady } from './moondata';
 import { EARTH_DEM, EARTH_M } from './earthdata';
 
 /**
@@ -24,6 +25,8 @@ export interface Tx {
   /** near a coast, how far into the sea (0.5 the shore, more out to sea, less inland), for the map to keep the coast's
    * line finer than its texels; −1 elsewhere, where the map keeps \`s\` */
   w?: number;
+  /** the sea's depth there, m, where the painter knows it (the ground uses it for the water's colour: shallows and deeps) */
+  dp?: number;
 }
 /** how finely to paint: noise octaves and crater scales, from the map's size */
 export interface Detail { oct: number; craters: number; res: number }
@@ -260,6 +263,8 @@ export function paintEarth(o: Tx, lat: number, lon: number, n: V3, d: Detail) {
     shade(o, 0.94 + 0.12 * v);
     o.h = 0.46;
     o.s = 1;
+    // tens of metres over the continental shelves, kilometres over the ocean floor beyond them
+    o.dp = cls === 4 ? 30 : 12 + 3800 * (1 - sh) ** 1.5;
     // a lake high in the hills (Titicaca, the Great Lakes) lies at its own height, not the sea's
     const up = cls === 4 && EARTH_DEM ? earthHeight(latD, lonE) : 0;
     if (up > 40) { o.h = 0.5 + up / 40000; o.s = 0; }
@@ -341,7 +346,24 @@ const MARIA = [
   { lat: 27.3, lon: 147.9, a: 4.2 }, { lat: -19.4, lon: -92.8, a: 4.5 }, { lat: -33.7, lon: 163.5, a: 3, rough: 1 },
 ];
 
+/**
+ * The Moon: its colours from the maria and the rayed craters, and its heights, once a detailed map is
+ * wanted, from LOLA's (moondata.ts), as painted height 0.5 + km / 40 (the ground's 40 km a unit, as on Mars),
+ * with the craters below its 5 km texels added; until that is in, from the basins and craters listed here
+ */
 export function paintMoon(o: Tx, lat: number, lon: number, n: V3, d: Detail) {
+  moonFeatures(o, lat, lon, n, d);
+  if (d.res < 512) return;
+  const M = MOON;
+  if (!M) { void moonReady(); return; }
+  let u = lon / (2 * Math.PI) + 0.5;
+  u -= Math.floor(u);
+  o.h = 0.5 + bicubic(M.km, M.w, M.h, u * M.w - 0.5, (0.5 - lat / Math.PI) * M.h - 0.5) / 40;
+  const cr = craterField(n, Math.max(1, d.craters - 1), 90, 0.55, 2);
+  o.h += cr.dh * 0.1;
+}
+
+function moonFeatures(o: Tx, lat: number, lon: number, n: V3, d: Detail) {
   const latD = lat / D, lonD = lon / D;
   const v = fbm(n[0] * 8, n[1] * 8, n[2] * 8, d.oct);
   set(o, [0.6, 0.585, 0.56]);
@@ -429,17 +451,20 @@ const GRADE = [[0.345, 0.64], [0.247, 0.4], [0.157, 0.245]].map(([m, t]) => Floa
 }));
 
 /** elevation, km, at texel coordinates: Catmull-Rom across the texels, so slopes run smooth */
-function marsHeight(M: MarsData, x: number, y: number) {
+function marsHeight(M: MarsData, x: number, y: number) { return bicubic(M.height, M.w, M.h, x, y) * 0.12 - 8.5; }
+
+/** Catmull-Rom across a w × h equirectangular grid (wrapping east–west) at texel coordinates x, y */
+function bicubic(a: ArrayLike<number>, w: number, h: number, x: number, y: number) {
   const x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0;
   const wx = cr4(fx, WX), wy = cr4(fy, WY);
   let s = 0;
   for (let j = 0; j < 4; j++) {
-    const row = Math.max(0, Math.min(M.h - 1, y0 - 1 + j)) * M.w;
+    const row = Math.max(0, Math.min(h - 1, y0 - 1 + j)) * w;
     let r = 0;
-    for (let i = 0; i < 4; i++) r += M.height[row + ((x0 - 1 + i + M.w) % M.w)] * wx[i];
+    for (let i = 0; i < 4; i++) r += a[row + ((x0 - 1 + i + w) % w)] * wx[i];
     s += r * wy[j];
   }
-  return s * 0.12 - 8.5;
+  return s;
 }
 const WX = [0, 0, 0, 0], WY = [0, 0, 0, 0];
 function cr4(t: number, w: number[]) {

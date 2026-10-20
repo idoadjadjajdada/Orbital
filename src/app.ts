@@ -3,13 +3,13 @@ import { Feeding } from './physics/feeding';
 import type { Body, Look, Cls, StarState } from './physics/body';
 import { assignHosts, hostOfPoint } from './physics/analysis';
 import { buildPreset, PRESETS } from './physics/presets';
-import { Early } from './physics/early';
+import { Early, ERAS } from './physics/early';
 import { makeBody, ENTRY } from './physics/catalog';
 import { placeExtras } from './physics/extras';
 import { SHAPES } from './physics/materials';
 import { buildCustom } from './physics/custom';
 import { G, KMS, GCC, fmtLength, sig } from './physics/units';
-import { takeSnapshot, restoreSnapshot, type Snapshot } from './physics/snapshot';
+import { takeSnapshot, restoreSnapshot, snapshotToText, snapshotFromText, type Snapshot } from './physics/snapshot';
 import { shatterBody } from './physics/events';
 import { Body as BodyClass } from './physics/body';
 import { predict } from './physics/predict';
@@ -95,7 +95,8 @@ export class App {
   /** impactors raining on a body while the pointer is held */
   bombard: { target: Body; acc: number } | null = null;
   brush: { x: number; y: number } | null = null;
-  private undoStack: Snapshot[] = [];
+  /** each with the early-system director and preset that went with it, which the world itself does not hold */
+  private undoStack: (Snapshot & { early: Early | null; presetKey: string })[] = [];
   onUndo: (label: string | null) => void = () => {};
   /** touch look in 3D: how fast (a multiplier), and whether dragging moves the world rather than the view */
   lookSpeed = 1;
@@ -190,7 +191,7 @@ export class App {
   /** Remember the world as it is, before a change the user makes. */
   remember(label: string) {
     if (!this.world.bodies.length) return;
-    this.undoStack.push(takeSnapshot(this.world, label));
+    this.undoStack.push({ ...takeSnapshot(this.world, label), early: this.early, presetKey: this.presetKey });
     if (this.undoStack.length > 10) this.undoStack.shift();
     this.onUndo(label);
   }
@@ -201,6 +202,8 @@ export class App {
     const selId = this.selected?.id, focId = this.focus?.id, c = this.centre();
     this.held = null;
     restoreSnapshot(this.world, s);
+    this.early = s.early;
+    this.presetKey = s.presetKey;
     this.hosts = assignHosts(this.world.sources);
     this.view.clearTrails();
     const byId = (id?: number) => (id ? this.world.bodies.find(b => b.id === id) ?? null : null);
@@ -209,6 +212,48 @@ export class App {
     this.select(byId(selId));
     this.onToast(`Undid: ${s.label}`);
     this.onUndo(this.undoStack.at(-1)?.label ?? null);
+  }
+
+  // ---------------------------------------------------------------- saves
+  /** the sandbox kept in this browser between visits: one save, overwritten each time */
+  static readonly SAVE = 'orbital.save';
+
+  /** when the save was made (ms), or null if there is none */
+  savedAt(): number | null {
+    try { const t = localStorage.getItem(App.SAVE); return t ? Number(JSON.parse(t).at) || null : null; } catch { return null; }
+  }
+
+  save() {
+    if (!this.world.bodies.length) { this.onToast('Nothing to save: the sandbox is empty'); return; }
+    const snap = snapshotToText(takeSnapshot(this.world, 'save'));
+    try { localStorage.setItem(App.SAVE, JSON.stringify({ at: Date.now(), preset: this.presetKey, snap })); }
+    catch { this.onToast(`Too big to keep in this browser (${this.world.particleCount.toLocaleString('en-US')} particles): erase some debris and save again`); return; }
+    this.onToast(this.early ? 'Saved. (The early solar system’s eras are not kept: it will load as it stands, without them.)' : 'Saved in this browser');
+  }
+
+  load() {
+    let kept: { at: number; preset: string; snap: string } | null = null;
+    try { const t = localStorage.getItem(App.SAVE); kept = t ? JSON.parse(t) : null; } catch { kept = null; }
+    const s = kept && typeof kept.snap === 'string' ? snapshotFromText(kept.snap) : null;
+    if (!s) { this.onToast(kept ? 'The save could not be read' : 'Nothing saved yet: Save keeps the sandbox in this browser'); return; }
+    this.remember('loading the save');
+    try {
+      restoreSnapshot(this.world, s);
+    } catch {
+      // (whatever went wrong, the sandbox as it was comes back)
+      this.undo();
+      this.onToast('The save could not be loaded');
+      return;
+    }
+    this.early = null;
+    this.presetKey = typeof kept!.preset === 'string' ? kept!.preset : 'custom';
+    this.held = null;
+    this.hosts = assignHosts(this.world.sources);
+    this.view.clearTrails();
+    this.select(null);
+    this.focus = this.world.sources.reduce<Body | null>((a, b) => (!a || b.m > a.m ? b : a), null);
+    this.pan = { x: 0, y: 0, z: 0 };
+    this.onToast(`Loaded the save from ${new Date(kept!.at).toLocaleString()}`);
   }
 
   loadPreset(key: string) {
@@ -250,12 +295,18 @@ export class App {
     this.world.drive = dt => e.drive(this.world, dt);
     this.hosts = assignHosts(this.world.sources);
     this.view.clearTrails();
+    // the era's own view: what it is about, at the size it happens at
+    const E = ERAS[era];
+    this.focus = this.world.sources.find(b => b.name === E.focus) ?? null;
+    this.pan = { x: 0, y: 0, z: 0 };
+    this.fitRadius(E.view);
+    this.view.scale = this.view.scaleGoal;
     if (this.mode3d) this.warpLog = Math.log10(1 / (365.25 * 86400));
   }
 
   clear() {
-    this.early = null;
     this.remember('clearing');
+    this.early = null;
     this.select(null);
     const c = this.centre();
     this.focus = null;

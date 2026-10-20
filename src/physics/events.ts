@@ -51,11 +51,11 @@ export interface FragSpec {
   bipolar?: [number, number, number];
 }
 
-/** Scatter `mass` into test particles, conserving the given total momentum exactly. */
+/** Scatter `mass` into test particles, conserving the given total mass and momentum exactly. */
 export function spawnFragments(w: World, f: FragSpec): Body[] {
-  const room = Math.max(0, w.maxParticles - w.particleCount);
-  const n = Math.max(0, Math.min(f.n, room));
-  if (n === 0 || f.mass <= 0) return [];
+  if (f.n <= 0 || f.mass <= 0) return [];
+  // at the particle cap the mass still has to go somewhere: one piece carries all of it
+  const n = Math.max(1, Math.min(f.n, w.maxParticles - w.particleCount));
   const mEach = f.mass / n;
   const out: Body[] = [];
   const rFrag = f.cls === 'gasp' ? 0 : radiusFromDensity(mEach, f.rho ?? 3);
@@ -273,10 +273,9 @@ export function crater(w: World, T: Body, p: Body) {
     const ex = T.x + nx * T.r * 1.02, ey = T.y + ny * T.r * 1.02, ez = T.z + nz * T.r * 1.02;
     // the ejecta's mass comes out of the target only as it is actually thrown
     T.m -= mEsc;
-    const made = spawnFragments(w, { mass: mEsc, n: nEj, cls: 'debris', x: ex, y: ey, z: ez,
+    spawnFragments(w, { mass: mEsc, n: nEj, cls: 'debris', x: ex, y: ey, z: ez,
       vx: T.vx, vy: T.vy, vz: T.vz, rIn: 0, rOut: Math.min(T.r * 0.2, D / AU_M), vMin: 1.02 * vesc, vMax: 1.5 * vesc,
       heat: 1, color: T.look.c2, bias: [nx, ny, nz], biasK: 1.6, recoil: T, rho: Math.max(0.5, T.density) });
-    if (!made.length) T.m += mEsc;
   }
   w.massChanged(T);
   if (ang > 0.004 || p.m > 1e-6 * T.m)

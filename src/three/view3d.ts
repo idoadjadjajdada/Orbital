@@ -449,10 +449,13 @@ const seatsOf = (k: RocketModel): Seat[] => (k === 'wayfarer' ? ['cockpit', 'cab
 
 const UP = new THREE.Vector3(0, 1, 0);
 const YR = 365.25 * 86400;
-/** the closest the ship comes to a surface, m: it is 55 m long */
+/** where a mouth puts the ship out, m clear of what it opens by: it is 55 m long */
 const SHIP_CLEAR = 60;
-/** landed, the ship's origin (its main deck) stands this high over the ground, m */
-const LAND_H = 7.2;
+/** the hull's lowest-reaching points, ship coordinates (m): the belly, nose, tail, wingtips and engines. Flying, the
+ *  ship keeps whichever is lowest a little over the ground, so it can skim it level and still not dig its nose in */
+const HULL_LOW = [[0, -6.5, 0], [0, -2, -28], [0, -1, 25], [16, -1, 8], [-16, -1, 8], [0, -4, 26]].map(([x, y, z]) => new THREE.Vector3(x, y, z));
+/** landed, the ship's origin (its main deck) stands this high over the ground, m; afloat, this high over the water */
+const LAND_H = 7.2, FLOAT_H = 3.2;
 /** the hips of the six legs and the airlock's sill, ship coordinates, for finding the ground under each */
 const LEG_HIPS = [[5.95, -1.5, 6.2], [5.95, -1.5, 16.4], [-5.95, -1.5, 6.2], [-5.95, -1.5, 16.4], [3.2, -0.35, -19], [-3.2, -0.35, -19]];
 const LADDER_TOP = new THREE.Vector3(-9.45, 0.6, 0);
@@ -501,7 +504,8 @@ export class View3D {
    * the body's turning frame), its attitude in that frame, how far each leg
    * reaches and how far the ladder drops
    */
-  landing: { b: Body; n: V3; alt: number; q: THREE.Quaternion; phase: 'down' | 'landed' | 'up'; legs: number; reach: number[]; ladder: number } | null = null;
+  /** the ship setting down, standing or lifting off; `sea` when it is afloat rather than on its legs */
+  landing: { b: Body; n: V3; alt: number; q: THREE.Quaternion; phase: 'down' | 'landed' | 'up'; legs: number; reach: number[]; ladder: number; sea: boolean } | null = null;
   /** on foot on a world: where (unit, body frame), which way you face, your jump */
   surf = { nav: { anchor: null, off: [0, 0, 0], vel: [0, 0, 0] } as Mover, b: null as Body | null, n: [0, 0, 1] as V3, yaw: 0, pitch: 0, y: 0, vy: 0, speed: 0, foot: -Infinity, roof: Infinity, inside: null as string | null };
   /** overdrive switched on by the autopilot, to switch off on arrival */
@@ -519,7 +523,7 @@ export class View3D {
   /** the captain's log: what this voyage has done */
   logbook = { start: performance.now(), metres: 0, top: 0, jumps: 0, walks: 0, sleeps: 0, coffees: 0, landings: 0, firsts: [] as { name: string; note: string }[], landed: [] as string[], walkedOn: [] as string[], finds: [] as { what: string; note: string; where: string }[] };
   /** asleep in the quarters: seconds so far, how long, the clock to go back to, and when it began (sim years) */
-  private sleep: { t: number; dur: number; warp: number; from: number } | null = null;
+  private sleep: { t: number; dur: number; warp: number; from: number; paused: boolean } | null = null;
   /** the lab's globe: whose surface it wears */
   private globeKey = '';
   private globeTex: THREE.Texture[] = [];
@@ -687,6 +691,7 @@ export class View3D {
     this.foot.seat = null;
     this.res.last = 0;
     this.landing = null;
+    this.ground.flora.clearAround([]);
     sh.hull.setLegs(0);
     sh.hull.setLadder(null);
     if (b) {
@@ -868,6 +873,7 @@ export class View3D {
     if (this.mode === 'shuttle') return 'You are flying Lander 1: dock with the ship first (fly within 100 m, F)';
     if (this.mode === 'eva' || this.mode === 'surface') return 'Board the ship first: it holds station while you are outside';
     if (this.landing) return 'Lift off first';
+    if (this.fall) return 'Inside the horizon every way leads to the singularity: no wormhole can open here';
     if (sh.worm) return 'A transit is under way';
     if (sh.charge < 1) return `The wormhole drive is recharging: ${Math.ceil((1 - sh.charge) * sh.refill())} s`;
     return '';
@@ -877,6 +883,8 @@ export class View3D {
   goTo(b: Body) {
     const why = this.goBlock();
     if (why) { this.app.onToast(why); return; }
+    // (docked, it lets go of the port first, or the port would hold it there)
+    if (this.visit.docked) this.visit.undock();
     this.travel = { b, stop: b.look.wormhole ? 0 : this.stopFor(b), name: b.name };
   }
 
@@ -887,6 +895,7 @@ export class View3D {
     const why = this.jumpBlock();
     if (why) { this.app.onToast(why); return; }
     if (!b.alive) return;
+    if (this.visit.docked) this.visit.undock();
     const f = new THREE.Vector3(0, 0, -MOUTH_AHEAD / AU_M).applyQuaternion(sh.quat);
     const n = sh.nav;
     sh.worm = { phase: 'charge', t: 0, to: b, dur: 6, natural: false, mouth: { anchor: n.anchor, off: [n.off[0] + f.x, n.off[1] + f.y, n.off[2] + f.z], vel: [0, 0, 0] } };
@@ -993,8 +1002,11 @@ export class View3D {
     const sh = this.ship;
     if (this.travel || sh.worm || sh.od) { this.app.onToast('Not while the ship is under way: stop first, then sleep'); return; }
     if (this.sleep) return;
+    // (a night needs the clock running: it is set going, and stopped again on waking)
+    const paused = this.app.paused;
+    this.app.paused = false;
     const dur = 4;
-    this.sleep = { t: 0, dur, warp: this.app.warpLog, from: this.app.world.time };
+    this.sleep = { t: 0, dur, warp: this.app.warpLog, from: this.app.world.time, paused };
     this.app.warpLog = Math.log10(sleepWarp(dur));
   }
 
@@ -1018,6 +1030,7 @@ export class View3D {
   private wake() {
     if (!this.sleep) return;
     if (this.sleep.t < this.sleep.dur) this.app.warpLog = this.sleep.warp;
+    if (this.sleep.paused) this.app.paused = true;
     this.sleep = null;
     this.panels.setFade(0);
   }
@@ -1046,8 +1059,10 @@ export class View3D {
   stepOut() {
     const sh = this.ship;
     if (sh.worm) { this.app.onToast('Not in the middle of a wormhole transit'); return; }
+    if (this.fall) { this.app.onToast('Not inside the horizon: the airlock stays shut'); return; }
     if (this.landing) {
       if (this.landing.phase !== 'landed') { this.app.onToast('Wait until the ship has landed'); return; }
+      if (this.landing.sea) { this.app.onToast('Afloat: the airlock opens onto open water. Lift off and find land to walk on'); return; }
       const foot = this.ladderFoot()!;
       // facing away from the ship, out from the airlock
       const [e, nn] = tangent(foot), out = new THREE.Vector3(-1, 0, 0).applyQuaternion(this.landing.q);
@@ -1433,8 +1448,6 @@ export class View3D {
       return 'Nothing to land on here: fly down close to a world';
     }
     if (o.alt > LAND_RANGE) return `Too high to land: come within ${LAND_RANGE / 1000} km of the ground (now ${(o.alt / 1000).toFixed(1)} km)`;
-    this.ground.heightAt(o.n, 2);
-    if (this.ground.last_sample.sea) return 'Over the sea: find dry land';
     const T = g.atmo?.T ?? 0;
     if (T > 1500) return `The ground is molten: ${Math.round(T)} K`;
     if (gravity(o.b) > 40) return `Gravity too strong: ${(gravity(o.b) / 9.81).toFixed(1)} g`;
@@ -1457,9 +1470,13 @@ export class View3D {
     sh.od = false; this.autoOd = false;
     sh.nav.vel = [0, 0, 0];
     const q = o.q.clone().invert().multiply(sh.quat);
-    this.landing = { b: o.b, n: o.n, alt: o.alt, q, phase: 'down', legs: 0, reach: [], ladder: 0 };
+    this.ground.heightAt(o.n, 2);
+    const sea = this.ground.last_sample.sea;
+    this.landing = { b: o.b, n: o.n, alt: o.alt, q, phase: 'down', legs: 0, reach: [], ladder: 0, sea };
     sh.nav.anchor = o.b;
-    this.app.onToast(`Landing on ${o.b.name}`);
+    // (what it sets down on is flattened: no trees through the hull)
+    this.ground.flora.clearAround([{ n: o.n, r: 32 }]);
+    this.app.onToast(sea ? `Setting down on the water of ${o.b.name}: the hull floats` : `Landing on ${o.b.name}`);
   }
 
   liftOff() {
@@ -1473,7 +1490,7 @@ export class View3D {
   /** the ship coming down, standing, or going up: kept in the world's turning frame so the ground turns with it */
   private landStep(dt: number) {
     const L = this.landing!, sh = this.ship, b = L.b;
-    if (!b.alive || this.ground.body !== b) { this.landing = null; sh.hull.setLegs(0); sh.hull.setLadder(null); return; }
+    if (!b.alive || this.ground.body !== b) { this.landing = null; sh.hull.setLegs(0); sh.hull.setLadder(null); this.ground.flora.clearAround([]); return; }
     const spec = this.ground.spec!, qb = bodyQuat(b);
     // level the ship on the ground's slope, keeping its heading
     const up = this.ground.normalAt(L.n, L.phase === 'up' ? 1 : 12);
@@ -1486,17 +1503,18 @@ export class View3D {
     const level = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3().crossVectors(fwd, U).normalize(), U, fwd.clone().negate()));
     if (L.phase !== 'up') L.q.slerp(level, Math.min(1, dt * 1.5));
     const hG = this.ground.heightAt(L.n, 0.5), sea = this.ground.last_sample.sea;
-    const ground = sea ? 0 : hG;
+    const ground = sea ? 0 : hG, rest = L.sea ? FLOAT_H : LAND_H;
     sh.thrust = L.phase === 'landed' ? 0 : 0.5;
     if (L.phase === 'down') {
       // a fast drop, slowing to a walking pace for the last stretch
-      const v = Math.max(1.2, Math.min(400, (L.alt - LAND_H) * 0.6));
-      L.alt = Math.max(LAND_H, L.alt - v * dt);
-      L.legs = Math.min(1, L.legs + (L.alt < 600 ? dt / 2.5 : 0));
-      if (L.alt <= LAND_H + 0.01 && L.legs >= 1) {
+      const v = Math.max(1.2, Math.min(400, (L.alt - rest) * 0.6));
+      L.alt = Math.max(rest, L.alt - v * dt);
+      // (afloat, the legs stay up: the hull is what it rests on)
+      if (!L.sea) L.legs = Math.min(1, L.legs + (L.alt < 600 ? dt / 2.5 : 0));
+      if (L.alt <= rest + 0.01 && (L.sea || L.legs >= 1)) {
         L.phase = 'landed';
         this.logbook.landings++;
-        this.app.onToast(`Landed on ${b.name}. The airlock's ladder is down: step outside from the commons`);
+        this.app.onToast(L.sea ? `Afloat on ${b.name}'s sea, riding the swell` : `Landed on ${b.name}. The airlock's ladder is down: step outside from the commons`);
         if (!this.logbook.landed.includes(b.name)) this.logbook.landed.push(b.name);
       }
     } else if (L.phase === 'up') {
@@ -1507,17 +1525,22 @@ export class View3D {
         this.landing = null;
         sh.hull.setLegs(0);
         sh.hull.setLadder(null);
-        this.app.onToast('Clear of the ground');
+        this.ground.flora.clearAround([]);
+        this.app.onToast(L.sea ? 'Clear of the water' : 'Clear of the ground');
         return;
       }
-    } else L.ladder = Math.min(1, L.ladder + dt / 2);
+    } else if (!L.sea) L.ladder = Math.min(1, L.ladder + dt / 2);
+    // afloat, the swell lifts and rolls it: a slow heave, and a pitch and a roll out of step with it
+    const t = performance.now() / 1000, swell = L.sea && L.alt < rest + 3 ? 1 - Math.min(1, (L.alt - rest) / 3) : 0;
+    const heave = swell * (0.35 * Math.sin(t * 0.9) + 0.15 * Math.sin(t * 1.7 + 1));
     // where the ship is, from the world's frame
-    const r = spec.R + ground + L.alt;
+    const r = spec.R + ground + L.alt + heave;
     const p = new THREE.Vector3(L.n[0] * r, L.n[1] * r, L.n[2] * r).applyQuaternion(qb);
     sh.nav.anchor = b;
     sh.nav.off = [p.x / AU_M, p.y / AU_M, p.z / AU_M];
     sh.nav.vel = [0, 0, 0];
     sh.quat.copy(qb).multiply(L.q);
+    if (swell > 0) sh.quat.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(swell * 0.025 * Math.sin(t * 0.7 + 2), 0, swell * 0.035 * Math.sin(t * 1.1))));
     // each leg telescopes down to the ground under it; the ladder to the ground under the hatch
     if (L.legs > 0 && L.alt < 60) {
       const R0 = spec.R + ground + L.alt;
@@ -1596,7 +1619,16 @@ export class View3D {
       const st = this.ground.standAt(next, S.foot + S.y + 0.6);
       if (st.sea) { if (performance.now() - this.seaToast > 4000) { this.seaToast = performance.now(); this.app.onToast('The water’s edge: you would need a boat'); } }
       else if (st.solid) { if (performance.now() - this.seaToast > 4000) { this.seaToast = performance.now(); this.app.onToast('Solid rock: find a way round'); } }
-      else S.n = next;
+      else if (!this.ground.flora.trunkAt(next, R, 0.35)) S.n = next;
+      else {
+        // a tree in the way: slide round it, along whichever way is open
+        for (const [a, c] of [[inp.f, 0], [0, inp.s]]) {
+          if (!a && !c) continue;
+          const m2: V3 = [S.n[0] + (fwd[0] * a + right[0] * c) * k, S.n[1] + (fwd[1] * a + right[1] * c) * k, S.n[2] + (fwd[2] * a + right[2] * c) * k], l2 = Math.hypot(...m2);
+          const n2: V3 = [m2[0] / l2, m2[1] / l2, m2[2] / l2];
+          if (!this.ground.flora.trunkAt(n2, R, 0.35)) { S.n = n2; break; }
+        }
+      }
     }
     S.speed = Math.hypot(inp.f, inp.s) * sp;
     if (inp.jump && !air) S.vy = 3.4;
@@ -2131,19 +2163,40 @@ export class View3D {
       if (out) { this.throughNatural(near.b, out); return; }
     }
     this.holeCheck(posOf(n));
-    if (!this.fall) this.clear(n, SHIP_CLEAR);
+    if (!this.fall) this.clear(n, this.shipGap(), this.canopyUnder());
   }
 
-  /** never inside anything: keep a mover `gap` m above the nearest surface */
-  private clear(m: Mover, gap: number) {
+  /** how far the hull reaches below the ship's origin toward the nearest world, as it is turned now, and 3 m to spare */
+  private shipGap() {
+    const p = posOf(this.ship.nav), { b } = this.nearest(p);
+    if (!b) return 10;
+    const up = new THREE.Vector3(p[0] - b.x, p[1] - b.y, p[2] - b.z).normalize().applyQuaternion(this.ship.quat.clone().invert());
+    let low = 0;
+    for (const q of HULL_LOW) low = Math.max(low, -q.dot(up));
+    return low + 3;
+  }
+
+  /** the tops of the trees under the ship (m over the datum), so it comes down on them and not through them */
+  private canopyUnder() {
+    const b = this.ground.body, spec = this.ground.spec;
+    if (!b || !spec) return -Infinity;
+    const p = posOf(this.ship.nav), v = new THREE.Vector3((p[0] - b.x) * AU_M, (p[1] - b.y) * AU_M, (p[2] - b.z) * AU_M);
+    if (v.length() - spec.R > 400) return -Infinity;
+    v.applyQuaternion(bodyQuat(b).invert()).normalize();
+    // (over the hull's own length round where it is)
+    return this.ground.flora.canopy([v.x, v.y, v.z], spec.R, 30) - 1.5;
+  }
+
+  /** never inside anything: keep a mover `gap` m above the nearest surface (or above `top`, m over the datum, if that is higher: the trees) */
+  private clear(m: Mover, gap: number, top = -Infinity) {
     const p = posOf(m);
     const { b, alt } = this.nearest(p);
-    if (!b || alt >= gap) return;
+    if (!b || alt >= gap + (b === this.ground.body && top > -Infinity ? Math.max(0, top - this.groundUnder(b, p)) : 0)) return;
     // (a black hole has no surface to stop at: through its horizon you fall in)
     if (b.cls === 'bh' && !b.look.wormhole && !b.look.white && m === this.ship.nav) return;
     const d: V3 = [p[0] - b.x, p[1] - b.y, p[2] - b.z];
     const dl = Math.hypot(d[0], d[1], d[2]) || 1;
-    let R = this.visR(b) + gap / AU_M + (b === this.ground.body ? this.groundUnder(b, p) / AU_M : 0);
+    let R = this.visR(b) + gap / AU_M + (b === this.ground.body ? Math.max(this.groundUnder(b, p), top) / AU_M : 0);
     // into a giant, down to what the hull can take
     if (Giant.is(b)) {
       if (b !== this.giant.body || alt > -this.giant.crush + gap) return;
@@ -2363,7 +2416,7 @@ export class View3D {
     else if (this.mode === 'walk') where = this.sleep ? 'Asleep in the quarters' : this.foot.seat ? 'On the couch' : `On foot · ${this.room()}`;
     else if (this.mode === 'scope') where = `Telescope · ×${(70 / this.scope.fov).toFixed(this.scope.fov > 7 ? 1 : 0)}${this.scope.track ? ' · tracking' : ''}`;
     else if (this.mode === 'shuttle') {
-      where = `🚀 Lander 1 · ${this.shuttle.status()}`;
+      where = `Lander 1 · ${this.shuttle.status()}`;
       speed = `${Math.hypot(...this.shuttle.nav.vel).toFixed(1)} m/s`;
     }
     else if (this.mode === 'craft') {

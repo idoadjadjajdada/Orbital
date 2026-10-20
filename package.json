@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "test:browser": "node tests/browser.mjs"
+    "test:browser": "node tests/browser.mjs",
+    "test:notes": "node tests/notes-app.mjs",
+    "bench": "node bench/run.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",

@@ -6,12 +6,13 @@ import { G, C, M_EARTH, M_JUP, R_EARTH, KMS, schwarzschild, R_SUN } from '../src
 import { stateFromElements, osculating, elementsDeg, relative, norm } from '../src/physics/orbit';
 import { lagrangePoints, assignHosts } from '../src/physics/analysis';
 import { makeBody } from '../src/physics/catalog';
-import { msLife, zamsL } from '../src/physics/stellar';
+import { msLife, zamsL, remnantMass } from '../src/physics/stellar';
 import { buildPreset } from '../src/physics/presets';
 import { MOONS } from '../src/physics/data/moons';
 import { SHAPES, shapeStats, makeShape, slump, MAT, GRID } from '../src/physics/materials';
-import { takeSnapshot, restoreSnapshot } from '../src/physics/snapshot';
+import { takeSnapshot, restoreSnapshot, snapshotToText, snapshotFromText } from '../src/physics/snapshot';
 import { tides } from '../src/physics/tides';
+import { shatterBody } from '../src/physics/events';
 import { placeExtras } from '../src/physics/extras';
 import { ENTRY } from '../src/physics/catalog';
 import { survey } from '../src/three/survey';
@@ -509,6 +510,66 @@ describe('undo', () => {
     restoreSnapshot(w, s);
     expect(w.bodies.length).toBe(n);
     expect(w.bodies.find(b => b.name === 'Titan')!.x).toBe(x0);
+  });
+
+  it('puts back the slow forces a scenario drives, which loading another system drops', () => {
+    const w = buildPreset('inner');
+    const drive = () => {};
+    w.drive = drive;
+    const s = takeSnapshot(w, 'test');
+    buildPreset('solar', w);
+    expect(w.drive).toBe(null);
+    restoreSnapshot(w, s);
+    expect(w.drive).toBe(drive);
+  });
+});
+
+describe('saves', () => {
+  it('keeps the sandbox as text and brings it back, numbering new bodies after the old', () => {
+    const w = buildPreset('saturn');
+    const n = w.bodies.length, titan = w.bodies.find(b => b.name === 'Titan')!;
+    const text = snapshotToText(takeSnapshot(w, 'save'));
+    const back = snapshotFromText(JSON.parse(JSON.stringify(text)))!;
+    const w2 = new World();
+    restoreSnapshot(w2, back);
+    expect(w2.bodies.length).toBe(n);
+    const t2 = w2.bodies.find(b => b.name === 'Titan')!;
+    expect([t2.x, t2.y, t2.vx, t2.m, t2.id]).toEqual([titan.x, titan.y, titan.vx, titan.m, titan.id]);
+    expect(t2.compact).toBe(false);
+    const fresh = point('new', 1e-12);
+    expect(w2.bodies.every(b => b.id < fresh.id)).toBe(true);
+    // and it still runs
+    run(w2, 0.001, 0.001);
+    expect(w2.bodies.every(b => Number.isFinite(b.x))).toBe(true);
+  });
+  it('turns away what is not a save', () => {
+    expect(snapshotFromText('not json')).toBe(null);
+    expect(snapshotFromText(JSON.stringify({ v: 2, bodies: [], parts: [] }))).toBe(null);
+    expect(snapshotFromText(JSON.stringify({ v: 1, bodies: [{ id: 1, x: 'a' }], parts: [] }))).toBe(null);
+  });
+});
+
+describe('remnants', () => {
+  it('never leaves a remnant heavier than the star was when it died', () => {
+    for (const m0 of [1, 5, 9, 20, 30, 45, 80]) expect(remnantMass(m0)).toBeLessThanOrEqual(m0 * (m0 < 8 ? 1 : m0 < 25 ? 0.85 : 0.65) + 1e-12);
+  });
+});
+
+describe('the particle cap', () => {
+  it('keeps all the mass and momentum of a shattered world when there is no room for more pieces', () => {
+    const w = new World();
+    w.maxParticles = 0;
+    const b = point('rock', M_EARTH, R_EARTH);
+    b.setVel(30 * KMS, 2 * KMS, 0);
+    w.add(b);
+    shatterBody(w, b);
+    const live = w.bodies.filter(x => x.alive);
+    expect(live.length).toBeGreaterThan(0);
+    const m = live.reduce((t, x) => t + x.m, 0);
+    const px = live.reduce((t, x) => t + x.m * x.vx, 0), py = live.reduce((t, x) => t + x.m * x.vy, 0);
+    expect(m / M_EARTH).toBeCloseTo(1, 12);
+    expect(px / (M_EARTH * 30 * KMS)).toBeCloseTo(1, 9);
+    expect(py / (M_EARTH * 2 * KMS)).toBeCloseTo(1, 9);
   });
 });
 

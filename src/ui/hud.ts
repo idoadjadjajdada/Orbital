@@ -1,6 +1,7 @@
 import { sampleMap } from '../pixel/surface';
 import { iconOf, type App, type Flag, type Tool } from '../app';
 import { Builder } from './builder';
+import { icon as svgIcon, hydrateIcons } from './icons';
 import { buildCustom } from '../physics/custom';
 import { bakeShaped, drawCells } from '../pixel/shaped';
 import { drawCraft, drawWhiteHole, drawWormhole, drawPulsar, drawJet } from '../pixel/phenomena';
@@ -14,6 +15,16 @@ import { fmtMass, fmtLength, fmtDuration, sig, KMS, M_EARTH, M_JUP, densityOf } 
 import { msLife, giantLife } from '../physics/stellar';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+/** the pause button: a play icon while paused, a pause icon while running */
+function pauseIcon(paused: boolean) {
+  const el = $('pause'), n = paused ? 'play' : 'pause';
+  if (el.dataset.iconDrawn === n) return;
+  el.innerHTML = svgIcon(n);
+  el.dataset.iconDrawn = n;
+  el.setAttribute('aria-label', paused ? 'Play' : 'Pause');
+}
+/** set an element's text, touching the page only when it changes (most of these are set every frame) */
+const set = (id: string, t: string) => { const el = $(id); if (el.textContent !== t) el.textContent = t; };
 
 const KIND: Record<string, string> = {
   rock: 'Rocky body', ice: 'Icy body', gas: 'Giant', star: 'Star', wd: 'White dwarf', ns: 'Neutron star', bh: 'Black hole', debris: 'Debris',
@@ -82,6 +93,7 @@ export class Hud {
   private ownIcon: { key: string; url: string } | null = null;
 
   constructor(private app: App) {
+    hydrateIcons();
     for (const e of CATALOG) {
       const b = { look: { ...e.look, seed: 7 }, heat: e.key === 'lava' ? 1 : 0, cls: e.cls, tilt: ((e.tilt ?? 0) * Math.PI) / 180,
         star: e.cls === 'star' ? { m0: e.m, age: 0, phase: e.key === 'redgiant' || e.key === 'supergiant' || e.key === 'hypergiant' ? 'giant' as const : 'ms' as const, L: 1,
@@ -119,6 +131,10 @@ export class Hud {
     // settings, and the cheat for the clock
     $('setBtn').onclick = () => { $('settings').hidden = !$('settings').hidden; };
     $('sClose').onclick = () => { $('settings').hidden = true; };
+    const saveInfo = () => { const at = app.savedAt(); $('saveInfo').textContent = at ? `Saved ${new Date(at).toLocaleString()}. Save again to replace it; Load brings it back (Undo takes you back again).` : 'Keeps everything in it in this browser, to come back to (Ctrl/⌘ S).'; };
+    $('saveBtn').onclick = () => { app.save(); saveInfo(); };
+    $('loadBtn').onclick = () => { app.load(); this.sync(); };
+    saveInfo();
     const cheat = $<HTMLInputElement>('cheatWarp');
     cheat.oninput = () => { app.warpLog = Number(cheat.value); };
     $('cheatReal').onclick = () => { app.warpLog = Math.log10(1 / (365.25 * 86400)); };
@@ -219,7 +235,6 @@ export class Hud {
     box.hidden = !e;
     document.body.classList.toggle('era-on', !!e);
     if (!e) { $('eraMenu').hidden = true; return; }
-    const set = (id: string, t: string) => { const el = $(id); if (el.textContent !== t) el.textContent = t; };
     set('eraAgo', Early.ago(e.age));
     set('eraName', e.current.name);
     set('eraNext', e.next());
@@ -294,7 +309,7 @@ export class Hud {
     const icon = key ? (key === 'custom' ? this.forgeIcon() : this.icons.get(key) ?? null) : null;
     if (icon === this.armedIcon) return;
     this.armedIcon = icon;
-    $('drawerBtn').innerHTML = icon ? `<img src="${icon}" alt=""><span>Armed</span>` : '<b>＋</b><span>Bodies</span>';
+    $('drawerBtn').innerHTML = icon ? `<img src="${icon}" alt=""><span>Armed</span>` : `<b>${svgIcon('planet')}</b><span>Bodies</span>`;
     $('drawerBtn').classList.toggle('on', !!key);
   }
 
@@ -326,14 +341,14 @@ export class Hud {
     for (const el of document.querySelectorAll<HTMLElement>('.tog')) el.classList.toggle('on', this.app.flags[el.dataset.flag as Flag]);
     for (const el of document.querySelectorAll<HTMLElement>('[data-tool]')) el.classList.toggle('on', el.dataset.tool === this.app.tool);
     $<HTMLInputElement>('warp').value = String(this.app.warpLog);
-    $('pause').textContent = this.app.paused ? '▶' : '❚❚';
+    pauseIcon(this.app.paused);
     this.syncCards();
   }
 
   /**
    * Small screens: the less-used buttons fold behind ⋯, the bodies to throw
    * in sit in a drawer behind ＋, the inspector folds down to its title, and
-   * 👁 hides everything to leave just the sky.
+   * the eye button hides everything to leave just the sky.
    */
   private buildCompact() {
     const app = this.app, body = document.body;
@@ -574,26 +589,28 @@ export class Hud {
 
   private tick() {
     const a = this.app;
-    $('elapsed').textContent = `t = ${fmtDuration(a.world.time)}`;
+    set('elapsed', `t = ${fmtDuration(a.world.time)}`);
     if (!$('settings').hidden) {
       const c = $<HTMLInputElement>('cheatWarp');
       if (c !== document.activeElement) c.value = String(a.warpLog);
-      $('cheatV').textContent = a.warp * 365.25 * 86400 < 1.5 && a.warp * 365.25 * 86400 > 0.67 ? 'real time — one second a second' : `${fmtDuration(a.warp)} per second`;
+      set('cheatV', a.warp * 365.25 * 86400 < 1.5 && a.warp * 365.25 * 86400 > 0.67 ? 'real time — one second a second' : `${fmtDuration(a.warp)} per second`);
     }
     const want = a.warp;
-    $('rate').textContent = a.paused ? 'paused' : `${fmtDuration(want)} per second`;
+    set('rate', a.paused ? 'paused' : `${fmtDuration(want)} per second`);
     const lag = !a.paused && a.rate < 0.8 * want ? ` running at ${fmtDuration(a.rate)}/s` : '';
-    $('lag').textContent = lag;
-    $('lag').title = lag ? 'The integrator is taking the steps the closest pair of bodies needs; accuracy is not traded for speed.' : '';
-    if ($<HTMLInputElement>('warp') !== document.activeElement) $<HTMLInputElement>('warp').value = String(a.warpLog);
-    $('pause').textContent = a.paused ? '▶' : '❚❚';
+    set('lag', lag);
+    const tip = lag ? 'The integrator is taking the steps the closest pair of bodies needs; accuracy is not traded for speed.' : '';
+    if ($('lag').title !== tip) $('lag').title = tip;
+    const warp = $<HTMLInputElement>('warp'), wv = String(a.warpLog);
+    if (warp !== document.activeElement && warp.value !== wv) warp.value = wv;
+    pauseIcon(a.paused);
     for (const el of document.querySelectorAll<HTMLElement>('.tog')) el.classList.toggle('on', a.flags[el.dataset.flag as Flag]);
     const n = a.world.sources.length, p = a.world.particleCount;
-    $('stats').textContent = `${n} bodies · ${p} particles`;
+    set('stats', `${n} bodies · ${p} particles`);
     const rt = a.rulerText();
     const rb = $('rulerBox');
     rb.hidden = !rt;
-    if (rt && rb.textContent !== rt) rb.textContent = rt;
+    if (rt) set('rulerBox', rt);
     for (const el of document.querySelectorAll<HTMLElement>('[data-tool]')) el.classList.toggle('on', el.dataset.tool === a.tool);
     this.eraTick();
     this.inspect();

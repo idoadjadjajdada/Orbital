@@ -1,3 +1,4 @@
+import { icon } from '../ui/icons';
 import type { Body } from '../physics/body';
 import { AU_M, YEAR_S, fmtLength, fmtDuration, sig } from '../physics/units';
 import { BTN } from '../ui/gamepad';
@@ -51,7 +52,7 @@ export class Panels {
     this.el = document.createElement('div');
     this.el.className = 'panel3';
     this.el.hidden = true;
-    this.el.innerHTML = '<div class="phead"><b></b><button class="x" aria-label="Close">✕</button></div><div class="pbody"></div>';
+    this.el.innerHTML = `<div class="phead"><b></b><button class="x" aria-label="Close">${icon('close')}</button></div><div class="pbody"></div>`;
     this.head = this.el.querySelector('.phead b')!;
     this.body = this.el.querySelector('.pbody')!;
     this.el.addEventListener('click', e => {
@@ -141,7 +142,12 @@ export class Panels {
       const c = v.fleet.byId(Number(id));
       if (c) { this.close(); if (v.visit.docked === c) v.visit.enter(c, 'dock'); else v.visit.dock(c); return; }
     }
-    else if (a === 'cdrop') { const c = v.fleet.byId(Number(id)); if (c) { v.fleet.remove(c); v.app.onToast(`${c.name} decommissioned`); } }
+    else if (a === 'cdrop') {
+      const c = v.fleet.byId(Number(id));
+      const why = !c ? '' : v.visit.docked === c || v.visit.at?.c === c ? `The ship is ${v.visit.at?.c === c ? 'aboard' : 'docked at'} ${c.name}: leave it first` : v.fleet.retireBlock(c);
+      if (c && why) v.app.onToast(why);
+      else if (c) { v.fleet.remove(c); v.app.onToast(`${c.name} decommissioned`); }
+    }
     else if (a === 'mission') { this.show('mission'); return; }
     else if (a === 'site') { /* handled above */ }
     else if (a === 'gosite') { const t = v.missionTarget(); if (t) { v.goToSite(t, id); this.close(); return; } }
@@ -231,10 +237,10 @@ export class Panels {
     h += '<div class="psub">Load</div>';
     if (spec.seats) h += `<div class="prow"><div><div class="pnm">Crew: ${L.crew} of ${spec.seats}</div><div class="pdim">joining the base or station it flies to</div></div><span class="pbtns"><button data-act="rcrew" data-id="-1">−</button><button data-act="rcrew" data-id="1">+</button></span></div>`;
     h += `<div class="prow"><div><div class="pnm">Supplies: ${L.supplies} hold${L.supplies === 1 ? '' : 's'} (${L.supplies * HOLD_DAYS} days)</div><div class="pdim">food, water, oxygen and parts, for the base or station it flies to</div></div><span class="pbtns"><button data-act="rsup" data-id="-1">−</button><button data-act="rsup" data-id="1">+</button></span></div>`;
-    if (r.kind === 'mammoth') h += `<div class="prow"><div><div class="pnm">A rover: ${L.rover ? 'loaded' : 'no'}</div><div class="pdim">takes a deck; it drives off where it lands</div></div><span class="pbtns"><button data-act="rrover"${L.rover ? ' class="on"' : ''}>${L.rover ? '✓ Rover' : 'Rover'}</button></span></div>`;
+    if (r.kind === 'mammoth') h += `<div class="prow"><div><div class="pnm">A rover: ${L.rover ? 'loaded' : 'no'}</div><div class="pdim">takes a deck; it drives off where it lands</div></div><span class="pbtns"><button data-act="rrover"${L.rover ? ' class="on"' : ''}>${L.rover ? `${icon('check')} Rover` : 'Rover'}</button></span></div>`;
     const near = v.rocketNear() === c;
     if (near && v.mode === 'surface') h += `<div class="prow"><div><div class="pnm">Go inside</div><div class="pdim">through its airlock: its decks, its ladders, its seats</div></div><span class="pbtns"><button data-act="rinside">Go inside</button></span></div>`;
-    h += `<div class="prow"><div><div class="pnm">Ride along: ${near && this.ride ? 'yes' : 'no'}</div><div class="pdim">${near ? 'you are beside it: climb in and go too' : 'stand beside it to go too'}</div></div><span class="pbtns"><button data-act="rride"${near ? '' : ' disabled'}${near && this.ride ? ' class="on"' : ''}>${near && this.ride ? '✓ Aboard' : 'Go too'}</button></span></div>`;
+    h += `<div class="prow"><div><div class="pnm">Ride along: ${near && this.ride ? 'yes' : 'no'}</div><div class="pdim">${near ? 'you are beside it: climb in and go too' : 'stand beside it to go too'}</div></div><span class="pbtns"><button data-act="rride"${near ? '' : ' disabled'}${near && this.ride ? ' class="on"' : ''}>${near && this.ride ? `${icon('check')} Aboard` : 'Go too'}</button></span></div>`;
     // back where it came from
     const home = r.home !== null && r.home !== r.at ? f.byId(r.home) : null;
     if (home && f.sites().includes(home)) {
@@ -270,7 +276,7 @@ export class Panels {
         + `<div class="prow"><div><div class="pnm">Soil: ${esc(s.name)}</div></div><span class="pbtns"><button data-act="gsoil" data-id="-1">◀</button><button data-act="gsoil" data-id="1">▶</button></span></div>`
         + this.soilCard(am, s)
         + `<div class="prow"><div><div class="pnm">Plant: ${esc(p.name)} <span class="pdim">· ${esc(p.latin)}</span></div><div class="pdim">${p.days} days to grow · likes pH ${p.pH[0]}–${p.pH[1]}${p.legume ? ' · a legume' : ''} · a good crop feeds the crew ${p.food} day${p.food === 1 ? '' : 's'}</div></div><span class="pbtns"><button data-act="gplant" data-id="-1">◀</button><button data-act="gplant" data-id="1">▶</button></span></div>`
-        + `<div class="plaunch">${AMENDS.map(m => `<button data-act="gam" data-id="${m.id}"${d.amends.has(m.id) ? ' class="on"' : ''}><b>${d.amends.has(m.id) ? '✓ ' : ''}${m.name}</b><span>${esc(m.about)}</span></button>`).join('')}</div>`
+        + `<div class="plaunch">${AMENDS.map(m => `<button data-act="gam" data-id="${m.id}"${d.amends.has(m.id) ? ' class="on"' : ''}><b>${d.amends.has(m.id) ? `${icon('check')} ` : ''}${m.name}</b><span>${esc(m.about)}</span></button>`).join('')}</div>`
         + `<div class="prow"><span class="pbtns"><button data-act="gsow">Sow</button><button data-act="gcancel">Cancel</button></span></div>`;
     }
     const rows = gl.chambers(gl.base).map((ch, k) => {
@@ -368,7 +374,7 @@ export class Panels {
     const stars = v.stars();
     return `<div class="phero"><div><div class="pbig">${esc(s.name)}</div><div class="pdim">${esc(s.kind)}${picked ? ' · selected' : ' · nearest'}</div></div>${this.btns(b, true)}</div>`
       + `<table class="ptab">${s.rows.map(([k, x]) => `<tr><td>${k}</td><td>${esc(x)}</td></tr>`).join('')}</table>`
-      + `<div class="pland ${s.land.ok ? 'ok' : 'no'}">${s.land.ok ? '✓' : '✗'} ${esc(s.land.why)}</div>`
+      + `<div class="pland ${s.land.ok ? 'ok' : 'no'}">${icon(s.land.ok ? 'check' : 'cross')} ${esc(s.land.why)}</div>`
       + this.science(b, stars);
   }
 
@@ -483,7 +489,7 @@ export class Panels {
     const L = G.lifeInfo!;
     h += `<div class="psub">Life nearby</div>`;
     if (b.look.real === 'Earth' && G.biome) {
-      const sp = speciesIn(G.biome);
+      const sp = speciesIn(G.biome, ...G.biomeAt);
       h += `<p class="pdim">Biome: <b>${G.biome}</b>. Living here:</p>` + sp.map(x => `<div class="prow tight"><div><span class="pdot" style="background:#${x.color.toString(16).padStart(6, '0')}"></span><b>${esc(x.name)}</b> <i class="pdim">${esc(x.latin)}</i> <span class="pdim">· ${x.kind}${x.size ? ` · ${x.size} m` : ''}</span></div></div>`).join('');
     } else h += `<div class="pland ${L.tier === 'none' ? 'no' : L.tier === 'candidate' ? 'maybe' : 'ok'}">${esc(L.verdict)}</div>` + L.forms.map(f => `<div class="prow tight"><div><b>${esc(f.name)}</b> <span class="pdim">${f.kind} · ${esc(f.about)}</span></div></div>`).join('');
     const finds = v.logbook.finds.filter(x => x.where === b.name);
@@ -509,7 +515,7 @@ export class Panels {
       .sort((a, c) => a.d - c.d).slice(0, 10);
     const rows = near.map(({ b, d }) => {
       const s = survey(b, stars, null);
-      return `<div class="prow"><div><div class="pnm"><span class="${s.land.ok ? 'pok' : 'pno'}">${s.land.ok ? '✓' : '✗'}</span> ${esc(b.name)}</div><div class="pdim">${fmtLength(Math.max(0, d - b.r))} · ${sig(s.g, 2)} g · ${esc(s.land.why)}</div></div>${this.btns(b)}</div>`;
+      return `<div class="prow"><div><div class="pnm"><span class="${s.land.ok ? 'pok' : 'pno'}">${icon(s.land.ok ? 'check' : 'cross')}</span> ${esc(b.name)}</div><div class="pdim">${fmtLength(Math.max(0, d - b.r))} · ${sig(s.g, 2)} g · ${esc(s.land.why)}</div></div>${this.btns(b)}</div>`;
     }).join('');
     return `<div class="phero"><div class="pdim">Probes, orbiters, landers, rovers, stations and bases launch from here.</div><button data-act="mission">Mission control</button></div>`
       + `<p class="pdim">The landers are rated for up to ${LANDER.maxG} g, ${LANDER.maxK} K and ${LANDER.maxBar} bar, on anything wider than ${LANDER.minKm} km. Nearby worlds:</p>${rows}`;

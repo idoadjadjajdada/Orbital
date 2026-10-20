@@ -15,13 +15,12 @@ def table(src, i=0):
     t = re.findall(r'<table.*?</table>', src, re.S)[i]
     rows = re.findall(r'<tr.*?</tr>', t, re.S)
     cell = lambda c: html.unescape(re.sub(r'<.*?>', ' ', c)).split()
-    return [[(cell(c) or [''])[0] if True else '' for c in re.findall(r'<t[dh].*?</t[dh]>', r, re.S)] for r in rows]
+    return [[(cell(c) or [''])[0] for c in re.findall(r'<t[dh].*?</t[dh]>', r, re.S)] for r in rows]
 
 def num(x):
     try: return float(x)
     except ValueError: return None
 
-elem = table(get('https://ssd.jpl.nasa.gov/sats/elem/'))
 phys_rows = table(get('https://ssd.jpl.nasa.gov/sats/phys_par/'))
 # each value cell holds "value sigma ref"; the first token is the value
 phys = {}
@@ -29,15 +28,7 @@ for r in phys_rows:
     if len(r) >= 6 and num(r[2]) is not None:
         phys[r[2]] = (num(r[3]), num(r[4]), num(r[5]))
 
-hdr = elem[0]
-col = {h: i for i, h in enumerate(hdr)}
-out = []
-for r in elem[1:]:
-    if len(r) < len(hdr): continue
-    # names can be two words (S/2004 S 7); take the full cell text again
-    out.append(r)
-
-# re-read names with spaces intact
+# the elements, with whole cell texts: names can be two words (S/2004 S 7)
 src = get('https://ssd.jpl.nasa.gov/sats/elem/')
 t = re.findall(r'<table.*?</table>', src, re.S)[0]
 rows = re.findall(r'<tr.*?</tr>', t, re.S)[1:]

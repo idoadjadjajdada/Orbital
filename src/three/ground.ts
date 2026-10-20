@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { landmarkModel, landmarkReach } from './landmarks';
+import { moonReady, moonSettled } from '../pixel/moondata';
 import type { Body } from '../physics/body';
 import { AU_M } from '../physics/units';
 import { bodyFrame, type V3 } from '../pixel/sprites';
@@ -107,8 +109,10 @@ uniform float alien;
 #ifndef KIND
 #define KIND 0
 #endif
-// how cratered the ground is, seen from the air (CRATERS where it is at all)
+// how cratered the ground is, seen from the air (CRATERS where it is at all), and the biggest the shader adds, m
+// (a measured map has the bigger ones itself)
 uniform float craterK;
+uniform float craterTop;
 // the ramps down into the caves near: each a segment of floor (A to B) under the cave's up U, with its
 // half width, the height of its roof's arch and of the arch's centre over the floor (in S); the land
 // inside their air is cut away
@@ -134,6 +138,12 @@ varying vec3 vW2;
 varying float vSky;
 #endif
 ${FRAG_NOISE}
+// one train of waves running along d (unit, in the ground's tangent plane), wavelength lam (m) and height a (m): the
+// slope it gives the water at P, moving at the speed deep water waves of that length move, and gone once finer than a pixel
+vec2 wave(vec2 P, vec2 d, float lam, float a, float t, float fw) {
+  float k = 6.2832 / lam;
+  return d * (a * k * cos(dot(d, P) * k - t * sqrt(9.8 * k))) * (1.0 - smoothstep(0.12, 0.45, fw / lam));
+}
 void main() {
   #include <logdepthbuf_fragment>
   #ifndef CAVE
@@ -175,7 +185,7 @@ void main() {
     amp *= 0.75;
   }
   #ifdef CRATERS
-  fq = floor(1048576.0 / 40000.0) / 1048576.0;
+  fq = floor(1048576.0 / craterTop) / 1048576.0;
   for (int k = 0; k < 4; k++) {
     float vis = 1.0 - smoothstep(0.06, 0.2, fq * fwm);
     vec3 q = vFar * fq, i = floor(q);
@@ -188,7 +198,7 @@ void main() {
     fq = floor(fq * 2.6 * 1048576.0) / 1048576.0;
   }
   #endif
-  vec3 col = vCol * (1.0 + clamp(br, -1.0, 1.0) * 0.14 * (1.0 - vSea));
+  vec3 col = vCol * (1.0 + clamp(br, -1.0, 1.0) * 0.14 * (1.0 - min(vSea, 1.0)));
   #else
   // close up, the grain of the ground: pebbles, dust, scuffs
   float near = 1.0 - smoothstep(20.0, 600.0, d);
@@ -325,16 +335,40 @@ void main() {
   #endif
   vec3 c;
   if (vSea > 0.5) {
-    // the sea: small waves, the sky reflected at a glancing angle, a glint of the sun
-    float t = time * 0.6;
-    vec3 w = vec3(n3(vLocal * 0.35 + vec3(t, 0.0, t * 0.7)) - 0.5, n3(vLocal * 0.35 + vec3(3.1, t, 1.7)) - 0.5, 0.0);
-    vec3 Ns = normalize(N + 0.25 * (1.0 - smoothstep(50.0, 3000.0, d)) * (w.x * cross(N, vec3(0.0, 0.0, 1.0)) + w.y * vec3(0.0, 0.0, 1.0)));
-    float dl = max(dot(Ns, sunDir), 0.0);
-    float fres = pow(1.0 - max(dot(Ns, V), 0.0), 4.0);
+    // the sea: how deep it is here (0 at the shore, 1 at 60 m and deeper), which sets its colour
+    float deep = clamp(vSea - 1.0, 0.0, 1.0);
+    float t = time;
+    // the swell and its chop, running several ways at once, from long rollers to ripples
+    // (the crests bent by a slow warp of the water, so they wander rather than run in ruled lines)
+    vec2 P2 = vec2(dot(vLocal, vT1), dot(vLocal, vT2));
+    P2 += 9.0 * vec2(n3(vLocal * 0.011) - 0.5, n3(vLocal * 0.011 + 7.3) - 0.5) + 2.0 * vec2(n3(vLocal * 0.05 + 3.1) - 0.5, n3(vLocal * 0.05 + 1.7) - 0.5);
+    float fw = max(length(fwidth(vLocal)), 1e-3);
+    vec2 g = wave(P2, vec2(0.80, 0.60), 61.0, 0.4, t, fw) + wave(P2, vec2(-0.35, 0.94), 23.0, 0.17, t, fw)
+           + wave(P2, vec2(0.97, -0.26), 9.3, 0.065, t, fw) + wave(P2, vec2(-0.71, -0.71), 3.1, 0.022, t, fw)
+           + wave(P2, vec2(0.17, 0.98), 1.25, 0.007, t, fw) + wave(P2, vec2(-0.93, 0.37), 14.7, 0.09, t, fw);
+    // calmer in the shallows, where the bottom drags at the waves, and broken up so no pattern repeats
+    g *= (0.45 + 0.55 * smoothstep(0.0, 0.5, deep)) * (0.75 + 0.5 * n3(vLocal * 0.013 + vec3(0.0, 0.0, t * 0.02)));
+    vec3 Ns = normalize(N - vW1 * g.x - vW2 * g.y);
+    // the water's own colour: a clear sea's turquoise over sand in the shallows, its painted blue far out
+    float blue = step(vCol.r * 1.4, vCol.b);
+    vec3 shallow = mix(vCol * 0.9, vec3(0.05, 0.34, 0.33), 0.75 * blue), deepC = vCol * 0.6;
+    vec3 water = mix(shallow, deepC, smoothstep(0.0, 1.0, deep));
     vec3 lamp = lampLight(vP, Ns);
-    c = vCol * (ambient + ambientX + dl * sunCol * 0.6 + lamp * 0.8);
-    c = mix(c, fogCol, fres * 0.7);
-    c += sunCol * pow(max(dot(reflect(-sunDir, Ns), V), 0.0), 220.0) * 2.0;
+    vec3 lit = water * (ambient * 2.0 + ambientX + sunCol * max(dot(seaUp, sunDir), 0.0) * 0.55 + lamp * 0.6);
+    // the sky in it: paler toward the horizon, deeper overhead, more of it the more glancing the view (Schlick, water's 2%)
+    vec3 R = reflect(-V, Ns);
+    vec3 skyR = mix(fogCol, fogCol * vec3(0.5, 0.66, 1.0), smoothstep(0.0, 0.7, dot(R, seaUp)));
+    float F = 0.02 + 0.98 * pow(1.0 - max(dot(Ns, V), 0.0), 5.0);
+    c = mix(lit, skyR, F);
+    // the sun: a hard glitter off the facets that face it, over a broad sheen
+    float sr = max(dot(reflect(-sunDir, Ns), V), 0.0);
+    c += sunCol * (pow(sr, 420.0) * 4.0 + pow(sr, 50.0) * 0.12) * step(0.0, dot(seaUp, sunDir));
+    // foam: bands of it working up the shore, and whitecaps where the waves stand steepest
+    float fn = n3(vLocal * 0.55 + vec3(t * 0.25, 0.0, t * 0.18));
+    float shore = (1.0 - smoothstep(0.0, 0.1, deep)) * smoothstep(0.5, 0.72, fn + 0.3 * sin(deep * 70.0 - t * 1.1));
+    float caps = smoothstep(0.55, 0.85, length(g)) * smoothstep(0.62, 0.8, n3(vLocal * 1.3 + vec3(t * 0.4)));
+    float foam = max(shore, caps) * (1.0 - smoothstep(40.0, 900.0, d));
+    c = mix(c, (ambient * 3.0 + ambientX + sunCol * 0.85 * max(dot(seaUp, sunDir), 0.0) + lamp) * 0.92, foam * 0.85);
   } else {
     float dl = max(dot(Nd, sunDir), 0.0);
     // and the sunlit ground round about lights what faces away from the sky: walls, overhangs, the shady side of a rock
@@ -431,8 +465,9 @@ export class Ground {
   private readonly horizon = new THREE.Color();
   /** called when you come across a living thing or a site for the first time */
   onFind: (what: string, note: string) => void = () => {};
-  /** biome under you, on the Earth */
+  /** biome under you, on the Earth, and where it was found (degrees north, east): what lives there depends on both */
   biome: Biome | null = null;
+  biomeAt: [number, number] = [0, 0];
 
   private mat: THREE.ShaderMaterial;
   private caveMat: THREE.ShaderMaterial;
@@ -447,6 +482,8 @@ export class Ground {
   private sample: GroundSample = { h: 0, r: 0, g: 0, b: 0, sea: false, rock: 0 };
   private placed = new Map<string, Placed>();
   private sites: Site[] = [];
+  /** the monuments' places and the open ground kept round them */
+  private landmarks: { n: V3; r: number }[] = [];
   private towns: { name: string; lat: number; lon: number; pop: number; alien: boolean }[] = [];
   /** the trees and plants round you */
   readonly flora = new Flora();
@@ -468,7 +505,7 @@ export class Ground {
       uniforms: {
         sunDir: { value: new THREE.Vector3(0, 0, 1) }, sunCol: { value: new THREE.Vector3(1, 1, 1) }, ambient: { value: new THREE.Vector3(0.03, 0.03, 0.03) },
         fogCol: { value: new THREE.Vector3() }, fogK: { value: 0 }, time: { value: 0 }, seaUp: { value: new THREE.Vector3() },
-        lush: { value: 0 }, leaf: { value: new THREE.Vector3(0.3, 0.45, 0.15) }, alien: { value: 0 }, craterK: { value: 0 },
+        lush: { value: 0 }, leaf: { value: new THREE.Vector3(0.3, 0.45, 0.15) }, alien: { value: 0 }, craterK: { value: 0 }, craterTop: { value: 40000 },
         caveN: { value: 0 }, caveA: { value: ramps() }, caveB: { value: ramps() }, caveU: { value: ramps() }, caveS: { value: ramps() },
         ...lightUniforms,
       },
@@ -568,6 +605,13 @@ export class Ground {
     this.clearAll();
     this.spec = null; this.atmo = null; this.lifeInfo = null; this.paint = null;
     if (!b) { this.tiles.reset(null); return; }
+    // the Moon's ground is LOLA's: wait the moment it takes to come in (here and in the terrain workers alike), so
+    // the heights the legs land on are the heights the tiles are built from
+    if (b.look.real === 'Moon' && !moonSettled()) {
+      this.tiles.reset(null);
+      void moonReady().then(() => { if (this.body === b) { this.body = null; this.setBody(b, stars); } });
+      return;
+    }
     this.atmo = atmosphere(b, stars);
     this.lifeInfo = life(b, stars);
     const st = b.look.style;
@@ -585,8 +629,10 @@ export class Ground {
       if (('GRASS' in m.defines) !== grass) { if (grass) m.defines.GRASS = ''; else delete m.defines.GRASS; m.needsUpdate = true; }
     }
     this.spec = groundSpec(b.look, b.r * AU_M, gravity(b), this.atmo.bar);
+    this.mat.uniforms.craterTop.value = this.spec.measured ? Math.max(2000, this.spec.measured / 2) : 40000;
     this.tiles.reset(this.spec);
     this.sites = sitesOn(b.look.real);
+    this.landmarks = this.sites.filter(s => s.kind === 'landmark').map(s => ({ n: dirOf(s.lat, s.lon), r: landmarkReach(s.name) }));
     // a civilisation's towns, seeded
     this.towns = this.sites.filter(s => s.kind === 'city').map(s => ({ name: s.name, lat: s.lat, lon: s.lon, pop: s.pop ?? 1, alien: false }));
     if (this.lifeInfo.tier === 'intelligent') {
@@ -701,8 +747,10 @@ export class Ground {
   private ruinsFrame(n: V3) {
     const b = this.body!, spec = this.spec!, L = this.lifeInfo;
     if (b.cls === 'gas' || ['gas', 'icegiant', 'hotjupiter', 'browndwarf'].includes(b.look.style) || spec.R < 2e5) return;
+    // (the Earth's ruins are its real ones, at their real places: sites.ts. Made-up ones scattered over it would be wrong)
+    if (b.look.real === 'Earth') { if (this.ruins.near.length) this.ruins.clear(); return; }
     // rare everywhere; a little less rare on worlds with a past, and where a people lives now
-    const rate = L?.tier === 'intelligent' ? 0.04 : b.look.real === 'Earth' ? 0.003 : 0.006;
+    const rate = L?.tier === 'intelligent' ? 0.04 : 0.006;
     const people = L?.tier === 'intelligent' ? L.forms.find(f => f.kind === 'people')?.name ?? null : null;
     this.ruinPeople = people;
     this.ruins.spin(this.t);
@@ -773,7 +821,9 @@ export class Ground {
       wantKeys.add(s.name);
       if (!this.placed.has(s.name)) {
         const obj = siteModel(s);
-        this.stand(obj, sn, 0, 3);
+        this.stand(obj, sn, 0, s.kind === 'landmark' ? 25 : 3);
+        // (a monument is lined up with the compass, as it was built: its x east, its z south)
+        if (s.kind === 'landmark') { const [e, nn] = tangent(sn); obj.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3(...e), new THREE.Vector3(...sn), new THREE.Vector3(...nn).negate())); }
         this.root.add(obj);
         this.placed.set(s.name, { obj, key: s.name });
       }
@@ -918,10 +968,11 @@ export class Ground {
       let near = false;
       for (const t of this.towns) if (arc(n, dirOf(t.lat, t.lon)) * R < 2500 * Math.sqrt(t.pop)) near = true;
       this.biome = earth ? earthBiome(Math.asin(n[2]) * 180 / Math.PI, [smp.r, smp.g, smp.b], smp.sea, smp.h, near) : null;
+      this.biomeAt = latLonOf(n);
       this.scatter(n);
     }
     // the trees: fixed to the world, modelled near you
-    this.flora.frame({ R, seed: Math.floor(b.look.seed % 9973), built: m => this.platformAt(m) > -Infinity || this.cutAt(m) || !!this.structureAt(m)?.solid, heightAt: m => { const h = this.heightAt(m, 0.5); return { h, sea: this.sample.sea }; } }, n, this.plants.kinds, this.plants.density, this.plants.tint);
+    this.flora.frame({ R, seed: Math.floor(b.look.seed % 9973), built: m => this.platformAt(m) > -Infinity || this.cutAt(m) || !!this.structureAt(m)?.solid || this.landmarks.some(l => arc(m, l.n) * R < l.r), heightAt: m => { const h = this.heightAt(m, 0.5); return { h, sea: this.sample.sea }; } }, n, this.plants.kinds, this.plants.density, this.plants.tint);
     // the grass: in the ground's colour (its texture, in the shader) and, round you on foot, in tufts
     const u = this.mat.uniforms, g = this.plants.grass;
     u.lush.value = g.lush;
@@ -958,8 +1009,8 @@ export class Ground {
     let density = 0;
     if (earth) {
       const bi = this.biome!;
-      const plants = speciesIn(bi).filter(s => s.kind === 'plant' && s.size > 1);
-      kinds = plants.map(p => ({ col: p.color, size: p.size, cone: /spruce|sequoia|pine/i.test(p.name), name: `${p.name} (${p.latin})` }));
+      const plants = speciesIn(bi, ...this.biomeAt).filter(s => s.kind === 'plant' && s.size > 1);
+      kinds = plants.map(p => ({ col: p.color, size: p.size, cone: /spruce|sequoia|pine|fir|cedar|larch/i.test(p.name), name: `${p.name} (${p.latin})` }));
       density = { tropical: 1, temperate: 0.6, boreal: 0.7, grassland: 0.08, desert: 0.03, mountain: 0.3, city: 0.15, tundra: 0, ice: 0, ocean: 0 }[bi];
     } else {
       kinds = L.forms.filter(f => f.kind === 'plant').map(f => ({ col: f.color, size: Math.min(40, f.size), cone: /spire|tower|reed/.test(f.about), name: `${f.name}, a ${f.about}` }));
@@ -975,7 +1026,7 @@ export class Ground {
     this.plants = { kinds: trees, density: trees.length ? density : 0, tint, grass: { lush, leaf: tint } };
     // animals
     let fauna: { name: string; size: number; color: number; fly: boolean }[] = [];
-    if (earth) fauna = speciesIn(this.biome!).filter(s => s.kind === 'animal' && s.size > 0.1 && s.name !== 'Human').map(s => ({ name: `${s.name} (${s.latin})`, size: s.size, color: s.color, fly: /macaw|condor|robin|pigeon|bee/i.test(s.name) }));
+    if (earth) fauna = speciesIn(this.biome!, ...this.biomeAt).filter(s => s.kind === 'animal' && s.size > 0.1 && s.name !== 'Human').map(s => ({ name: `${s.name} (${s.latin})`, size: s.size, color: s.color, fly: /macaw|condor|robin|pigeon|bee/i.test(s.name) }));
     else if (L.tier === 'animals' || L.tier === 'intelligent') fauna = L.forms.filter(f => f.kind === 'animal').map(f => ({ name: `${f.name}, a ${f.about}`, size: f.size, color: f.color, fly: /gliding|floating/.test(f.about) }));
     if (this.biome === 'ocean') fauna = [];
     const nF = fauna.length ? Math.min(14, 4 + Math.floor(r() * 10)) : 0;
@@ -1074,6 +1125,7 @@ function siteModel(s: Site): THREE.Object3D {
   } else if (s.kind === 'probe') g.add(huygensMesh());
   else if (s.kind === 'impact') { /* nothing left but its crater */ }
   else if (s.kind === 'peak') { if (s.body === 'Earth') g.add(summitCairn()); }
+  else if (s.kind === 'landmark') { const m = landmarkModel(s.name); if (m) g.add(m); }
   else if (s.body === 'Venus') g.add(veneraMesh());
   else if (s.body === 'Earth') { const p = probeMesh(); p.scale.setScalar(4); g.add(p); }
   else g.add(landerMesh());

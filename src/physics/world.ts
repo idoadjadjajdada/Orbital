@@ -35,7 +35,10 @@ export class World {
   private overflowPending = new WeakMap<Body, number>();
   private dirtyStructure = true;
   private dirtyForces = true;
+  /** test particles added since the integrator last started: they pull on nothing, so only their own forces need finding */
+  private fresh: Body[] = [];
   private massRef = new Map<Body, number>();
+  private pull = new Float64Array(0);
 
   get particleCount() { return this.bodies.length - this.sources.length; }
 
@@ -43,15 +46,15 @@ export class World {
     b.alive = true;
     b.dtWant = 0;
     this.bodies.push(b);
-    if (b.source) this.sources.push(b);
-    this.dirtyForces = true;
+    if (b.source) { this.sources.push(b); this.dirtyForces = true; }
+    else this.fresh.push(b);
   }
 
   kill(b: Body) {
     if (!b.alive) return;
     b.alive = false;
     this.dirtyStructure = true;
-    this.dirtyForces = true;
+    if (b.source) this.dirtyForces = true;
   }
 
   clear() {
@@ -60,6 +63,7 @@ export class World {
     this.sources = [];
     this.events = [];
     this.disks.vapour = [];
+    this.fresh = [];
     this.time = 0;
     this.drive = null;
     this.reach = 0;
@@ -97,7 +101,10 @@ export class World {
       this.massRef.clear();
       for (const s of this.sources) this.massRef.set(s, s.m);
       this.dirtyForces = false;
+    } else if (this.fresh.length) {
+      this.integ.init(this.fresh.filter(b => b.alive), this.sources);
     }
+    this.fresh.length = 0;
   }
 
   /**
@@ -134,7 +141,7 @@ export class World {
       for (const { p, into } of this.integ.absorbed) {
         // if what it hit was itself merged away this step, the particle flies on
         if (into.alive) accrete(this, into, p);
-        else { p.alive = true; p.dtWant = 0; }
+        else { p.alive = true; p.dtWant = 0; this.fresh.push(p); }
         this.dirtyStructure = true;
       }
       const hits = this.integ.hits.slice();
@@ -147,10 +154,8 @@ export class World {
         if (h.kind === 'collide') collide(this, h.a, h.b);
         else disrupt(this, h.a, h.b);
       }
-      if (this.dirtyStructure || this.dirtyForces || hits.length) {
-        this.dirtyForces = true;
-        this.rebuild();
-      }
+      if (hits.length) this.dirtyForces = true;
+      this.rebuild();
       if (performance.now() > deadline) break;
     }
     this.backReaction(done - T / 2);
@@ -166,6 +171,19 @@ export class World {
    */
   private backReaction(dt: number) {
     if (dt === 0 || this.sources.length === this.bodies.length) return;
+    // the particles that pull, packed once: x, y, z, vx, vy, vz, G m
+    let n = 0;
+    for (const p of this.bodies) if (!p.source && p.alive && p.m !== 0) n++;
+    if (!n) return;
+    if (this.pull.length < n * 7) this.pull = new Float64Array(n * 14);
+    const P = this.pull;
+    let i = 0;
+    for (const p of this.bodies) {
+      if (p.source || !p.alive || p.m === 0) continue;
+      P[i] = p.x; P[i + 1] = p.y; P[i + 2] = p.z; P[i + 3] = p.vx; P[i + 4] = p.vy; P[i + 5] = p.vz; P[i + 6] = G * p.m;
+      i += 7;
+    }
+    const h2 = (Math.abs(dt) * 2) ** 2;
     for (const s of this.sources) {
       if (s.held) continue;
       let ax = 0, ay = 0, az = 0;
@@ -176,18 +194,18 @@ export class World {
       // each orbit, so it is left out rather than aliased into a false push.
       const span = 2 * Math.abs(dt) * 4;
       const near = Math.cbrt(G * s.m * span * span) ** 2;
-      const h = Math.abs(dt) * 2;
-      for (const p of this.bodies) {
-        if (p.source || !p.alive || p.m === 0) continue;
-        const dx = p.x - s.x, dy = p.y - s.y, dz = p.z - s.z;
-        if (dx * dx + dy * dy + dz * dz < near) continue;
+      const sx = s.x, sy = s.y, sz = s.z, svx = s.vx, svy = s.vy, svz = s.vz;
+      for (let k = 0; k < i; k += 7) {
+        const dx = P[k] - sx, dy = P[k + 1] - sy, dz = P[k + 2] - sz;
+        const d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < near) continue;
         // A particle sweeping past in less than a step pulls for less than a
         // step: soften by the distance it covers, so the kick is the passage
         // averaged rather than the closest instant sampled — which would
         // inject energy, enough to throw a moonlet out of a debris disc.
-        const sweep2 = ((p.vx - s.vx) ** 2 + (p.vy - s.vy) ** 2 + (p.vz - s.vz) ** 2) * h * h;
-        const r2 = dx * dx + dy * dy + dz * dz + soft + sweep2;
-        const f = G * p.m / (r2 * Math.sqrt(r2));
+        const ux = P[k + 3] - svx, uy = P[k + 4] - svy, uz = P[k + 5] - svz;
+        const r2 = d2 + soft + (ux * ux + uy * uy + uz * uz) * h2;
+        const f = P[k + 6] / (r2 * Math.sqrt(r2));
         ax += f * dx; ay += f * dy; az += f * dz;
       }
       s.vx += ax * dt; s.vy += ay * dt; s.vz += az * dt;

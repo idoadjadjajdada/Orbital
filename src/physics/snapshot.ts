@@ -1,4 +1,4 @@
-import { Body, freshId } from './body';
+import { Body, freshId, reserveIds } from './body';
 import type { World } from './world';
 
 /**
@@ -10,6 +10,8 @@ import type { World } from './world';
 export interface Snapshot {
   label: string;
   time: number;
+  /** the scenario's slow forces (World.drive), which clearing the world drops */
+  drive: World['drive'];
   bodies: Body[];
   parts: { cls: Body['cls']; kind: string; name: string; c1: number; source: boolean; f: Float64Array }[];
 }
@@ -39,7 +41,26 @@ export function takeSnapshot(w: World, label: string): Snapshot {
         f: Float64Array.of(b.x, b.y, b.z, b.vx, b.vy, b.vz, b.m, b.r, b.heat, b.age, b.beta, b.dens) });
     } else bodies.push(copy(b));
   }
-  return { label, time: w.time, bodies, parts };
+  return { label, time: w.time, drive: w.drive, bodies, parts };
+}
+
+/** a snapshot as text, to keep across visits (a save): plain numbers and objects, no functions */
+export function snapshotToText(s: Snapshot): string {
+  return JSON.stringify({ v: 1, label: s.label, time: s.time, bodies: s.bodies, parts: s.parts.map(p => ({ ...p, f: Array.from(p.f) })) });
+}
+
+/** a kept snapshot back from its text, or null if the text is not one */
+export function snapshotFromText(text: string): Snapshot | null {
+  let o: { v?: number; label?: string; time?: number; bodies?: unknown[]; parts?: { f: number[] }[] };
+  try { o = JSON.parse(text); } catch { return null; }
+  if (!o || o.v !== 1 || !Array.isArray(o.bodies) || !Array.isArray(o.parts)) return null;
+  const bodies = o.bodies.map(b => Object.assign(Object.create(Body.prototype), b) as Body);
+  if (!bodies.every(b => typeof b.id === 'number' && Number.isFinite(b.x) && Number.isFinite(b.m) && b.look && typeof b.cls === 'string')) return null;
+  const parts = o.parts.map(p => ({ ...p, f: Float64Array.from(p.f) })) as Snapshot['parts'];
+  if (!parts.every(p => p.f.length === 12)) return null;
+  // (what was numbered then is numbered still: what is made from now on comes after it)
+  reserveIds(bodies.reduce((m, b) => Math.max(m, b.id), 0));
+  return { label: o.label ?? 'save', time: Number(o.time) || 0, drive: null, bodies, parts };
 }
 
 export function restoreSnapshot(w: World, s: Snapshot) {
@@ -53,5 +74,6 @@ export function restoreSnapshot(w: World, s: Snapshot) {
     w.add(b);
   }
   w.time = s.time;
+  w.drive = s.drive;
   w.structural();
 }

@@ -23,29 +23,29 @@
       <div class="rate"><span id="rate">—</span><span class="lag" id="lag"></span></div>
     </div>
     <div class="row">
-      <button class="icon" id="pause" title="Pause (Space)">❚❚</button>
+      <button class="icon" id="pause" title="Pause (Space)" aria-label="Pause" data-icon="pause"></button>
       <input type="range" id="warp" min="-7.5" max="4" step="0.01" value="-0.6" aria-label="Clock speed" />
     </div>
     <div class="era" id="eraBox" hidden>
       <div class="era-now"><b id="eraAgo">—</b></div>
       <div class="era-name" id="eraName">—</div>
       <div class="era-next" id="eraNext"></div>
-      <div class="row"><button class="chip small" id="eraBtn" title="Jump to an era">Eras ▾</button><button class="chip small" id="eraScore" hidden>Score</button></div>
+      <div class="row"><button class="chip small" id="eraBtn" title="Jump to an era">Eras <i data-icon="chev-down"></i></button><button class="chip small" id="eraScore" hidden>Score</button></div>
       <div class="menu era-menu" id="eraMenu" hidden></div>
     </div>
   </header>
 
   <nav class="hud top-right">
     <div class="row">
-      <button class="chip" id="presetBtn">Systems ▾</button>
+      <button class="chip" id="presetBtn">Systems <i data-icon="chev-down"></i></button>
       <button class="chip" id="findBtn" title="Find a body by name">Find</button>
-      <button class="chip" id="undoBtn" title="Undo (Ctrl/⌘ Z)" disabled>↶ Undo</button>
+      <button class="chip" id="undoBtn" title="Undo (Ctrl/⌘ Z)" disabled data-icon="undo">Undo</button>
       <button class="chip" id="clear" title="Clear (C)">Clear</button>
       <button class="chip" id="modeBtn" title="Fly through it in 3D (V)">3D</button>
-      <button class="chip icon" id="setBtn" title="Settings">⚙</button>
-      <button class="chip icon" id="helpBtn" title="Controls">?</button>
-      <button class="chip icon" id="moreBtn" title="More">⋯</button>
-      <button class="chip icon" id="hideBtn" title="Hide the controls, to see the sky">👁</button>
+      <button class="chip icon" id="setBtn" title="Settings" aria-label="Settings" data-icon="settings"></button>
+      <button class="chip icon" id="helpBtn" title="Controls" aria-label="Controls" data-icon="help"></button>
+      <button class="chip icon" id="moreBtn" title="More" aria-label="More" data-icon="more"></button>
+      <button class="chip icon" id="hideBtn" title="Hide the controls, to see the sky" aria-label="Hide the controls" data-icon="eye"></button>
     </div>
     <div class="row toggles">
       <button class="chip tog on" data-flag="trails" title="T">Trails</button>
@@ -68,8 +68,8 @@
         <div class="iname" id="iName">—</div>
         <div class="ikind" id="iKind">—</div>
       </div>
-      <button class="icon" id="iMin" title="Fold away">▾</button>
-      <button class="icon close" id="iClose" title="Deselect (Esc)">✕</button>
+      <button class="icon" id="iMin" title="Fold away" aria-label="Fold away" data-icon="chev-down"></button>
+      <button class="icon close" id="iClose" title="Deselect (Esc)" aria-label="Deselect" data-icon="close"></button>
     </div>
     <div class="imap" id="iMapBox" hidden>
       <div class="row"><span class="isub" id="iMapT">Surface</span><span class="row seg"><button class="chip small on" data-proj="flat">Flat</button><button class="chip small" data-proj="moll">Globe</button><button class="chip small" data-proj="cut" id="iCut">Inside</button></span></div>
@@ -86,18 +86,18 @@
   </aside>
 
   <nav class="hud tools" id="tools" aria-label="Tools">
-    <button id="drawerBtn" class="drawer" title="Bodies to throw in"><b>＋</b><span>Bodies</span></button>
-    <button data-tool="select" class="on" title="Select (S): tap to select, drag to look around. Tap a tool again to put it down"><b>⌖</b><span>Select</span></button>
-    <button data-tool="hand" title="Move (H): drag bodies, throw what you picked"><b>✋</b><span>Move</span></button>
-    <button data-tool="push" title="Push (P): drag from a body to change its velocity"><b>➚</b><span>Push</span></button>
-    <button data-tool="attract" title="Attract (G): hold to pull everything nearby in"><b>🧲</b><span>Attract</span></button>
-    <button data-tool="repel" title="Repel (X): hold to push everything nearby away"><b>✺</b><span>Repel</span></button>
-    <button data-tool="laser" title="Laser (K): hold on a body, or drag to aim, to boil it away"><b>⚡</b><span>Laser</span></button>
-    <button data-tool="blast" title="Blast (N): tap to set off an explosion"><b>💥</b><span>Blast</span></button>
-    <button data-tool="bombard" title="Bombard (M): hold on a body to rain small rocks on it"><b>☄</b><span>Bombard</span></button>
-    <button data-tool="clone" title="Clone (D): tap a body, then tap to place copies"><b>⧉</b><span>Clone</span></button>
-    <button data-tool="ruler" title="Ruler (R): drag between two points or bodies"><b>📏</b><span>Ruler</span></button>
-    <button data-tool="erase" title="Erase (E): rub out bodies and debris"><b>⌫</b><span>Erase</span></button>
+    <button id="drawerBtn" class="drawer" title="Bodies to throw in"><b data-icon="planet"></b><span>Bodies</span></button>
+    <button data-tool="select" class="on" title="Select (S): tap to select, drag to look around. Tap a tool again to put it down"><b data-icon="crosshair"></b><span>Select</span></button>
+    <button data-tool="hand" title="Move (H): drag bodies, throw what you picked"><b data-icon="move"></b><span>Move</span></button>
+    <button data-tool="push" title="Push (P): drag from a body to change its velocity"><b data-icon="push"></b><span>Push</span></button>
+    <button data-tool="attract" title="Attract (G): hold to pull everything nearby in"><b data-icon="magnet"></b><span>Attract</span></button>
+    <button data-tool="repel" title="Repel (X): hold to push everything nearby away"><b data-icon="repel"></b><span>Repel</span></button>
+    <button data-tool="laser" title="Laser (K): hold on a body, or drag to aim, to boil it away"><b data-icon="bolt"></b><span>Laser</span></button>
+    <button data-tool="blast" title="Blast (N): tap to set off an explosion"><b data-icon="blast"></b><span>Blast</span></button>
+    <button data-tool="bombard" title="Bombard (M): hold on a body to rain small rocks on it"><b data-icon="comet"></b><span>Bombard</span></button>
+    <button data-tool="clone" title="Clone (D): tap a body, then tap to place copies"><b data-icon="copy"></b><span>Clone</span></button>
+    <button data-tool="ruler" title="Ruler (R): drag between two points or bodies"><b data-icon="ruler"></b><span>Ruler</span></button>
+    <button data-tool="erase" title="Erase (E): rub out bodies and debris"><b data-icon="eraser"></b><span>Erase</span></button>
   </nav>
   <div class="hud ruler" id="rulerBox" hidden></div>
 
@@ -109,17 +109,17 @@
   <div class="hud builder" id="builder" hidden>
     <div class="fhead">Build a body
       <span class="row seg"><button class="chip small on" data-bmode="world">World</button><button class="chip small" data-bmode="star">Star</button></span>
-      <button class="icon close" id="bClose" title="Close">✕</button>
+      <button class="icon close" id="bClose" title="Close" aria-label="Close" data-icon="close"></button>
     </div>
     <div class="bbody">
       <div id="bWorld" class="bdraw">
         <canvas id="bGrid" aria-label="Drawing grid: the body's cross-section"></canvas>
         <div class="row btools">
-          <button class="chip small on" data-btool="paint" title="Paint (right-click erases)">✎ Paint</button>
-          <button class="chip small" data-btool="erase">⌫ Erase</button>
-          <button class="chip small" data-btool="fill">▣ Fill</button>
-          <button class="chip small" id="bMirror" title="Mirror left and right">⇋ Mirror</button>
-          <button class="chip small" id="bUndo">↶</button>
+          <button class="chip small on" data-btool="paint" title="Paint (right-click erases)" data-icon="pencil">Paint</button>
+          <button class="chip small" data-btool="erase" data-icon="eraser">Erase</button>
+          <button class="chip small" data-btool="fill" data-icon="fill">Fill</button>
+          <button class="chip small" id="bMirror" title="Mirror left and right" data-icon="mirror">Mirror</button>
+          <button class="chip small" id="bUndo" title="Undo the last stroke" aria-label="Undo the last stroke" data-icon="undo"></button>
           <button class="chip small" id="bClear">Clear</button>
         </div>
         <div class="bmats" id="bMats"></div>
@@ -145,11 +145,14 @@
   </div>
 
   <div class="hud help" id="settings" hidden>
-    <div class="fhead">Settings <button class="icon close" id="sClose">✕</button></div>
+    <div class="fhead">Settings <button class="icon close" id="sClose" aria-label="Close" data-icon="close"></button></div>
     <div class="bsub">Cheats</div>
     <label class="cheat">Time speed <span id="cheatV"></span><input type="range" id="cheatWarp" min="-9" max="4" step="0.01" /></label>
     <div class="row"><button class="chip" id="cheatReal">Real time</button></div>
     <p>In 3D the clock runs at one second a second, as it would for you. This lets you hurry it up or slow it down, there or in 2D.</p>
+    <div class="bsub">Your sandbox</div>
+    <div class="row"><button class="chip" id="saveBtn" data-icon="save">Save</button><button class="chip" id="loadBtn">Load</button></div>
+    <p id="saveInfo">Keeps everything in it in this browser, to come back to (<kbd>Ctrl/⌘</kbd> <kbd>S</kbd>).</p>
     <div class="bsub">Touch</div>
     <label class="cheat">Look speed <span id="lookV"></span><input type="range" id="lookSpeed" min="-1" max="1" step="0.05" value="0" /></label>
     <label class="check"><input type="checkbox" id="lookInvert" /> Invert look: drag the world instead of the view</label>
@@ -158,10 +161,10 @@
     <p>Lifts the dark on the night side of every world in 3D. <kbd>N</kbd> switches the ship's floodlight (on foot, your helmet lamp too), and Mission control (<kbd>K</kbd>) hangs lamps in the sky over any place on a world.</p>
   </div>
 
-  <button class="hud chip" id="showUi" hidden title="Show the controls">👁 Show controls</button>
+  <button class="hud chip" id="showUi" hidden title="Show the controls" data-icon="eye">Show controls</button>
 
   <div class="hud help" id="help" hidden>
-    <div class="fhead">Controls <button class="icon close" id="hClose">✕</button></div>
+    <div class="fhead">Controls <button class="icon close" id="hClose" aria-label="Close" data-icon="close"></button></div>
     <table>
       <tr><td>Pick a body below, then drag from space</td><td>throw it — the dotted line is its real future path</td></tr>
       <tr><td>Tap space with a body picked</td><td>drop it into a circular orbit (Auto-orbit) or at rest</td></tr>

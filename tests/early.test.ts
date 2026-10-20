@@ -26,6 +26,20 @@ describe('the early solar system', () => {
     }
   });
 
+  it('rebuilds an era fresh, whatever was played before', () => {
+    const w = new World(), e = new Early(host());
+    const nice = ERAS.findIndex(x => x.key === 'nice'), theia = ERAS.findIndex(x => x.key === 'theia');
+    e.jump(w, nice);
+    // as after playing well into the instability, and after the Moon formed
+    (e as unknown as { niceT: number }).niceT = 1500;
+    e.moonAt = 62;
+    e.jump(w, nice);
+    expect((e as unknown as { niceT: number }).niceT).toBe(0);
+    e.moonAt = 62;
+    e.jump(w, theia - 1);
+    expect(e.moonAt).toBe(null);
+  });
+
   it('runs from one era into the next', () => {
     const w = new World(), h = host(), e = new Early(h);
     e.build(w, 0);

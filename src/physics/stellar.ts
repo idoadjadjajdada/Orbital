@@ -21,7 +21,6 @@ export const M_TOV = 2.3;     // neutron star: maximum mass before collapse
 export const M_SN = 8;        // lightest star that ends in core collapse
 export const M_BH = 25;       // lightest star that leaves a black hole
 export const M_DIRECT = 40;   // above this the core falls in without a supernova
-export const M_FUSE = 0.075;  // hydrogen burning limit — below this, a brown dwarf
 /** fraction of the giant phase at the very end in which most of the envelope goes */
 export const SUPERWIND = 2e-4;
 
@@ -40,7 +39,8 @@ export function remnantMass(m0: number): number {
   if (m0 < M_SN) return Math.min(M_CH - 0.02, 0.109 * m0 + 0.394);
   if (m0 < M_BH) return 1.4;
   if (m0 < M_DIRECT) return 0.25 * m0;
-  return 0.8 * m0;
+  // no explosion: what the winds left of the star falls in whole (preDeathMass), no more
+  return 0.65 * m0;
 }
 
 /** Mass a dying star has left just before it ends (winds remove some of it first). */
@@ -152,15 +152,6 @@ export function becomeRemnant(b: Body, cls: 'wd' | 'ns' | 'bh', m: number) {
   s.L = cls === 'wd' ? 30 : 0;
   s.teff = cls === 'wd' ? teffOf(s.L, b.r) : cls === 'ns' ? 1e6 : 0;
   b.rocheK = 0;
-}
-
-/** Time until the next thing that happens to this star, for the "age it" button. */
-export function timeToNextStage(s: StarState): number {
-  const tms = msLife(s.m0), tg = giantLife(s.m0);
-  if (s.phase === 'remnant') return Infinity;
-  if (s.age < 0) return -s.age;
-  if (s.age < tms) return tms - s.age;
-  return tms + tg - s.age;
 }
 
 /** Blackbody colour for a temperature, as linear-ish RGB 0..1 (Tanner Helland's fit). */

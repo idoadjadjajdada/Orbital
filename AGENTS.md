@@ -37,7 +37,7 @@ Use ordinary Markdown links (`[Bugs](Bugs.md)`), not `[[wikilinks]]`: they work 
 - After pushing, watch the "Test and deploy" run on `main` and fix whatever fails.
 - To see a change working, use `tests/surface-shot.mjs` (a picture from the ground at a latitude and longitude) or a short Playwright script, and look at the picture.
 
-## Bugfix passes with subagents
+## Bugfix passes with subagents - ONLY if you’re aware its a subagent workflow for this session, ignore otherwise.
 The main session coordinates; the agents in `.claude/agents/` do the heavy parts. Subagents can't call each other, so the coordinator passes results along. Every agent starts cold and re-reads the code, so use as few as the job needs.
 1. **Bugs come from the notes.** The owner's reports and Open in `notes/Bugs.md` are the list. A **bug-hunter** (Sonnet) runs only when the owner asks for a hunt: one area at a time, stopping at 5 reproduced bugs, which it logs under Open.
 2. **The coordinator triages.** Tiny, obvious fixes (a line or two) it makes itself, with a test. The rest it groups by area or files.

@@ -297,6 +297,12 @@ export class Early {
     this.hold = null;
     this.score = null;
     this.said.clear();
+    // (nothing carried over from a run played before: the instability's clock starts with the era, the world's at 0)
+    this.nice = 'chain';
+    this.niceT = 0;
+    this.theia = null;
+    this.moonAt = null;
+    this.L = 0;
     const key = ERAS[k].key;
     const sun = makeBody('sun', 7, 'Sun');
     sun.setPos(0, 0, 0); sun.setVel(0, 0, 0);

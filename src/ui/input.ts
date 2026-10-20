@@ -345,6 +345,7 @@ export class Input {
     if (app.mode3d) return;
     // undo, and otherwise leave the browser's shortcuts (copy, select all, new tab…) alone
     if (e.code === 'KeyZ' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); app.undo(); return; }
+    if (e.code === 'KeyS' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); app.save(); return; }
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     // with the builder open, its keys are its own
     if (!(document.getElementById('builder')?.hidden ?? true)) return;
