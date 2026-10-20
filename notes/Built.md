@@ -2,6 +2,7 @@
 
 What's in the game, newest first. The README has the full description.
 
+- **Venus, Mercury and Mars on their real ground**: Magellan's, MESSENGER's and MOLA's heights, loaded when you get close: Maxwell Montes 11 km up, Rachmaninoff 10 km down, Valles Marineris and Olympus Mons as measured (77b3894)
 - **The Moon's real ground**: heights from NASA's LOLA map, loaded when you get close; generated craters only below its 5 km detail (c5990e2)
 - **Landing and the sea**: the ship lands by its hull, floats on water and rides the swell; waves, depth colour, glints and foam (c5990e2)
 - **Trees where they grow**: each species only in its real range, drawn at its real size far off, cleared round the ship, solid when you walk (c5990e2)

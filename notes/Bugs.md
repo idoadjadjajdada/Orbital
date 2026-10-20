@@ -11,6 +11,8 @@ What looks wrong, and where: the world and the latitude and longitude from the r
 - [ ] **[tests]** The touch part's "iPad: the rail leaves the helm, and the thumb button jumps" waits a fixed 300 ms (tests/browser.mjs:706-708), so it fails on a busy machine.
 - [ ] **[ui]** On an iPhone SE in a Safari tab (about 375x548), the 3D rail, now two columns, still reaches the top and covers 2D, ⋯ and 👁. It fits as a home-screen app (375x667) and on bigger phones. A long prompt can also cover the Help button, and stacked toasts cover the rail's left column.
 ## Known limits
+- On Mercury and the Moon only the heights are measured: their colours, and the bright and dark spots of their craters, still come from the painters, so a crater's colour can sit where the map has no crater.
+- Venus' map has gaps where Magellan's altimeter saw nothing (about 16% of its texels); they are filled smoothly from round them.
 - The early solar system's eras only move on in the 2D view: in 3D the clock runs at real time, so you can fly round an era but it stays where it is.
 - In the early solar system some things are steered rather than left to chance: the Grand Tack's path, where the giants end up (the planetesimal disc's drag pulls them there), the damping of the inner planets' orbits, and when each giant impact comes. The impacts themselves, the Moon gathering, and the giants scattering each other are simulated, so each run comes out a little differently. Planet Five's last close pass with Jupiter is set up if the scattering hasn't done it, and the kick that throws it out is given with momentum kept (Jupiter jumps inward).
 - Jumping to an era starts it from the textbook state, not from a run you played: jumping to Today scores the textbook system (96%).
