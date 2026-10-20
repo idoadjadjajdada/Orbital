@@ -1,8 +1,8 @@
-import { MOON } from '../pixel/moondata';
+import { HEIGHTS } from '../pixel/heights';
 import type { Look } from '../physics/body';
 import { pointPainter, detailFor } from '../pixel/surface';
 import { fbm, ridged, vnoise, hash } from '../pixel/noise';
-import { earthRough } from '../pixel/worlds';
+import { earthRough, heightKm } from '../pixel/worlds';
 import { peaksOn, type PeakShape } from './peaks';
 import type { Tx, V3 } from '../pixel/worlds';
 
@@ -42,7 +42,7 @@ export interface GroundSpec {
   belts: number;
   /** painter heights: the datum (0.5 normally, sea level for a world with seas) and metres per unit */
   datum: number; scale: number;
-  /** the finest relief a measured map gives here, m (the Moon's LOLA texels), 0 if none: craters bigger are the map's */
+  /** the finest relief a measured map gives here, m (its texels, heights.ts), 0 if none: craters bigger are the map's */
   measured: number;
 }
 
@@ -84,15 +84,16 @@ export function groundSpec(look: Look, R: number, gSurf: number, bar: number): G
   const dunes = real === 'Titan' ? 0.8 : real === 'Mars' ? 0.35 : st === 'desert' ? 1 : real === 'Earth' ? 0.4 : 0;
   // a made-up rocky world's ranges: folded belts where its crust is pushed together, fewer on ice, none on a rubble pile
   const belts = real || isGas(st) || R < 2e5 ? 0 : ({ terran: 1, ocean: 0.8, desert: 0.9, lava: 0.7, iron: 0.8, ice: 0.5 } as Record<string, number>)[st] ?? 0.4;
-  const spec: GroundSpec = { look, R, relief, seas, craters, dunes, lumpy: R < 2e5 ? 1 : 0, belts, datum: 0.5, scale: 0, measured: real === 'Moon' && MOON ? (2 * Math.PI * R) / MOON.w : 0 };
+  const spec: GroundSpec = { look, R, relief, seas, craters, dunes, lumpy: R < 2e5 ? 1 : 0, belts, datum: 0.5, scale: 0, measured: real && HEIGHTS[real] ? (2 * Math.PI * R) / HEIGHTS[real].w : 0 };
   calibrate(spec);
   return spec;
 }
 
 /** metres a painted unit and the datum's painted height, for a world whose painter gives real elevations
- *  (Mars always; the Moon once LOLA's map is in, moondata.ts), or undefined where they are measured from the painter */
-const scaleOf = (real: string) => (real === 'Moon' ? (MOON ? 40000 : SCALE.Moon) : SCALE[real]);
-const datumOf = (real: string) => (real === 'Moon' && MOON ? 0.5 : DATUM[real]);
+ *  (Mars always; the Moon, Venus and Mercury once their measured maps are in, heights.ts), or undefined where
+ *  they are measured from the painter */
+const scaleOf = (real: string) => (HEIGHTS[real] ? 40000 : SCALE[real]);
+const datumOf = (real: string) => (HEIGHTS[real] ? 0.5 : DATUM[real]);
 
 /** measure the painter's spread of heights, so its relief can be scaled to the real one */
 function calibrate(s: GroundSpec) {
@@ -151,10 +152,18 @@ function lump(n: V3, lat: number, lon: number, r: number, fray = 0.3) {
 const set = (o: Tx, r: number, g: number, b: number) => { o.r = r; o.g = g; o.b = b; };
 const mix = (o: Tx, r: number, g: number, b: number, t: number) => { o.r += (r - o.r) * t; o.g += (g - o.g) * t; o.b += (b - o.b) * t; };
 
-/** Venus under its clouds (Magellan radar): basalt plains, the highland continents, shield volcanoes, tesserae */
-function venusGround(o: Tx, _lat: number, _lon: number, n: V3, d: { oct: number }) {
+/** Venus under its clouds (Magellan radar): basalt plains, the highland continents, shield volcanoes, tesserae.
+ *  Its heights are Magellan's altimetry once that map is in (heights.ts), the highlands paler; until then, these */
+function venusGround(o: Tx, lat: number, lon: number, n: V3, d: { oct: number }) {
   const v = fbm(n[0] * 9, n[1] * 9, n[2] * 9, d.oct);
   set(o, 0.36 + 0.06 * v, 0.31 + 0.05 * v, 0.26 + 0.04 * v);
+  const M = HEIGHTS.Venus;
+  if (M) {
+    const km = heightKm(M, lat, lon), up = Math.min(1, Math.max(0, (km - 0.8) / 2.5));
+    mix(o, 0.48, 0.42, 0.34, Math.min(1, up * (0.75 + 0.15 * ridged(n[0] * 20, n[1] * 20, n[2] * 20, d.oct))));
+    o.h = 0.5 + km / 40;
+    return;
+  }
   let h = 0.5 + 0.06 * (v - 0.5);
   const ishtar = lump(n, 70, 10, 16), maxwell = lump(n, 65.2, 3.3, 4, 0.1);
   const aph = Math.max(lump(n, -5, 75, 18), lump(n, -8, 110, 20), lump(n, -12, 140, 16));

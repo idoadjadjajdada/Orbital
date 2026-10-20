@@ -16,5 +16,9 @@ Used for Mars' heights and colour, baked by `tools/bake-mars.py` (7d47086).
 ![The Sun](attachments/2026-10-03-sun-photo.jpg)
 Used for the Sun's surface, baked by `tools/bake-sun.py` (4af1bd3).
 
-## The Moon
-LOLA's measured heights (NASA SVS CGI Moon Kit, https://svs.gsfc.nasa.gov/4720, public domain): `ldem_16_uint.tif`, baked by `tools/bake-moon.mjs` into `src/pixel/data/moon-height.png`. Used for the Moon's ground (c5990e2).
+## The measured worlds
+Heights baked by `tools/bake-heights.mjs` into `src/pixel/data/`, all public domain, used for the ground and the close-up maps:
+- The Moon: LOLA (NASA SVS CGI Moon Kit, https://svs.gsfc.nasa.gov/4720), `ldem_16_uint.tif`, into `moon-height.png` (c5990e2).
+- Venus: Magellan's global topography v2 (USGS Astrogeology, https://astrogeology.usgs.gov/search/map/venus_magellan_global_topography_4641m), into `venus-height.png`.
+- Mercury: MESSENGER's global DEM v2 (USGS Astrogeology, https://astrogeology.usgs.gov/search/map/mercury_messenger_global_dem_665m), 3 rows of every 11 fetched, into `mercury-height.png`.
+- Mars: MOLA's MEGDR at 16 pixels a degree (PDS Geosciences, `megt90n000eb.img`), into `mars-mola.png`.

@@ -1,7 +1,7 @@
 import { fbm, ridged, vnoise, hash } from './noise';
 import { EARTH_RLE, EARTH_W, EARTH_H } from './data/earth';
 import { MARS, type MarsData } from './marsdata';
-import { MOON, moonReady } from './moondata';
+import { HEIGHTS, heightsReady, kmOf, type HeightMap } from './heights';
 import { EARTH_DEM, EARTH_M } from './earthdata';
 
 /**
@@ -348,19 +348,30 @@ const MARIA = [
 
 /**
  * The Moon: its colours from the maria and the rayed craters, and its heights, once a detailed map is
- * wanted, from LOLA's (moondata.ts), as painted height 0.5 + km / 40 (the ground's 40 km a unit, as on Mars),
- * with the craters below its 5 km texels added; until that is in, from the basins and craters listed here
+ * wanted, from LOLA's (heights.ts); until that is in, from the basins and craters listed here
  */
 export function paintMoon(o: Tx, lat: number, lon: number, n: V3, d: Detail) {
   moonFeatures(o, lat, lon, n, d);
+  measuredGround(o, 'Moon', lat, lon, n, d, 90);
+}
+
+/**
+ * A measured world's heights over what its features painted, once a detailed map is wanted (heights.ts): as
+ * painted height 0.5 + km / 40 (the ground's 40 km a unit, terrain.ts), with craters below the map's texels
+ * added (`base`: the crater field's largest cells, about 3.6 texels across). Until the map is in, as painted
+ */
+function measuredGround(o: Tx, real: string, lat: number, lon: number, n: V3, d: Detail, base: number) {
   if (d.res < 512) return;
-  const M = MOON;
-  if (!M) { void moonReady(); return; }
+  const M = HEIGHTS[real];
+  if (!M) { void heightsReady(real); return; }
+  o.h = 0.5 + heightKm(M, lat, lon) / 40 + craterField(n, Math.max(1, d.craters - 1), base, 0.55, 2).dh * 0.1;
+}
+
+/** a measured map's height, km, at a latitude and east longitude (rad) */
+export function heightKm(M: HeightMap, lat: number, lon: number) {
   let u = lon / (2 * Math.PI) + 0.5;
   u -= Math.floor(u);
-  o.h = 0.5 + bicubic(M.km, M.w, M.h, u * M.w - 0.5, (0.5 - lat / Math.PI) * M.h - 0.5) / 40;
-  const cr = craterField(n, Math.max(1, d.craters - 1), 90, 0.55, 2);
-  o.h += cr.dh * 0.1;
+  return kmOf(bicubic(M.q, M.w, M.h, u * M.w - 0.5, (0.5 - lat / Math.PI) * M.h - 0.5));
 }
 
 function moonFeatures(o: Tx, lat: number, lon: number, n: V3, d: Detail) {
@@ -402,7 +413,7 @@ function moonFeatures(o: Tx, lat: number, lon: number, n: V3, d: Detail) {
 /**
  * Mars from MOLA and the colour mosaic (marsdata.ts): heights as painted
  * height 0.5 + km / 40, so the ground's scale is 40 km a unit (terrain.ts).
- * Below the maps' 20 km texels, small craters and the grain of the dust.
+ * Close up, MOLA's finer map (heights.ts); below that, small craters and the grain of the dust.
  */
 export function paintMars(o: Tx, lat: number, lon: number, n: V3, d: Detail) {
   const M = MARS;
@@ -432,8 +443,12 @@ export function paintMars(o: Tx, lat: number, lon: number, n: V3, d: Detail) {
   const cap = Math.max(ss(1.1, 0.8, angTo(n, 90, 0) / (8 + 3 * (v - 0.5))), ss(1.1, 0.8, angTo(n, -87, -45) / (4.5 + 2 * (v - 0.5))));
   if (cap > 0) mixTo(o, [0.95, 0.94, 0.92], cap * 0.85);
   if (d.res >= 512) {
-    // what the maps are too coarse to hold: craters under 20 km, and mottling in the dust
-    const cr = craterField(n, Math.max(1, d.craters - 1), 70, 0.5, 2);
+    // close up, MOLA's finer map (heights.ts), once it is in; and what the maps are too coarse to hold: craters
+    // under their texels (7 km, or the small map's 20), and mottling in the dust
+    const F = HEIGHTS.Mars;
+    if (F) o.h = 0.5 + heightKm(F, lat, lon) / 40;
+    else void heightsReady('Mars');
+    const cr = craterField(n, Math.max(1, d.craters - 1), F ? 130 : 70, 0.5, 2);
     o.h += cr.dh * 0.12;
     const m = fbm(n[0] * 60, n[1] * 60, n[2] * 60, Math.min(4, d.oct - 3));
     const k = 0.93 + 0.14 * m + cr.db * 0.5;
@@ -638,7 +653,6 @@ export function paintNeptune(o: Tx, lat: number, lon: number, n: V3, d: Detail) 
 // ------------------------------------------------------------------ the inner planets
 export function paintMercury(o: Tx, lat: number, lon: number, n: V3, d: Detail) {
   const latD = lat / D;
-  void lon;
   const v = fbm(n[0] * 6, n[1] * 6, n[2] * 6, d.oct);
   set(o, [0.55, 0.52, 0.49]);
   shade(o, 0.85 + 0.3 * v);
@@ -653,6 +667,7 @@ export function paintMercury(o: Tx, lat: number, lon: number, n: V3, d: Detail) 
   rayed(o, n, 57.8, 16.8, 1.3, 14, 0.9);
   rayed(o, n, -33.9, -12.5, 1.0, 10, 0.8);
   rayed(o, n, -11.3, -31.5, 0.8, 6, 0.7);
+  measuredGround(o, 'Mercury', lat, lon, n, d, 90);
 }
 
 export function paintVenus(o: Tx, lat: number, lon: number, n: V3, d: Detail) {

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { landmarkModel, landmarkReach } from './landmarks';
-import { moonReady, moonSettled } from '../pixel/moondata';
+import { heightsReady, heightsSettled, measured } from '../pixel/heights';
 import type { Body } from '../physics/body';
 import { AU_M } from '../physics/units';
 import { bodyFrame, type V3 } from '../pixel/sprites';
@@ -605,11 +605,12 @@ export class Ground {
     this.clearAll();
     this.spec = null; this.atmo = null; this.lifeInfo = null; this.paint = null;
     if (!b) { this.tiles.reset(null); return; }
-    // the Moon's ground is LOLA's: wait the moment it takes to come in (here and in the terrain workers alike), so
-    // the heights the legs land on are the heights the tiles are built from
-    if (b.look.real === 'Moon' && !moonSettled()) {
+    // a measured world's ground is its map's: wait the moment it takes to come in (here and in the terrain workers
+    // alike), so the heights the legs land on are the heights the tiles are built from
+    const real = b.look.real;
+    if (real && measured(real) && !heightsSettled(real)) {
       this.tiles.reset(null);
-      void moonReady().then(() => { if (this.body === b) { this.body = null; this.setBody(b, stars); } });
+      void heightsReady(real).then(() => { if (this.body === b) { this.body = null; this.setBody(b, stars); } });
       return;
     }
     this.atmo = atmosphere(b, stars);

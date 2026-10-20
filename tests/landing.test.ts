@@ -5,7 +5,8 @@ import { AU_M } from '../src/physics/units';
 import { atmosphere, interior, composition, habitability, habitableZone, life, gravity, giantPressure, giantTemp, cloudDecks, airAt } from '../src/three/science';
 import { groundSpec, groundAt, buildTile, faceDir, faceOf, TILE_N, type GroundSample } from '../src/three/terrain';
 import { SITES, sitesOn, earthBiome, speciesIn } from '../src/three/sites';
-import { setMoon } from '../src/pixel/moondata';
+import { setHeights } from '../src/pixel/heights';
+import { setMars } from '../src/pixel/marsdata';
 
 const solar = buildPreset('solar');
 const stars = solar.sources.filter(b => b.cls === 'star');
@@ -145,23 +146,27 @@ describe('the ground', () => {
   });
 });
 
-describe('the Moon from LOLA', () => {
-  it('paints its heights from the measured map once it is in, at 40 km a unit', () => {
-    const moon = body('Moon');
-    // a stand-in map: the northern half 1 km up, the southern 3 km down
-    const w = 64, h = 32, km = new Float32Array(w * h).map((_, i) => (Math.floor(i / w) < h / 2 ? 1 : -3));
-    setMoon({ w, h, km });
+describe('the measured worlds', () => {
+  it.each(['Moon', 'Venus', 'Mercury', 'Mars'])('%s: paints its heights from the measured map once it is in, at 40 km a unit', real => {
+    const b = body(real);
+    // a stand-in map: the northern half 1 km up, the southern 3 km down (and for Mars, its small map flat at the datum)
+    const w = 64, h = 32, q = new Uint16Array(w * h).map((_, i) => ((Math.floor(i / w) < h / 2 ? 1 : -3) + 12) / 0.004);
+    setHeights(real, { w, h, q });
+    if (real === 'Mars') setMars({ w, h, height: new Uint8Array(w * h).fill(71), rgb: null });
     try {
-      const spec = groundSpec(moon.look, moon.r * AU_M, 1.62, 0);
+      const spec = groundSpec(b.look, b.r * AU_M, 3.7, real === 'Venus' ? 92 : 0);
       expect([spec.scale, spec.datum]).toEqual([40000, 0.5]);
+      expect(spec.measured).toBeCloseTo((2 * Math.PI * spec.R) / w);
       const out: GroundSample = { h: 0, r: 0, g: 0, b: 0, sea: false, rock: 0 };
       // (fine enough to leave the small craters out: what is left is the map's)
       const north = groundAt(spec, faceDir(4, 0.1, 0.1), 50000, out), south = groundAt(spec, faceDir(5, 0.1, 0.1), 50000, out);
       expect(north).toBeGreaterThan(400);
       expect(north).toBeLessThan(1600);
       expect(south).toBeLessThan(-2400);
-    } finally { setMoon(null); }
-    // without it, the painter's own basins, at the scale they are drawn to
+    } finally { setHeights(real, null); setMars(null); }
+  });
+  it('without its map, the Moon is the painter’s own basins, at the scale they are drawn to', () => {
+    const moon = body('Moon');
     expect(groundSpec(moon.look, moon.r * AU_M, 1.62, 0).scale).toBe(22000);
   });
 });

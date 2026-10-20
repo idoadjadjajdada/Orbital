@@ -9,6 +9,9 @@ notes/.trash/
 .obsidian/cache
 .trash/
 bench/dist
-# the Moon bake's 33 MB source (tools/bake-moon.mjs fetches it)
+# the measured worlds' sources, 33 to 140 MB each (tools/bake-heights.mjs fetches them)
 tools/data/moon/
+tools/data/venus/
+tools/data/mercury/
+tools/data/mars/
 .DS_Store

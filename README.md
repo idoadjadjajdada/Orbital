@@ -13,6 +13,7 @@ npm run build      # static site in dist/
 npm run test:browser   # smoke test in Chromium, desktop and iPad (PARTS=map,ship,land,base,rocket,giant,touch picks parts)
 python3 tools/fetch-moons.py   # refresh the moon table from JPL
 python3 tools/bake-mars.py     # Mars' heights and colour from the MOLA map and mosaic in tools/data
+node tools/bake-heights.mjs moon|venus|mercury|mars   # a measured world's heights, fetched from NASA and the USGS
 python3 tools/bake-sun.py      # the Sun's surface from the photograph in tools/data
 python3 tools/pack-models.py   # the bases, trees, ruins and rockets (GLB) in tools/data, textures cut down
 ```
@@ -62,7 +63,11 @@ MOLA map's colour scale, the summits above the scale's top rebuilt to their
 measured heights, the poles from its polar insets, the mosaic fitted to the
 relief so the two line up — and written as two small pictures, 180° W at the
 left like the Earth's, that each painting thread fetches once. Landing on Mars
-puts you on that ground. The Moon has its maria and rayed craters in
+puts you on that ground. Close up, the Moon (LOLA), Venus (Magellan), Mercury
+(MESSENGER) and Mars (MOLA, finer) stand on their measured heights too, baked by
+`tools/bake-heights.mjs` and fetched the first time you come near: Maxwell Montes
+11 km up, Rachmaninoff's floor 10 km down, Tycho's rim and floor where they are.
+The Moon has its maria and rayed craters in
 the right places, and Mercury, Venus, Jupiter (bands and the Great Red Spot),
 Saturn, Uranus, Neptune, Io, Europa, Ganymede, Callisto, Titan, Triton,
 Pluto (Sputnik Planitia and Cthulhu), Charon and the other major moons and
