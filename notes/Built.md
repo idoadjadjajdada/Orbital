@@ -2,6 +2,12 @@
 
 What's in the game, newest first. The README has the full description.
 
+- **The Moon's real ground**: heights from NASA's LOLA map, loaded when you get close; generated craters only below its 5 km detail (c5990e2)
+- **Landing and the sea**: the ship lands by its hull, floats on water and rides the swell; waves, depth colour, glints and foam (c5990e2)
+- **Trees where they grow**: each species only in its real range, drawn at its real size far off, cleared round the ship, solid when you walk (c5990e2)
+- **Earth's monuments**: the pyramids of Giza and the Sphinx, Stonehenge, El Castillo, Ahu Tongariki, where they stand (c5990e2)
+- **Icons and saves**: drawn icons in place of the emojis; save and load the sandbox (Settings, or Ctrl/Cmd+S) (c5990e2)
+- **Faster physics**: the integrator works from packed arrays and adds new particles without starting over (c5990e2)
 - **Rockets you can live with**: doors and hatches that open as you come up and shut for flight; a seat to ride in (the cockpit, the Wayfarer's cabin, or outside: Z); Fly back to where it came from; Run, a supply route there and back again and again (5bfbad1)
 - **Bases and stations eat their stores**: a crew of six a day's worth a day, a day a minute of your time; a warning when they run low, emergency rations when they run out, and after ten days the crew leaves. Loading at a base takes from its stores (5bfbad1)
 - **Caves under the ground**: a ramp cut down into the land, then passages, chambers, side passages and a lower level under several metres of rock; lava tubes 15 m across on the Moon, reached down the rubble where the roof fell in; walls that stop you, daylight fading behind you (c23f94b); [pictures](Feedback/2026-10-04.md#bug-caves-arent-really-caves-theyre-above-ground-structures-with-a-tunnel-there)

@@ -15,3 +15,6 @@ Used for Mars' heights and colour, baked by `tools/bake-mars.py` (7d47086).
 ## The Sun
 ![The Sun](attachments/2026-10-03-sun-photo.jpg)
 Used for the Sun's surface, baked by `tools/bake-sun.py` (4af1bd3).
+
+## The Moon
+LOLA's measured heights (NASA SVS CGI Moon Kit, https://svs.gsfc.nasa.gov/4720, public domain): `ldem_16_uint.tif`, baked by `tools/bake-moon.mjs` into `src/pixel/data/moon-height.png`. Used for the Moon's ground (c5990e2).

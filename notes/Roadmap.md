@@ -3,6 +3,9 @@
 What's next, in order. Move things up or down; tick them when done.
 
 ## Next
+- [x] Real terrain on the Moon (LOLA), loaded when you get close; made-up terrain only where no map exists (c5990e2) ([message](Feedback/2026-10-18.md#landing-terrain-models-and-the-ui))
+- [ ] Real terrain on Venus (Magellan), Mercury (MESSENGER) and a sharper Mars (MOLA) ([message](Feedback/2026-10-19.md#real-terrain-for-venus-mercury-and-mars))
+- [ ] More moons with real terrain: only when the owner says so ([message](Feedback/2026-10-19.md#real-terrain-for-venus-mercury-and-mars))
 - [x] Black hole: a better ring in 3D, and falling in: what you'd see on the way down to the singularity, as the simulations show it (972e662) ([message](Feedback/2026-10-07.md#controls-gravity-the-black-hole-and-an-early-solar-system))
 - [x] An early solar system preset: the planets forming, the extra planets and objects (Theia, a fifth giant), the giant impacts and the giants' migration, run at any speed or jumped to any era, ending close to today's solar system, with a score of how close (215bac4) ([message](Feedback/2026-10-07.md#controls-gravity-the-black-hole-and-an-early-solar-system))
 - [x] The ship: better looking, outside and inside (6039531) ([message](Feedback/2026-10-04.md#gravity-the-ships-looks-and-the-map))
